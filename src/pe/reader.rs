@@ -15,14 +15,14 @@ use std::io::{BufReader, Read};
 pub struct PEFileReader {
     reader: BufReader<File>,
 }
-//
-// macro_rules! try_eq {
-//     ($expr:expr) => {{
-//         if !$expr {
-//             return None;
-//         }
-//     }};
-// }
+
+macro_rules! try_eq {
+    ($expr:expr) => {{
+        if !$expr {
+            return None;
+        }
+    }};
+}
 
 impl PEFileReader {
     pub fn new(filename: &str) -> Option<Self> {
@@ -36,7 +36,68 @@ impl PEFileReader {
         })
     }
 
-    pub fn read(&mut self) {}
+    pub fn read(&mut self) -> Option<()> {
+        self.read_msdos_header()
+    }
+
+    fn read_msdos_header(&mut self) -> Option<()> {
+        let mut first = [0u8; 60];
+        self.read_bytes(&mut first)?;
+
+        try_eq!(
+            &first[..]
+                == &[
+                    0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xFF,
+                    0xFF, 0x00, 0x00, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+                ][..]
+        );
+
+        let _lfanew = self.read_u32()?;
+
+        let mut latter = [0u8; 64];
+        self.read_bytes(&mut latter)
+    }
+}
+
+impl PEFileReader {
+    fn read_bytes(&mut self, buf: &mut [u8]) -> Option<()> {
+        match self.reader.read_exact(buf) {
+            Ok(()) => Some(()),
+            Err(_) => None,
+        }
+    }
+
+    fn read_u32(&mut self) -> Option<u32> {
+        let mut buf = [0u8; 4];
+        match self.reader.read_exact(&mut buf) {
+            Ok(()) => Some(
+                ((buf[0] as u32) << 24)
+                    + ((buf[1] as u32) << 16)
+                    + ((buf[2] as u32) << 8)
+                    + buf[3] as u32,
+            ),
+            Err(_) => None,
+        }
+    }
+
+    fn read_u16(&mut self) -> Option<u16> {
+        let mut buf = [0u8; 2];
+        match self.reader.read_exact(&mut buf) {
+            Ok(()) => Some(((buf[0] as u16) << 8) + buf[1] as u16),
+            Err(_) => None,
+        }
+    }
+
+    fn read_u8(&mut self) -> Option<u8> {
+        let mut buf = [0u8; 1];
+        match self.reader.read_exact(&mut buf) {
+            Ok(()) => Some(buf[0]),
+            Err(_) => None,
+        }
+    }
 }
 
 //
