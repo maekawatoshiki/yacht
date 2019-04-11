@@ -81,6 +81,7 @@ pub struct PEOptionalHeader {
     /// Shall be 0x10
     pub number_of_data_directories: u32,
 
+    // Data directories
     /// Import Table: RVA
     pub import_table_rva: u32,
 
@@ -149,6 +150,53 @@ pub struct SectionHeader {
     pub characteristics: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct CLIHeader {
+    /// Size of the header in bytes
+    pub cb: u32,
+
+    /// The minimum version of the runtime required to run
+    /// this program, currently 2.
+    pub major_runtime_version: u16,
+
+    /// The minor portion of the version, currently 0.
+    pub minor_runtime_version: u16,
+
+    /// Metadata: RVA
+    pub metadata_rva: u32,
+
+    /// Metadata: Size
+    pub metadata_size: u32,
+
+    /// Flags describing this runtime image.
+    pub flags: u32,
+
+    /// Token for the MethodDef or File of the entry point
+    /// for the image
+    pub entry_point_token: u32,
+
+    /// Resources: RVA
+    pub resources_rva: u32,
+
+    /// Resources: Size
+    pub resources_size: u32,
+
+    /// RVA of the hash data for this PE file used by the
+    /// CLI loader for binding
+    pub strong_name_signature_rva: u32,
+
+    /// Versioning of the hash data for this PE file used by the
+    /// CLI loader for binding
+    pub strong_name_signature_version: u32,
+
+    pub vtable_fixups_virtual_address: u32,
+
+    pub vtable_fixups_size: u16,
+
+    pub vtable_fixups_type: u16,
+}
+
+#[allow(dead_code)]
 mod pe_file_header_characteristics {
     pub const IMAGE_FILE_RELOCS_STRIPPED: u16 = 0x0001;
     pub const IMAGE_FILE_EXECUTABLE_IMAGE: u16 = 0x0002;
@@ -156,11 +204,13 @@ mod pe_file_header_characteristics {
     pub const IMAGE_FILE_DLL: u16 = 0x2000;
 }
 
+#[allow(dead_code)]
 mod sub_system {
     pub const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 0x3;
     pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 0x2;
 }
 
+#[allow(dead_code)]
 mod section_characteristics {
     /// Section contains code.
     pub const IMAGE_SCN_CNT_CODE: u32 = 0x00000020;
