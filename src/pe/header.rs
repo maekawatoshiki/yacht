@@ -106,7 +106,50 @@ pub struct PEOptionalHeader {
     pub cli_header_size: u32,
 }
 
-mod characteristics {
+#[derive(Debug, Clone)]
+pub struct SectionHeader {
+    /// An 8-byte, null-padded ASCII string. There is no terminating null
+    /// if the string is exactly eight characters long.
+    pub name: String,
+
+    /// Total size of the section in bytes. If this value is greater than
+    /// SizeOfRawData, the section is zero-padded.
+    pub virtual_size: u32,
+
+    /// For executable images this is the address of the first byte of the
+    /// section, when loaded into memory, relative to the image base.
+    pub virtual_address: u32,
+
+    /// Size of the initialized data on disk in bytes, shall be a multiple of
+    /// FileAlignment from the PE header. If this is less than VirtualSize
+    /// the remainder of the section is zero filled. Because this field is
+    /// rounded while the VirtualSize field is not it is possible for this to
+    /// be greater than VirtualSize as well. When a section contains only
+    /// uninitialized data, this field should be 0.
+    pub size_of_raw_data: u32,
+
+    /// Offset of section’s first page within the PE file. This shall be a
+    /// multiple of FileAlignment from the optional header. When a
+    /// section contains only uninitialized data, this field should be 0.
+    pub pointer_to_raw_data: u32,
+
+    /// Should be 0
+    pub pointer_to_relocations: u32,
+
+    /// Should be 0
+    pub pointer_to_linenumbers: u32,
+
+    /// Should be 0
+    pub number_of_relocations: u16,
+
+    /// Should be 0
+    pub number_of_linenumbers: u16,
+
+    /// Flags describing section’s characteristics
+    pub characteristics: u32,
+}
+
+mod pe_file_header_characteristics {
     pub const IMAGE_FILE_RELOCS_STRIPPED: u16 = 0x0001;
     pub const IMAGE_FILE_EXECUTABLE_IMAGE: u16 = 0x0002;
     pub const IMAGE_FILE_32BIT_MACHINE: u16 = 0x0100;
@@ -116,4 +159,24 @@ mod characteristics {
 mod sub_system {
     pub const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 0x3;
     pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 0x2;
+}
+
+mod section_characteristics {
+    /// Section contains code.
+    pub const IMAGE_SCN_CNT_CODE: u32 = 0x00000020;
+
+    /// Section contains initialized data.
+    pub const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x00000040;
+
+    /// Section contains uninitialized data.
+    pub const IMAGE_SCN_CNT_UNINITIALIZED_DATA: u32 = 0x00000080;
+
+    /// Section can be executed as code.
+    pub const IMAGE_SCN_MEM_EXECUTE: u32 = 0x20000000;
+
+    /// Section can be read.
+    pub const IMAGE_SCN_MEM_READ: u32 = 0x40000000;
+
+    /// Section can be written to.
+    pub const IMAGE_SCN_MEM_WRITE: u32 = 0x80000000;
 }

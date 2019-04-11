@@ -51,6 +51,13 @@ impl PEFileReader {
             pe_optional_headers.push(pe_optional_header);
         }
 
+        let mut sections = vec![];
+        for i in 0..pe_file_header.number_of_sections {
+            let section = self.read_section_header();
+            dprintln!("Section({}): {:?}", i, section);
+            sections.push(section);
+        }
+
         Some(())
     }
 
@@ -277,6 +284,43 @@ impl PEFileReader {
             iat_size,
             cli_header_rva,
             cli_header_size,
+        })
+    }
+
+    fn read_section_header(&mut self) -> Option<header::SectionHeader> {
+        let mut name_bytes = [0u8; 8];
+        self.read_bytes(&mut name_bytes)?;
+        let name = name_bytes.iter().map(|&s| s as char).collect::<String>();
+
+        let virtual_size = self.read_u32()?;
+
+        let virtual_address = self.read_u32()?;
+
+        let size_of_raw_data = self.read_u32()?;
+
+        let pointer_to_raw_data = self.read_u32()?;
+
+        let pointer_to_relocations = self.read_u32()?;
+
+        let pointer_to_linenumbers = self.read_u32()?;
+
+        let number_of_relocations = self.read_u16()?;
+
+        let number_of_linenumbers = self.read_u16()?;
+
+        let characteristics = self.read_u32()?;
+
+        Some(header::SectionHeader {
+            name,
+            virtual_size,
+            virtual_address,
+            size_of_raw_data,
+            pointer_to_raw_data,
+            pointer_to_relocations,
+            pointer_to_linenumbers,
+            number_of_relocations,
+            number_of_linenumbers,
+            characteristics,
         })
     }
 }
