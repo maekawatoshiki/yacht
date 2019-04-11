@@ -4,6 +4,9 @@ use yacht::pe::reader;
 extern crate clap;
 use clap::{App, Arg};
 
+extern crate ansi_term;
+use ansi_term::Colour;
+
 const VERSION_STR: &'static str = env!("CARGO_PKG_VERSION");
 
 fn main() {
@@ -19,5 +22,16 @@ fn main() {
         None => return,
     };
 
-    reader::PEFileReader::new(filename);
+    #[rustfmt::skip]
+    macro_rules! expect { ($expr:expr, $msg:expr) => {{ match $expr {
+        Some(some) => some,
+        None => { eprintln!("{}: {}", Colour::Red.bold().paint("error"), $msg); return }
+    } }}; }
+
+    let mut pe_file_reader = expect!(
+        reader::PEFileReader::new(filename),
+        format!("File not found '{}'", filename)
+    );
+
+    expect!(pe_file_reader.read(), "Broken file");
 }
