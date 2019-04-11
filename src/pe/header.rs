@@ -92,6 +92,18 @@ pub struct PEOptionalHeader {
 
     /// Base Relocation Table: Block size
     pub base_relocation_table_size: u32,
+
+    /// IAT: RVA
+    pub iat_rva: u32,
+
+    /// IAT: Size
+    pub iat_size: u32,
+
+    /// CLI Header: RVA
+    pub cli_header_rva: u32,
+
+    /// CLI Header: Size
+    pub cli_header_size: u32,
 }
 
 mod characteristics {

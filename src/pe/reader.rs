@@ -220,21 +220,35 @@ impl PEFileReader {
 
         let debug = self.read_u64()?;
         try_eq!(debug == 0);
-        
+
         let copyright = self.read_u64()?;
         try_eq!(copyright == 0);
-        
+
         let global_ptr = self.read_u64()?;
         try_eq!(global_ptr == 0);
-        
+
         let tls_table = self.read_u64()?;
         try_eq!(tls_table == 0);
-        
+
         let load_config_table = self.read_u64()?;
         try_eq!(load_config_table == 0);
-        
+
         let bound_import = self.read_u64()?;
         try_eq!(bound_import == 0);
+
+        let iat_rva = self.read_u32()?;
+
+        let iat_size = self.read_u32()?;
+
+        let delay_import_descriptor = self.read_u64()?;
+        try_eq!(delay_import_descriptor == 0);
+
+        let cli_header_rva = self.read_u32()?;
+
+        let cli_header_size = self.read_u32()?;
+
+        let reserved = self.read_u64()?;
+        try_eq!(reserved == 0);
 
         Some(header::PEOptionalHeader {
             code_size,
@@ -259,6 +273,10 @@ impl PEFileReader {
             import_table_size,
             base_relocation_table_rva,
             base_relocation_table_size,
+            iat_rva,
+            iat_size,
+            cli_header_rva,
+            cli_header_size,
         })
     }
 }
