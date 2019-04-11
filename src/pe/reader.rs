@@ -7,6 +7,7 @@
 // use super::constant::{Constant, ConstantType};
 // use super::field::FieldInfo;
 // use super::method::MethodInfo;
+use super::header;
 use std::fs::File;
 use std::io::{BufReader, Read};
 // use std::mem::transmute;
@@ -37,7 +38,22 @@ impl PEFileReader {
     }
 
     pub fn read(&mut self) -> Option<()> {
-        self.read_msdos_header()
+        self.read_msdos_header()?;
+
+        let pe_file_header = self.read_pe_file_header()?;
+        dprintln!("PE File Header: {:?}", pe_file_header);
+
+        let mut pe_optional_headers = vec![];
+        let pe_optional_header_size = 224;
+        for i in 0..pe_file_header.optional_header_size / pe_optional_header_size {
+            let pe_optional_header = self.read_pe_optional_header()?;
+            dprintln!("PE Optional Header({}): {:?}", i, pe_optional_header);
+            pe_optional_headers.push(pe_optional_header);
+        }
+
+        // dprintln!("PE Optional Headers: {:?}", pe_optional_headers);
+
+        Some(())
     }
 
     fn read_msdos_header(&mut self) -> Option<()> {
@@ -56,7 +72,7 @@ impl PEFileReader {
         );
 
         let lfanew = self.read_u32()?;
-        dprintln!("lfanew: {:8x}", lfanew);
+        dprintln!("lfanew: {:x}", lfanew);
 
         let mut latter = [0u8; 64];
         self.read_bytes(&mut latter)?;
@@ -76,6 +92,72 @@ impl PEFileReader {
 
         Some(())
     }
+
+    fn read_pe_file_header(&mut self) -> Option<header::PEFileHeader> {
+        let mut pe_signature = [0u8; 4];
+        self.read_bytes(&mut pe_signature)?;
+        try_eq!(&pe_signature[..] == &['P' as u8, 'E' as u8, 0, 0][..]);
+
+        let machine = self.read_u16()?;
+        try_eq!(machine == 0x14c);
+
+        let number_of_sections = self.read_u16()?;
+
+        let time_date_stamp = self.read_u32()?;
+
+        let pointer_to_symbol_table = self.read_u32()?;
+        try_eq!(pointer_to_symbol_table == 0);
+
+        let number_of_symbols = self.read_u32()?;
+        try_eq!(number_of_symbols == 0);
+
+        let optional_header_size = self.read_u16()?;
+
+        let characteristics = self.read_u16()?;
+
+        dprintln!("PE File Header: success");
+
+        Some(header::PEFileHeader {
+            number_of_sections,
+            time_date_stamp,
+            optional_header_size,
+            characteristics,
+        })
+    }
+
+    fn read_pe_optional_header(&mut self) -> Option<header::PEOptionalHeader> {
+        let magic = self.read_u16()?;
+        try_eq!(magic == 0x10b);
+
+        let lmajor = self.read_u8()?;
+        // println!("{}", lmajor);
+        // try_eq!(lmajor == 6);
+
+        let lminor = self.read_u8()?;
+        // println!("{}", lminor);
+        try_eq!(lminor == 0);
+
+        let code_size = self.read_u32()?;
+
+        let initialized_data_size = self.read_u32()?;
+
+        let uninitialized_data_size = self.read_u32()?;
+
+        let entry_point_rva = self.read_u32()?;
+
+        let base_of_code = self.read_u32()?;
+
+        let base_of_data = self.read_u32()?;
+
+        Some(header::PEOptionalHeader {
+            code_size,
+            initialized_data_size,
+            uninitialized_data_size,
+            entry_point_rva,
+            base_of_code,
+            base_of_data,
+        })
+    }
 }
 
 impl PEFileReader {
@@ -90,10 +172,10 @@ impl PEFileReader {
         let mut buf = [0u8; 4];
         match self.reader.read_exact(&mut buf) {
             Ok(()) => Some(
-                ((buf[0] as u32) << 24)
-                    + ((buf[1] as u32) << 16)
-                    + ((buf[2] as u32) << 8)
-                    + buf[3] as u32,
+                ((buf[3] as u32) << 24)
+                    + ((buf[2] as u32) << 16)
+                    + ((buf[1] as u32) << 8)
+                    + buf[0] as u32,
             ),
             Err(_) => None,
         }
@@ -102,7 +184,7 @@ impl PEFileReader {
     fn read_u16(&mut self) -> Option<u16> {
         let mut buf = [0u8; 2];
         match self.reader.read_exact(&mut buf) {
-            Ok(()) => Some(((buf[0] as u16) << 8) + buf[1] as u16),
+            Ok(()) => Some(((buf[1] as u16) << 8) + buf[0] as u16),
             Err(_) => None,
         }
     }
