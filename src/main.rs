@@ -35,3 +35,15 @@ fn main() {
 
     expect!(pe_file_reader.read(), "Broken file");
 }
+
+#[cfg(test)]
+mod tests {
+    use yacht::pe::reader;
+
+    #[test]
+    fn pe_file_reader() {
+        for filename in &["./examples/hello.exe"] {
+            reader::PEFileReader::new(filename).unwrap().read().unwrap()
+        }
+    }
+}
