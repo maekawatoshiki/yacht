@@ -51,8 +51,6 @@ impl PEFileReader {
             pe_optional_headers.push(pe_optional_header);
         }
 
-        // dprintln!("PE Optional Headers: {:?}", pe_optional_headers);
-
         Some(())
     }
 
@@ -149,6 +147,95 @@ impl PEFileReader {
 
         let base_of_data = self.read_u32()?;
 
+        let image_base = self.read_u32()?;
+
+        let section_alignment = self.read_u32()?;
+
+        let file_alignment = self.read_u32()?;
+        try_eq!(file_alignment == 0x200);
+
+        let os_major = self.read_u16()?;
+        try_eq!(os_major == 5 || os_major == 4);
+
+        let os_minor = self.read_u16()?;
+        try_eq!(os_minor == 0);
+
+        let user_major = self.read_u16()?;
+        try_eq!(user_major == 0);
+
+        let user_minor = self.read_u16()?;
+        try_eq!(user_minor == 0);
+
+        let subsys_major = self.read_u16()?;
+        try_eq!(subsys_major == 5 || subsys_major == 4);
+
+        let subsys_minor = self.read_u16()?;
+        try_eq!(subsys_minor == 0);
+
+        let reserved = self.read_u32()?;
+        try_eq!(reserved == 0);
+
+        let image_size = self.read_u32()?;
+
+        let header_size = self.read_u32()?;
+
+        let file_checksum = self.read_u32()?;
+        try_eq!(file_checksum == 0);
+
+        let sub_system = self.read_u16()?;
+
+        let dll_flags = self.read_u16()?;
+
+        let stack_reserve_size = self.read_u32()?;
+
+        let stack_commit_size = self.read_u32()?;
+
+        let heap_reserve_size = self.read_u32()?;
+
+        let heap_commit_size = self.read_u32()?;
+
+        let loader_flags = self.read_u32()?;
+
+        let number_of_data_directories = self.read_u32()?;
+
+        let export_table = self.read_u64()?;
+        try_eq!(export_table == 0);
+
+        let import_table_rva = self.read_u32()?;
+
+        let import_table_size = self.read_u32()?;
+
+        let resource_table = self.read_u64()?;
+        // try_eq!(resource_table == 0);
+
+        let exception_table = self.read_u64()?;
+        try_eq!(exception_table == 0);
+
+        let certification_table = self.read_u64()?;
+        try_eq!(certification_table == 0);
+
+        let base_relocation_table_rva = self.read_u32()?;
+
+        let base_relocation_table_size = self.read_u32()?;
+
+        let debug = self.read_u64()?;
+        try_eq!(debug == 0);
+        
+        let copyright = self.read_u64()?;
+        try_eq!(copyright == 0);
+        
+        let global_ptr = self.read_u64()?;
+        try_eq!(global_ptr == 0);
+        
+        let tls_table = self.read_u64()?;
+        try_eq!(tls_table == 0);
+        
+        let load_config_table = self.read_u64()?;
+        try_eq!(load_config_table == 0);
+        
+        let bound_import = self.read_u64()?;
+        try_eq!(bound_import == 0);
+
         Some(header::PEOptionalHeader {
             code_size,
             initialized_data_size,
@@ -156,6 +243,22 @@ impl PEFileReader {
             entry_point_rva,
             base_of_code,
             base_of_data,
+            image_base,
+            section_alignment,
+            image_size,
+            header_size,
+            sub_system,
+            dll_flags,
+            stack_reserve_size,
+            stack_commit_size,
+            heap_reserve_size,
+            heap_commit_size,
+            loader_flags,
+            number_of_data_directories,
+            import_table_rva,
+            import_table_size,
+            base_relocation_table_rva,
+            base_relocation_table_size,
         })
     }
 }
@@ -164,6 +267,23 @@ impl PEFileReader {
     fn read_bytes(&mut self, buf: &mut [u8]) -> Option<()> {
         match self.reader.read_exact(buf) {
             Ok(()) => Some(()),
+            Err(_) => None,
+        }
+    }
+
+    fn read_u64(&mut self) -> Option<u64> {
+        let mut buf = [0u8; 8];
+        match self.reader.read_exact(&mut buf) {
+            Ok(()) => Some(
+                ((buf[7] as u64) << 56)
+                    + ((buf[6] as u64) << 48)
+                    + ((buf[5] as u64) << 40)
+                    + ((buf[4] as u64) << 32)
+                    + ((buf[3] as u64) << 24)
+                    + ((buf[2] as u64) << 16)
+                    + ((buf[1] as u64) << 8)
+                    + buf[0] as u64,
+            ),
             Err(_) => None,
         }
     }
