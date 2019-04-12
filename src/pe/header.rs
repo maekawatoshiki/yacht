@@ -196,6 +196,15 @@ pub struct CLIHeader {
     pub vtable_fixups_type: u16,
 }
 
+#[derive(Debug, Clone)]
+pub struct MetaDataHeader {
+    /// Version string
+    pub version: String,
+
+    /// Number of streams
+    pub streams: u16,
+}
+
 #[allow(dead_code)]
 mod pe_file_header_characteristics {
     pub const IMAGE_FILE_RELOCS_STRIPPED: u16 = 0x0001;

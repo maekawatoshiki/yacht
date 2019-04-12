@@ -59,24 +59,33 @@ impl PEFileReader {
             sections.push(section);
         }
 
-        let text_start = || -> Option<u64> {
+        let text_section = || -> Option<header::SectionHeader> {
             for section in &sections {
                 if section.name != ".text" {
                     continue;
                 }
-                return Some(section.pointer_to_raw_data as u64);
+                return Some(section.clone());
             }
             None
         }()?;
 
-        dprintln!(".text starts at 0x{:x}", text_start);
+        dprintln!(".text starts at 0x{:x}", text_section.pointer_to_raw_data);
 
-        self.reader
-            .seek(SeekFrom::Start(text_start + 8 /* CLI loader stub */))
-            .ok()?;
+        let cli_header_offset = text_section.pointer_to_raw_data as u64 + 8; /* CLI loader stub */
+        self.reader.seek(SeekFrom::Start(cli_header_offset)).ok()?;
 
         let cli_header = self.read_cli_header()?;
         dprintln!("CLI Header: {:?}", cli_header);
+
+        let metadata_offset = cli_header.metadata_rva - text_section.virtual_address
+            + text_section.pointer_to_raw_data;
+        dprintln!("MetaData starts at {:x}", metadata_offset);
+        self.reader
+            .seek(SeekFrom::Start(metadata_offset as u64))
+            .ok()?;
+
+        let metadata_header = self.read_metadata_header()?;
+        dprintln!("MetaData header: {:?}", metadata_header);
 
         Some(())
     }
@@ -396,6 +405,34 @@ impl PEFileReader {
             vtable_fixups_size,
             vtable_fixups_type,
         })
+    }
+
+    fn read_metadata_header(&mut self) -> Option<header::MetaDataHeader> {
+        let signature = self.read_u32()?;
+        try_eq!(signature == 0x424A5342);
+
+        let _major_version = self.read_u16()?;
+        let _minor_version = self.read_u16()?;
+
+        let reserved = self.read_u32()?;
+        try_eq!(reserved == 0);
+
+        let length = self.read_u32()?;
+
+        let mut version_raw = vec![0u8; length as usize];
+        self.read_bytes(version_raw.as_mut_slice())?;
+        let version = version_raw
+            .iter()
+            .take_while(|b| **b != 0)
+            .map(|&c| c as char)
+            .collect::<String>();
+
+        let flags = self.read_u16()?;
+        try_eq!(flags == 0);
+
+        let streams = self.read_u16()?;
+
+        Some(header::MetaDataHeader { version, streams })
     }
 }
 
