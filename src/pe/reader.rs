@@ -7,7 +7,7 @@
 // use super::constant::{Constant, ConstantType};
 // use super::field::FieldInfo;
 // use super::method::MethodInfo;
-use super::header;
+use crate::pe::{header, metadata};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::io::{Seek, SeekFrom};
@@ -89,11 +89,29 @@ impl PEFileReader {
 
         let mut stream_headers = vec![];
         for _ in 0..metadata_header.streams {
-            let stream = self.read_stream_header();
+            let stream = self.read_stream_header()?;
             stream_headers.push(stream);
         }
 
         dprintln!("Streams: {:?}", stream_headers);
+
+        for i in 0..metadata_header.streams as usize {
+            self.reader
+                .seek(SeekFrom::Start(
+                    (metadata_offset + stream_headers[i].offset) as u64,
+                ))
+                .ok()?;
+            match stream_headers[i].name.as_str() {
+                "#~" => println!("#~ stream: {:?}", self.read_hash_tilda_stream()),
+                "#Strings" => {
+                    for i in 0..stream_headers[i].size {
+                        print!("{}", self.read_u8()? as char);
+                    }
+                    println!()
+                }
+                _ => {}
+            }
+        }
 
         Some(())
     }
@@ -464,6 +482,44 @@ impl PEFileReader {
         }
 
         Some(header::StreamHeader { offset, size, name })
+    }
+
+    fn read_hash_tilda_stream(&mut self) -> Option<metadata::HashTildaStream> {
+        let reserved = self.read_u32()?;
+        try_eq!(reserved == 0);
+
+        let major_version = self.read_u8()?;
+
+        let minor_version = self.read_u8()?;
+
+        let heap_sizes = self.read_u8()?;
+
+        let _reserved = self.read_u8()?;
+        // try_eq!(reserved == 1);
+
+        let valid = self.read_u64()?;
+
+        let sorted = self.read_u64()?;
+
+        let n = valid.count_ones();
+
+        let mut rows = vec![];
+        for _ in 0..n {
+            let row = self.read_u32()?;
+            rows.push(row);
+        }
+
+        // println!("gene: {}", self.read_u16()?);
+        // println!("name: {}", self.read_u16()?);
+
+        Some(metadata::HashTildaStream {
+            major_version,
+            minor_version,
+            heap_sizes,
+            valid,
+            sorted,
+            rows,
+        })
     }
 }
 
