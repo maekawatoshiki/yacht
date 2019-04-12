@@ -87,6 +87,14 @@ impl PEFileReader {
         let metadata_header = self.read_metadata_header()?;
         dprintln!("MetaData header: {:?}", metadata_header);
 
+        let mut stream_headers = vec![];
+        for _ in 0..metadata_header.streams {
+            let stream = self.read_stream_header();
+            stream_headers.push(stream);
+        }
+
+        dprintln!("Streams: {:?}", stream_headers);
+
         Some(())
     }
 
@@ -433,6 +441,29 @@ impl PEFileReader {
         let streams = self.read_u16()?;
 
         Some(header::MetaDataHeader { version, streams })
+    }
+
+    fn read_stream_header(&mut self) -> Option<header::StreamHeader> {
+        let offset = self.read_u32()?;
+
+        let size = self.read_u32()?;
+
+        let mut name = "".to_string();
+        let mut count = 1;
+        loop {
+            let c = self.read_u8()?;
+            if c == 0 {
+                while count % 4 != 0 {
+                    self.read_u8()?;
+                    count += 1;
+                }
+                break;
+            }
+            name.push(c as char);
+            count += 1;
+        }
+
+        Some(header::StreamHeader { offset, size, name })
     }
 }
 

@@ -205,6 +205,19 @@ pub struct MetaDataHeader {
     pub streams: u16,
 }
 
+#[derive(Debug, Clone)]
+pub struct StreamHeader {
+    /// Memory offset to start of this stream from start of the
+    /// metadata root
+    pub offset: u32,
+
+    /// Size of this stream in bytes, shall be a multiple of 4.
+    pub size: u32,
+
+    /// Name of the stream
+    pub name: String,
+}
+
 #[allow(dead_code)]
 mod pe_file_header_characteristics {
     pub const IMAGE_FILE_RELOCS_STRIPPED: u16 = 0x0001;
