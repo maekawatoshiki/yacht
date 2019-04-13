@@ -105,7 +105,7 @@ impl PEFileReader {
                 "#~" => {
                     let hash_tilda_stream = self.read_hash_tilda_stream()?;
                     dprintln!("#~ stream: {:?}", hash_tilda_stream);
-                    let tables = self.read_metadata_tables(&hash_tilda_stream.tables)?;
+                    let tables = self.read_metadata_tables(&hash_tilda_stream)?;
                     dprintln!("MetaData Tables: {:?}", tables);
                 }
                 "#Strings" => {
@@ -528,25 +528,28 @@ impl PEFileReader {
         })
     }
 
-    fn read_metadata_tables(&mut self, table_kinds: &[TableKind]) -> Option<Vec<Table>> {
+    fn read_metadata_tables(&mut self, htstream: &HashTildaStream) -> Option<Vec<Table>> {
         let mut tables = vec![];
 
-        for kind in table_kinds {
-            tables.push(match kind {
-                TableKind::Module => Table::Module(self.read_struct::<ModuleTable>()?),
-                TableKind::TypeRef => Table::TypeRef(self.read_struct::<TypeRefTable>()?),
-                TableKind::TypeDef => Table::TypeDef(self.read_struct::<TypeDefTable>()?),
-                TableKind::MethodDef => Table::MethodDef(self.read_struct::<MethodDefTable>()?),
-                TableKind::MemberRef => Table::MemberRef(self.read_struct::<MemberRefTable>()?),
-                TableKind::CustomAttribute => {
-                    Table::CustomAttribute(self.read_struct::<CustomAttributeTable>()?)
-                }
-                TableKind::Assembly => Table::Assembly(self.read_struct::<AssemblyTable>()?),
-                TableKind::AssemblyRef => {
-                    Table::AssemblyRef(self.read_struct::<AssemblyRefTable>()?)
-                }
-                _ => Table::ModuleRef,
-            })
+        for (i, kind) in htstream.tables.iter().enumerate() {
+            let num = htstream.rows[i];
+            for _ in 0..num {
+                tables.push(match kind {
+                    TableKind::Module => Table::Module(self.read_struct::<ModuleTable>()?),
+                    TableKind::TypeRef => Table::TypeRef(self.read_struct::<TypeRefTable>()?),
+                    TableKind::TypeDef => Table::TypeDef(self.read_struct::<TypeDefTable>()?),
+                    TableKind::MethodDef => Table::MethodDef(self.read_struct::<MethodDefTable>()?),
+                    TableKind::MemberRef => Table::MemberRef(self.read_struct::<MemberRefTable>()?),
+                    TableKind::CustomAttribute => {
+                        Table::CustomAttribute(self.read_struct::<CustomAttributeTable>()?)
+                    }
+                    TableKind::Assembly => Table::Assembly(self.read_struct::<AssemblyTable>()?),
+                    TableKind::AssemblyRef => {
+                        Table::AssemblyRef(self.read_struct::<AssemblyRefTable>()?)
+                    }
+                    _ => Table::ModuleRef,
+                })
+            }
         }
 
         Some(tables)
