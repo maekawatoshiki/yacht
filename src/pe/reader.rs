@@ -110,7 +110,8 @@ impl PEFileReader {
                 }
                 "#Strings" => {
                     for _i in 0..stream_headers[i].size {
-                        print!("{}", self.read_u8()? as char);
+                        let c = self.read_u8()? as char;
+                        print!("{}", if c == '\0' { ' ' } else { c });
                     }
                     println!()
                 }
@@ -537,6 +538,13 @@ impl PEFileReader {
                 TableKind::TypeDef => Table::TypeDef(self.read_struct::<TypeDefTable>()?),
                 TableKind::MethodDef => Table::MethodDef(self.read_struct::<MethodDefTable>()?),
                 TableKind::MemberRef => Table::MemberRef(self.read_struct::<MemberRefTable>()?),
+                TableKind::CustomAttribute => {
+                    Table::CustomAttribute(self.read_struct::<CustomAttributeTable>()?)
+                }
+                TableKind::Assembly => Table::Assembly(self.read_struct::<AssemblyTable>()?),
+                TableKind::AssemblyRef => {
+                    Table::AssemblyRef(self.read_struct::<AssemblyRefTable>()?)
+                }
                 _ => Table::ModuleRef,
             })
         }

@@ -69,15 +69,15 @@ pub enum TableKind {
 
 #[derive(Debug, Clone)]
 pub enum Table {
-    // Assembly,
+    Assembly(AssemblyTable),
     // AssemblyOS,
     // AssemblyProcessor,
-    // AssemblyRef,
+    AssemblyRef(AssemblyRefTable),
     // AssemblyRefOS,
     // AssemblyRefProcessor,
     // ClassLayout,
     // Constant,
-    CustomAttribute,
+    CustomAttribute(CustomAttributeTable),
     // DeclSecurity,
     // EventMap,
     // Event,
@@ -107,6 +107,45 @@ pub enum Table {
     TypeDef(TypeDefTable),
     TypeRef(TypeRefTable),
     // TypeSpec,
+}
+
+/// II.22.2 Assembly
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct AssemblyTable {
+    hash_alg_id: u32,
+    major_version: u16,
+    minor_version: u16,
+    build_number: u16,
+    revision_number: u16,
+    flags: u32,
+    public_key: u16,
+    name: u16,
+    culture: u16,
+}
+
+/// II.22.15 AssemblyRef
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct AssemblyRefTable {
+    major_version: u16,
+    minor_version: u16,
+    build_number: u16,
+    revision_number: u16,
+    flags: u32,
+    public_key_or_token: u16,
+    name: u16,
+    culture: u16,
+    hash_value: u16,
+}
+
+/// II.22.10 CustomAttribute
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct CustomAttributeTable {
+    parent: u16,
+    type_: u16,
+    value: u16,
 }
 
 /// II.22.25 MemberRef
