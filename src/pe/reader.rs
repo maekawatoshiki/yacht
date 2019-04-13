@@ -77,12 +77,10 @@ impl PEFileReader {
         let cli_header = self.read_cli_header()?;
         dprintln!("CLI Header: {:?}", cli_header);
 
-        let metadata_offset = cli_header.metadata_rva - text_section.virtual_address
-            + text_section.pointer_to_raw_data;
+        let metadata_offset = (cli_header.metadata_rva - text_section.virtual_address
+            + text_section.pointer_to_raw_data) as u64;
         dprintln!("MetaData starts at {:x}", metadata_offset);
-        self.reader
-            .seek(SeekFrom::Start(metadata_offset as u64))
-            .ok()?;
+        self.reader.seek(SeekFrom::Start(metadata_offset)).ok()?;
 
         let metadata_header = self.read_metadata_header()?;
         dprintln!("MetaData header: {:?}", metadata_header);
@@ -95,29 +93,7 @@ impl PEFileReader {
 
         dprintln!("Streams: {:?}", stream_headers);
 
-        for i in 0..metadata_header.streams as usize {
-            self.reader
-                .seek(SeekFrom::Start(
-                    (metadata_offset + stream_headers[i].offset) as u64,
-                ))
-                .ok()?;
-            match stream_headers[i].name.as_str() {
-                "#~" => {
-                    let hash_tilda_stream = self.read_hash_tilda_stream()?;
-                    dprintln!("#~ stream: {:?}", hash_tilda_stream);
-                    let tables = self.read_metadata_tables(&hash_tilda_stream)?;
-                    dprintln!("MetaData Tables: {:?}", tables);
-                }
-                "#Strings" => {
-                    for _i in 0..stream_headers[i].size {
-                        let c = self.read_u8()? as char;
-                        print!("{}", if c == '\0' { ' ' } else { c });
-                    }
-                    println!()
-                }
-                _ => {}
-            }
-        }
+        self.read_metadata_stream(metadata_offset, &metadata_header, &stream_headers)?;
 
         Some(())
     }
@@ -515,7 +491,9 @@ impl PEFileReader {
             rows.push(row);
         }
 
-        let tables = TableKind::table_kinds(valid);
+        let table_kinds = TableKind::table_kinds(valid);
+        let tables = self.read_metadata_tables(&table_kinds, &rows)?;
+        dprintln!("MetaData Tables: {:?}", tables);
 
         Some(HashTildaStream {
             major_version,
@@ -528,11 +506,15 @@ impl PEFileReader {
         })
     }
 
-    fn read_metadata_tables(&mut self, htstream: &HashTildaStream) -> Option<Vec<Table>> {
+    fn read_metadata_tables(
+        &mut self,
+        table_kinds: &[TableKind],
+        rows: &[u32],
+    ) -> Option<Vec<Table>> {
         let mut tables = vec![];
 
-        for (i, kind) in htstream.tables.iter().enumerate() {
-            let num = htstream.rows[i];
+        for (i, kind) in table_kinds.iter().enumerate() {
+            let num = rows[i];
             for _ in 0..num {
                 tables.push(match kind {
                     TableKind::Module => Table::Module(self.read_struct::<ModuleTable>()?),
@@ -553,6 +535,97 @@ impl PEFileReader {
         }
 
         Some(tables)
+    }
+
+    fn read_metadata_stream(
+        &mut self,
+        metadata_offset: u64,
+        metadata_header: &MetaDataHeader,
+        stream_headers: &[StreamHeader],
+    ) -> Option<MetaDataStreams> {
+        // Some of followings are not streams, heaps.
+        let mut hash_tilda_stream = None;
+        let mut strings = None;
+        let mut user_strings = None;
+        let mut blob = None;
+        let mut guid = None;
+
+        for i in 0..metadata_header.streams as usize {
+            self.reader
+                .seek(SeekFrom::Start(
+                    metadata_offset + stream_headers[i].offset as u64,
+                ))
+                .ok()?;
+            match stream_headers[i].name.as_str() {
+                "#~" => {
+                    let htstream = self.read_hash_tilda_stream()?;
+                    dprintln!("#~ stream: {:?}", htstream);
+                    hash_tilda_stream = Some(htstream);
+                }
+                "#Strings" => {
+                    dprint!("#Strings stream:");
+                    let mut bytes = vec![];
+                    for _ in 0..stream_headers[i].size {
+                        let c = self.read_u8()? as char;
+                        bytes.push(c);
+                        dprint!("{}", if c == '\0' { ' ' } else { c });
+                    }
+                    dprintln!("");
+                    strings = Some(bytes);
+                }
+                "#US" => {
+                    let mut bytes = vec![];
+                    for _ in 0..stream_headers[i].size / 2 {
+                        let c = self.read_u16()?;
+                        bytes.push(c);
+                    }
+                    dprintln!(
+                        "#US stream (roughly conveted into UTF8): {}",
+                        String::from_utf16(&bytes).unwrap()
+                    );
+                    user_strings = Some(bytes);
+                }
+                "#Blob" => {
+                    let mut bytes = vec![];
+                    for _ in 0..stream_headers[i].size {
+                        bytes.push(self.read_u8()?);
+                    }
+                    dprintln!("#Blob stream: {:?}", bytes);
+                    blob = Some(bytes);
+                }
+                "#GUID" => {
+                    let data1 = self.read_u32()?;
+                    let data2 = self.read_u16()?;
+                    let data3 = self.read_u16()?;
+                    let mut data4 = [0u8; 8];
+                    self.read_bytes(&mut data4)?;
+                    guid = Some(format!(
+                        "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                        data1,
+                        data2,
+                        data3,
+                        data4[0],
+                        data4[1],
+                        data4[2],
+                        data4[3],
+                        data4[4],
+                        data4[5],
+                        data4[6],
+                        data4[7],
+                    ));
+                    dprintln!("#GUID stream: {}", guid.as_ref().unwrap());
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        Some(MetaDataStreams {
+            metadata_stream: hash_tilda_stream.unwrap(),
+            strings: strings.unwrap(),
+            user_strings: user_strings.unwrap(),
+            blob: blob.unwrap(),
+            guid: guid.unwrap(),
+        })
     }
 
     fn read_struct<T>(&mut self) -> Option<T> {
@@ -621,3 +694,19 @@ impl PEFileReader {
         }
     }
 }
+
+// ** blob **
+// let first = self.read_u8()? as usize;
+// println!(" first {} ", first);
+// let len = if first & 0b10000000 == 0 {
+//     first & 0b01111111
+// } else if first & 0b10000000 > 0 {
+//     ((first & 0b01111111) << 8) + self.read_u8()? as usize
+// } else if first & 0b11000000 > 0 {
+//     let x = self.read_u8()? as usize;
+//     let y = self.read_u8()? as usize;
+//     let z = self.read_u8()? as usize;
+//     ((first & 0b00111111) << 24) + (x << 16) + (y << 8) + z
+// } else {
+//     panic!()
+// };

@@ -1,3 +1,5 @@
+// use crate::pe::header::SectionHeader;
+
 /// #~ Stream
 #[derive(Debug, Clone)]
 pub struct HashTildaStream {
@@ -22,7 +24,16 @@ pub struct HashTildaStream {
     pub rows: Vec<u32>,
 
     /// The sequence of physical tables.
-    pub tables: Vec<TableKind>,
+    pub tables: Vec<Table>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MetaDataStreams {
+    pub metadata_stream: HashTildaStream,
+    pub strings: Vec<char>,
+    pub user_strings: Vec<u16>,
+    pub blob: Vec<u8>,
+    pub guid: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -256,3 +267,18 @@ impl TableKind {
         }
     }
 }
+
+// impl Table {
+//     fn dump(&self, section: &SectionHeader) {
+//         match self {
+//             Table::MethodDef(mdt) => mdt.dump(section),
+//         }
+//     }
+// }
+//
+// impl MethodDefTable {
+//     fn dump(&self, section: &SectionHeader) {
+//         let virtual_address = section.virtual_address;
+//         self.rva
+//     }
+// }

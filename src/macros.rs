@@ -10,6 +10,17 @@ macro_rules! dprintln {
 }
 
 #[macro_export]
+macro_rules! dprint {
+    ($($arg:tt)*) => {
+        #[cfg(debug_assertions)]
+        {
+            let s = format!($($arg)*);
+            print!("{}", ansi_term::Colour::White.dimmed().paint(s));
+        }
+    }
+}
+
+#[macro_export]
 macro_rules! when_debug {
     ($($arg:tt)*) => {
         #[cfg(debug_assertions)]
