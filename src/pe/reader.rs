@@ -102,9 +102,11 @@ impl PEFileReader {
                 ))
                 .ok()?;
             match stream_headers[i].name.as_str() {
-                "#~" => println!("#~ stream: {:?}", self.read_hash_tilda_stream()),
+                "#~" => {
+                    dprintln!("#~ stream: {:?}", self.read_hash_tilda_stream());
+                }
                 "#Strings" => {
-                    for i in 0..stream_headers[i].size {
+                    for _i in 0..stream_headers[i].size {
                         print!("{}", self.read_u8()? as char);
                     }
                     println!()
@@ -509,6 +511,7 @@ impl PEFileReader {
             rows.push(row);
         }
 
+        let tables = metadata::TableKind::table_kinds(valid);
         // println!("gene: {}", self.read_u16()?);
         // println!("name: {}", self.read_u16()?);
 
@@ -519,6 +522,7 @@ impl PEFileReader {
             valid,
             sorted,
             rows,
+            tables,
         })
     }
 }
