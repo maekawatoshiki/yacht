@@ -7,7 +7,7 @@
 // use super::constant::{Constant, ConstantType};
 // use super::field::FieldInfo;
 // use super::method::MethodInfo;
-use crate::pe::{header, metadata};
+use crate::pe::{header::*, metadata::*};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::io::{Seek, SeekFrom};
@@ -59,7 +59,7 @@ impl PEFileReader {
             sections.push(section);
         }
 
-        let text_section = || -> Option<header::SectionHeader> {
+        let text_section = || -> Option<SectionHeader> {
             for section in &sections {
                 if section.name != ".text" {
                     continue;
@@ -103,7 +103,10 @@ impl PEFileReader {
                 .ok()?;
             match stream_headers[i].name.as_str() {
                 "#~" => {
-                    dprintln!("#~ stream: {:?}", self.read_hash_tilda_stream());
+                    let hash_tilda_stream = self.read_hash_tilda_stream()?;
+                    dprintln!("#~ stream: {:?}", hash_tilda_stream);
+                    let tables = self.read_metadata_tables(&hash_tilda_stream.tables)?;
+                    dprintln!("MetaData Tables: {:?}", tables);
                 }
                 "#Strings" => {
                     for _i in 0..stream_headers[i].size {
@@ -155,7 +158,7 @@ impl PEFileReader {
         Some(())
     }
 
-    fn read_pe_file_header(&mut self) -> Option<header::PEFileHeader> {
+    fn read_pe_file_header(&mut self) -> Option<PEFileHeader> {
         let mut pe_signature = [0u8; 4];
         self.read_bytes(&mut pe_signature)?;
         try_eq!(&pe_signature[..] == &['P' as u8, 'E' as u8, 0, 0][..]);
@@ -179,7 +182,7 @@ impl PEFileReader {
 
         dprintln!("PE File Header: success");
 
-        Some(header::PEFileHeader {
+        Some(PEFileHeader {
             number_of_sections,
             time_date_stamp,
             optional_header_size,
@@ -187,7 +190,7 @@ impl PEFileReader {
         })
     }
 
-    fn read_pe_optional_header(&mut self) -> Option<header::PEOptionalHeader> {
+    fn read_pe_optional_header(&mut self) -> Option<PEOptionalHeader> {
         let magic = self.read_u16()?;
         try_eq!(magic == 0x10b);
 
@@ -314,7 +317,7 @@ impl PEFileReader {
         let reserved = self.read_u64()?;
         try_eq!(reserved == 0);
 
-        Some(header::PEOptionalHeader {
+        Some(PEOptionalHeader {
             code_size,
             initialized_data_size,
             uninitialized_data_size,
@@ -344,7 +347,7 @@ impl PEFileReader {
         })
     }
 
-    fn read_section_header(&mut self) -> Option<header::SectionHeader> {
+    fn read_section_header(&mut self) -> Option<SectionHeader> {
         let mut name_bytes = [0u8; 8];
         self.read_bytes(&mut name_bytes)?;
         let name = name_bytes
@@ -371,7 +374,7 @@ impl PEFileReader {
 
         let characteristics = self.read_u32()?;
 
-        Some(header::SectionHeader {
+        Some(SectionHeader {
             name,
             virtual_size,
             virtual_address,
@@ -385,7 +388,7 @@ impl PEFileReader {
         })
     }
 
-    fn read_cli_header(&mut self) -> Option<header::CLIHeader> {
+    fn read_cli_header(&mut self) -> Option<CLIHeader> {
         let cb = self.read_u32()?;
 
         let major_runtime_version = self.read_u16()?;
@@ -417,7 +420,7 @@ impl PEFileReader {
 
         let vtable_fixups_type = self.read_u16()?;
 
-        Some(header::CLIHeader {
+        Some(CLIHeader {
             cb,
             major_runtime_version,
             minor_runtime_version,
@@ -435,7 +438,7 @@ impl PEFileReader {
         })
     }
 
-    fn read_metadata_header(&mut self) -> Option<header::MetaDataHeader> {
+    fn read_metadata_header(&mut self) -> Option<MetaDataHeader> {
         let signature = self.read_u32()?;
         try_eq!(signature == 0x424A5342);
 
@@ -460,10 +463,10 @@ impl PEFileReader {
 
         let streams = self.read_u16()?;
 
-        Some(header::MetaDataHeader { version, streams })
+        Some(MetaDataHeader { version, streams })
     }
 
-    fn read_stream_header(&mut self) -> Option<header::StreamHeader> {
+    fn read_stream_header(&mut self) -> Option<StreamHeader> {
         let offset = self.read_u32()?;
 
         let size = self.read_u32()?;
@@ -483,10 +486,10 @@ impl PEFileReader {
             count += 1;
         }
 
-        Some(header::StreamHeader { offset, size, name })
+        Some(StreamHeader { offset, size, name })
     }
 
-    fn read_hash_tilda_stream(&mut self) -> Option<metadata::HashTildaStream> {
+    fn read_hash_tilda_stream(&mut self) -> Option<HashTildaStream> {
         let reserved = self.read_u32()?;
         try_eq!(reserved == 0);
 
@@ -511,11 +514,9 @@ impl PEFileReader {
             rows.push(row);
         }
 
-        let tables = metadata::TableKind::table_kinds(valid);
-        // println!("gene: {}", self.read_u16()?);
-        // println!("name: {}", self.read_u16()?);
+        let tables = TableKind::table_kinds(valid);
 
-        Some(metadata::HashTildaStream {
+        Some(HashTildaStream {
             major_version,
             minor_version,
             heap_sizes,
@@ -524,6 +525,34 @@ impl PEFileReader {
             rows,
             tables,
         })
+    }
+
+    fn read_metadata_tables(&mut self, table_kinds: &[TableKind]) -> Option<Vec<Table>> {
+        let mut tables = vec![];
+
+        for kind in table_kinds {
+            tables.push(match kind {
+                TableKind::Module => Table::Module(self.read_struct::<ModuleTable>()?),
+                TableKind::TypeRef => Table::TypeRef(self.read_struct::<TypeRefTable>()?),
+                TableKind::TypeDef => Table::TypeDef(self.read_struct::<TypeDefTable>()?),
+                TableKind::MethodDef => Table::MethodDef(self.read_struct::<MethodDefTable>()?),
+                TableKind::MemberRef => Table::MemberRef(self.read_struct::<MemberRefTable>()?),
+                _ => Table::ModuleRef,
+            })
+        }
+
+        Some(tables)
+    }
+
+    fn read_struct<T>(&mut self) -> Option<T> {
+        unsafe {
+            let size = ::std::mem::size_of::<T>();
+            let mut strct: T = ::std::mem::zeroed();
+            let strct_slice =
+                ::std::slice::from_raw_parts_mut(&mut strct as *mut _ as *mut u8, size);
+            self.reader.read_exact(strct_slice).ok()?;
+            Some(strct)
+        }
     }
 }
 

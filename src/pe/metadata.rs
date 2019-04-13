@@ -25,7 +25,7 @@ pub struct HashTildaStream {
     pub tables: Vec<TableKind>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum TableKind {
     Assembly,
     AssemblyOS,
@@ -65,6 +65,101 @@ pub enum TableKind {
     TypeDef,
     TypeRef,
     TypeSpec,
+}
+
+#[derive(Debug, Clone)]
+pub enum Table {
+    // Assembly,
+    // AssemblyOS,
+    // AssemblyProcessor,
+    // AssemblyRef,
+    // AssemblyRefOS,
+    // AssemblyRefProcessor,
+    // ClassLayout,
+    // Constant,
+    CustomAttribute,
+    // DeclSecurity,
+    // EventMap,
+    // Event,
+    // ExportedType,
+    // Field,
+    // FieldLayout,
+    // FieldMarshal,
+    // FieldRVA,
+    // File,
+    // GenericParam,
+    // GenericParamConstraint,
+    // ImplMap,
+    // InterfaceImpl,
+    // ManifestResource,
+    MemberRef(MemberRefTable),
+    MethodDef(MethodDefTable),
+    // MethodImpl,
+    // MethodSemantics,
+    // MethodSpec,
+    Module(ModuleTable),
+    ModuleRef,
+    // NestedClass,
+    // Param,
+    // Property,
+    // PropertyMap,
+    // StandAloneSig,
+    TypeDef(TypeDefTable),
+    TypeRef(TypeRefTable),
+    // TypeSpec,
+}
+
+/// II.22.25 MemberRef
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct MemberRefTable {
+    class: u16,
+    name: u16,
+    signature: u16,
+}
+
+/// II.22.26 MethodDef
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct MethodDefTable {
+    rva: u32,
+    impl_flags: u16,
+    flags: u16,
+    name: u16,
+    signature: u16,
+    param_list: u16,
+}
+
+/// II.22.30 Module
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct ModuleTable {
+    generation: u16,
+    name: u16,
+    mvid: u16,
+    env_id: u16,
+    env_base_id: u16,
+}
+
+/// II.22.37 TypeDef
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct TypeDefTable {
+    flags: u32,
+    type_name: u16,
+    type_namespace: u16,
+    extends: u16,
+    field_list: u16,
+    module_list: u16,
+}
+
+/// II.22.38 TypeRef
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct TypeRefTable {
+    resolution_scope: u16,
+    type_name: u16,
+    type_namespace: u16,
 }
 
 impl TableKind {
