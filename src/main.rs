@@ -44,12 +44,18 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use yacht::pe::reader;
+    use std::{cell::RefCell, rc::Rc};
+    use yacht::{exec::interpret, pe::reader};
 
     #[test]
     fn pe_file_reader() {
         for filename in &["./examples/hello.exe"] {
-            reader::PEFileReader::new(filename).unwrap().read().unwrap()
+            let mut pe_file_reader = reader::PEFileReader::new(filename).unwrap();
+            let mut image = pe_file_reader.create_image().unwrap();
+            let method = pe_file_reader.read_entry_method(&mut image).unwrap();
+            image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
+            let mut interpreter = interpret::Interpreter::new();
+            interpreter.interpret(&mut image, method);
         }
     }
 }
