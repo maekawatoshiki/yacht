@@ -618,13 +618,30 @@ impl PEFileReader {
         Some(tables)
     }
 
+    // Return (length, read bytes)
+    fn read_blob_length(&mut self) -> Option<(u32, u32)> {
+        let first = self.read_u8()? as u32;
+        if first & 0b10000000 == 0 {
+            Some((first & 0b01111111, 1))
+        } else if first & 0b10000000 > 0 {
+            Some((((first & 0b01111111) << 8) + self.read_u8()? as u32, 2))
+        } else if first & 0b11000000 > 0 {
+            let x = self.read_u8()? as u32;
+            let y = self.read_u8()? as u32;
+            let z = self.read_u8()? as u32;
+            Some((((first & 0b00111111) << 24) + (x << 16) + (y << 8) + z, 4))
+        } else {
+            return None;
+        }
+    }
+
     fn read_metadata_streams(
         &mut self,
         metadata_offset: u64,
         metadata_header: &MetaDataHeader,
         stream_headers: &[StreamHeader],
     ) -> Option<MetaDataStreams> {
-        // Some of followings are not streams, heaps.
+        // Some of followings are not streams, but heaps.
         let mut metadata_stream = None;
         let mut strings = None;
         let mut user_strings = None;
@@ -668,25 +685,13 @@ impl PEFileReader {
                     let mut user_strings_ = FxHashMap::default();
                     let mut bytes = vec![];
                     let mut count = 0;
+
                     while count < stream_headers[i].size {
                         let bgn = count;
-                        let first = self.read_u8()? as u32;
-                        let len = if first & 0b10000000 == 0 {
-                            count += 1;
-                            first & 0b01111111
-                        } else if first & 0b10000000 > 0 {
-                            count += 2;
-                            ((first & 0b01111111) << 8) + self.read_u8()? as u32
-                        } else if first & 0b11000000 > 0 {
-                            count += 4;
-                            let x = self.read_u8()? as u32;
-                            let y = self.read_u8()? as u32;
-                            let z = self.read_u8()? as u32;
-                            ((first & 0b00111111) << 24) + (x << 16) + (y << 8) + z
-                        } else {
-                            return None;
-                        };
+                        let (len, read_bytes) = self.read_blob_length()?;
+                        count += read_bytes;
 
+                        /* read 2 bytes at once so divide len by 2 */
                         for _ in 0..len / 2 {
                             bytes.push(self.read_u16()?);
                         }
@@ -695,9 +700,11 @@ impl PEFileReader {
                         bytes.clear();
                         count += len as u32;
                     }
+
                     when_debug!(for (i, us) in &user_strings_ {
                         dprintln!("#US({:02X}): '{}'", i, String::from_utf16(&us).ok()?)
                     });
+
                     user_strings = Some(user_strings_);
                 }
                 "#Blob" => {
@@ -707,22 +714,8 @@ impl PEFileReader {
 
                     while count < stream_headers[i].size {
                         let bgn = count;
-                        let first = self.read_u8()? as u32;
-                        let len = if first & 0b10000000 == 0 {
-                            count += 1;
-                            first & 0b01111111
-                        } else if first & 0b10000000 > 0 {
-                            count += 2;
-                            ((first & 0b01111111) << 8) + self.read_u8()? as u32
-                        } else if first & 0b11000000 > 0 {
-                            count += 4;
-                            let x = self.read_u8()? as u32;
-                            let y = self.read_u8()? as u32;
-                            let z = self.read_u8()? as u32;
-                            ((first & 0b00111111) << 24) + (x << 16) + (y << 8) + z
-                        } else {
-                            return None;
-                        };
+                        let (len, read_bytes) = self.read_blob_length()?;
+                        count += read_bytes;
 
                         for _ in 0..len {
                             bytes.push(self.read_u8()?);
