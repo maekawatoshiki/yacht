@@ -137,10 +137,6 @@ impl PEFileReader {
         dprintln!("method body begin at: {}", start);
         let method = self.read_method_body(start)?;
         println!("Method: {:?}", method);
-        println!(
-            "Instructions: {:?}",
-            BytesToInstructions::new(&method.body).convert()?
-        );
 
         let method_ref = Rc::new(RefCell::new(method));
         image.method_cache.insert(row, method_ref.clone());
@@ -156,8 +152,9 @@ impl PEFileReader {
 
         match ty {
             MethodHeaderType::TinyFormat { bytes } => {
-                let mut body = vec![0u8; bytes];
-                self.read_bytes(body.as_mut_slice())?;
+                let mut raw_body = vec![0u8; bytes];
+                self.read_bytes(raw_body.as_mut_slice())?;
+                let body = BytesToInstructions::new(&raw_body).convert()?;
                 Some(MethodBody { ty, body })
             }
             MethodHeaderType::FatFormat => None,

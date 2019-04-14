@@ -1,3 +1,4 @@
+use crate::exec::instruction::Instruction;
 use std::{cell::RefCell, rc::Rc};
 
 pub const TINY_FORMAT: u8 = 0x2;
@@ -21,10 +22,15 @@ impl MethodHeaderType {
     }
 }
 
+pub type MethodBodyRef = Rc<RefCell<MethodBody>>;
+
 #[derive(Debug, Clone)]
 pub struct MethodBody {
     pub ty: MethodHeaderType,
-    pub body: Vec<u8>,
+    pub body: Vec<Instruction>,
 }
 
-pub type MethodBodyRef = Rc<RefCell<MethodBody>>;
+// #[derive(Debug, Clone)]
+// pub struct MemberRef {
+//     name: String,
+// }

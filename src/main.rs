@@ -1,11 +1,13 @@
 extern crate yacht;
-use yacht::pe::reader;
+use yacht::{exec::interpret, pe::reader};
 
 extern crate clap;
 use clap::{App, Arg};
 
 extern crate ansi_term;
 use ansi_term::Colour;
+
+use std::{cell::RefCell, rc::Rc};
 
 const VERSION_STR: &'static str = env!("CARGO_PKG_VERSION");
 
@@ -34,7 +36,10 @@ fn main() {
     );
 
     let mut image = expect!(pe_file_reader.create_image(), "Broken file");
-    pe_file_reader.read_entry_method(&mut image).unwrap();
+    let method = pe_file_reader.read_entry_method(&mut image).unwrap();
+    image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
+    let mut interpreter = interpret::Interpreter::new();
+    interpreter.interpret(&mut image, method);
 }
 
 #[cfg(test)]

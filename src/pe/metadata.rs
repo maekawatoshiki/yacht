@@ -10,8 +10,11 @@ use std::{cell::RefCell, rc::Rc};
 pub struct Image {
     pub cli_info: CLIInfo,
     pub metadata: MetaDataStreams,
-    pub method_cache: FxHashMap<usize, MethodBodyRef>,
     pub reader: Option<Rc<RefCell<PEFileReader>>>,
+    // Cache
+    pub method_cache: FxHashMap<usize, MethodBodyRef>,
+    // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
+    // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
 }
 
 #[derive(Debug, Clone)]
