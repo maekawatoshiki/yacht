@@ -314,17 +314,84 @@ impl TableKind {
     }
 }
 
-// impl Table {
-//     fn dump(&self, section: &SectionHeader) {
-//         match self {
-//             Table::MethodDef(mdt) => mdt.dump(section),
-//         }
-//     }
-// }
-//
-// impl MethodDefTable {
-//     fn dump(&self, section: &SectionHeader) {
-//         let virtual_address = section.virtual_address;
-//         self.rva
-//     }
-// }
+#[test]
+fn test_table_kind() {
+    TableKind::into_table_kind(0x20).unwrap();
+    TableKind::into_table_kind(0x22).unwrap();
+    TableKind::into_table_kind(0x21).unwrap();
+    TableKind::into_table_kind(0x23).unwrap();
+    TableKind::into_table_kind(0x25).unwrap();
+    TableKind::into_table_kind(0x24).unwrap();
+    TableKind::into_table_kind(0x0F).unwrap();
+    TableKind::into_table_kind(0x0B).unwrap();
+    TableKind::into_table_kind(0x0C).unwrap();
+    TableKind::into_table_kind(0x0E).unwrap();
+    TableKind::into_table_kind(0x12).unwrap();
+    TableKind::into_table_kind(0x14).unwrap();
+    TableKind::into_table_kind(0x27).unwrap();
+    TableKind::into_table_kind(0x04).unwrap();
+    TableKind::into_table_kind(0x10).unwrap();
+    TableKind::into_table_kind(0x0D).unwrap();
+    TableKind::into_table_kind(0x1D).unwrap();
+    TableKind::into_table_kind(0x26).unwrap();
+    TableKind::into_table_kind(0x2A).unwrap();
+    TableKind::into_table_kind(0x2C).unwrap();
+    TableKind::into_table_kind(0x1C).unwrap();
+    TableKind::into_table_kind(0x09).unwrap();
+    TableKind::into_table_kind(0x28).unwrap();
+    TableKind::into_table_kind(0x0A).unwrap();
+    TableKind::into_table_kind(0x06).unwrap();
+    TableKind::into_table_kind(0x19).unwrap();
+    TableKind::into_table_kind(0x18).unwrap();
+    TableKind::into_table_kind(0x2B).unwrap();
+    TableKind::into_table_kind(0x00).unwrap();
+    TableKind::into_table_kind(0x1A).unwrap();
+    TableKind::into_table_kind(0x29).unwrap();
+    TableKind::into_table_kind(0x08).unwrap();
+    TableKind::into_table_kind(0x17).unwrap();
+    TableKind::into_table_kind(0x15).unwrap();
+    TableKind::into_table_kind(0x11).unwrap();
+    TableKind::into_table_kind(0x02).unwrap();
+    TableKind::into_table_kind(0x01).unwrap();
+    TableKind::into_table_kind(0x1B).unwrap();
+    assert_eq!(TableKind::into_table_kind(0xFF), None);
+
+    assert_eq!(TableKind::Assembly.into_num(), 0x20);
+    assert_eq!(TableKind::AssemblyOS.into_num(), 0x22);
+    assert_eq!(TableKind::AssemblyProcessor.into_num(), 0x21);
+    assert_eq!(TableKind::AssemblyRef.into_num(), 0x23);
+    assert_eq!(TableKind::AssemblyRefOS.into_num(), 0x25);
+    assert_eq!(TableKind::AssemblyRefProcessor.into_num(), 0x24);
+    assert_eq!(TableKind::ClassLayout.into_num(), 0x0F);
+    assert_eq!(TableKind::Constant.into_num(), 0x0B);
+    assert_eq!(TableKind::CustomAttribute.into_num(), 0x0C);
+    assert_eq!(TableKind::DeclSecurity.into_num(), 0x0E);
+    assert_eq!(TableKind::EventMap.into_num(), 0x12);
+    assert_eq!(TableKind::Event.into_num(), 0x14);
+    assert_eq!(TableKind::ExportedType.into_num(), 0x27);
+    assert_eq!(TableKind::Field.into_num(), 0x04);
+    assert_eq!(TableKind::FieldLayout.into_num(), 0x10);
+    assert_eq!(TableKind::FieldMarshal.into_num(), 0x0D);
+    assert_eq!(TableKind::FieldRVA.into_num(), 0x1D);
+    assert_eq!(TableKind::File.into_num(), 0x26);
+    assert_eq!(TableKind::GenericParam.into_num(), 0x2A);
+    assert_eq!(TableKind::GenericParamConstraint.into_num(), 0x2C);
+    assert_eq!(TableKind::ImplMap.into_num(), 0x1C);
+    assert_eq!(TableKind::InterfaceImpl.into_num(), 0x09);
+    assert_eq!(TableKind::ManifestResource.into_num(), 0x28);
+    assert_eq!(TableKind::MemberRef.into_num(), 0x0A);
+    assert_eq!(TableKind::MethodDef.into_num(), 0x06);
+    assert_eq!(TableKind::MethodImpl.into_num(), 0x19);
+    assert_eq!(TableKind::MethodSemantics.into_num(), 0x18);
+    assert_eq!(TableKind::MethodSpec.into_num(), 0x2B);
+    assert_eq!(TableKind::Module.into_num(), 0x00);
+    assert_eq!(TableKind::ModuleRef.into_num(), 0x1A);
+    assert_eq!(TableKind::NestedClass.into_num(), 0x29);
+    assert_eq!(TableKind::Param.into_num(), 0x08);
+    assert_eq!(TableKind::Property.into_num(), 0x17);
+    assert_eq!(TableKind::PropertyMap.into_num(), 0x15);
+    assert_eq!(TableKind::StandAloneSig.into_num(), 0x11);
+    assert_eq!(TableKind::TypeDef.into_num(), 0x02);
+    assert_eq!(TableKind::TypeRef.into_num(), 0x01);
+    assert_eq!(TableKind::TypeSpec.into_num(), 0x1B);
+}
