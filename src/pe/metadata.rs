@@ -1,8 +1,9 @@
 // use crate::pe::header::SectionHeader;
+use rustc_hash::FxHashMap;
 
 /// #~ Stream
 #[derive(Debug, Clone)]
-pub struct HashTildaStream {
+pub struct MetaDataStream {
     /// Major version of table schemata; shall be 2
     pub major_version: u8,
 
@@ -24,17 +25,19 @@ pub struct HashTildaStream {
     pub rows: Vec<u32>,
 
     /// The sequence of physical tables.
-    pub tables: Vec<Table>,
+    pub tables: Vec<Vec<Table>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct MetaDataStreams {
-    pub metadata_stream: HashTildaStream,
-    pub strings: Vec<char>,
+    pub metadata_stream: MetaDataStream,
+    pub strings: FxHashMap<u32, String>,
     pub user_strings: Vec<u16>,
-    pub blob: Vec<u8>,
+    pub blob: FxHashMap<u32, Vec<u8>>,
     pub guid: String,
 }
+
+pub const NUM_TABLES: usize = 45;
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum TableKind {
@@ -124,92 +127,92 @@ pub enum Table {
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[repr(C, packed)]
 pub struct AssemblyTable {
-    hash_alg_id: u32,
-    major_version: u16,
-    minor_version: u16,
-    build_number: u16,
-    revision_number: u16,
-    flags: u32,
-    public_key: u16,
-    name: u16,
-    culture: u16,
+    pub hash_alg_id: u32,
+    pub major_version: u16,
+    pub minor_version: u16,
+    pub build_number: u16,
+    pub revision_number: u16,
+    pub flags: u32,
+    pub public_key: u16,
+    pub name: u16,
+    pub culture: u16,
 }
 
 /// II.22.15 AssemblyRef
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[repr(C, packed)]
 pub struct AssemblyRefTable {
-    major_version: u16,
-    minor_version: u16,
-    build_number: u16,
-    revision_number: u16,
-    flags: u32,
-    public_key_or_token: u16,
-    name: u16,
-    culture: u16,
-    hash_value: u16,
+    pub major_version: u16,
+    pub minor_version: u16,
+    pub build_number: u16,
+    pub revision_number: u16,
+    pub flags: u32,
+    pub public_key_or_token: u16,
+    pub name: u16,
+    pub culture: u16,
+    pub hash_value: u16,
 }
 
 /// II.22.10 CustomAttribute
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[repr(C, packed)]
 pub struct CustomAttributeTable {
-    parent: u16,
-    type_: u16,
-    value: u16,
+    pub parent: u16,
+    pub type_: u16,
+    pub value: u16,
 }
 
 /// II.22.25 MemberRef
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[repr(C, packed)]
 pub struct MemberRefTable {
-    class: u16,
-    name: u16,
-    signature: u16,
+    pub class: u16,
+    pub name: u16,
+    pub signature: u16,
 }
 
 /// II.22.26 MethodDef
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[repr(C, packed)]
 pub struct MethodDefTable {
-    rva: u32,
-    impl_flags: u16,
-    flags: u16,
-    name: u16,
-    signature: u16,
-    param_list: u16,
+    pub rva: u32,
+    pub impl_flags: u16,
+    pub flags: u16,
+    pub name: u16,
+    pub signature: u16,
+    pub param_list: u16,
 }
 
 /// II.22.30 Module
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[repr(C, packed)]
 pub struct ModuleTable {
-    generation: u16,
-    name: u16,
-    mvid: u16,
-    env_id: u16,
-    env_base_id: u16,
+    pub generation: u16,
+    pub name: u16,
+    pub mvid: u16,
+    pub env_id: u16,
+    pub env_base_id: u16,
 }
 
 /// II.22.37 TypeDef
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[repr(C, packed)]
 pub struct TypeDefTable {
-    flags: u32,
-    type_name: u16,
-    type_namespace: u16,
-    extends: u16,
-    field_list: u16,
-    module_list: u16,
+    pub flags: u32,
+    pub type_name: u16,
+    pub type_namespace: u16,
+    pub extends: u16,
+    pub field_list: u16,
+    pub module_list: u16,
 }
 
 /// II.22.38 TypeRef
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[repr(C, packed)]
 pub struct TypeRefTable {
-    resolution_scope: u16,
-    type_name: u16,
-    type_namespace: u16,
+    pub resolution_scope: u16,
+    pub type_name: u16,
+    pub type_namespace: u16,
 }
 
 impl TableKind {
@@ -264,6 +267,49 @@ impl TableKind {
             0x01 => Some(TableKind::TypeRef),
             0x1B => Some(TableKind::TypeSpec),
             _ => None,
+        }
+    }
+
+    pub fn into_num(self) -> usize {
+        match self {
+            TableKind::Assembly => 0x20,
+            TableKind::AssemblyOS => 0x22,
+            TableKind::AssemblyProcessor => 0x21,
+            TableKind::AssemblyRef => 0x23,
+            TableKind::AssemblyRefOS => 0x25,
+            TableKind::AssemblyRefProcessor => 0x24,
+            TableKind::ClassLayout => 0x0F,
+            TableKind::Constant => 0x0B,
+            TableKind::CustomAttribute => 0x0C,
+            TableKind::DeclSecurity => 0x0E,
+            TableKind::EventMap => 0x12,
+            TableKind::Event => 0x14,
+            TableKind::ExportedType => 0x27,
+            TableKind::Field => 0x04,
+            TableKind::FieldLayout => 0x10,
+            TableKind::FieldMarshal => 0x0D,
+            TableKind::FieldRVA => 0x1D,
+            TableKind::File => 0x26,
+            TableKind::GenericParam => 0x2A,
+            TableKind::GenericParamConstraint => 0x2C,
+            TableKind::ImplMap => 0x1C,
+            TableKind::InterfaceImpl => 0x09,
+            TableKind::ManifestResource => 0x28,
+            TableKind::MemberRef => 0x0A,
+            TableKind::MethodDef => 0x06,
+            TableKind::MethodImpl => 0x19,
+            TableKind::MethodSemantics => 0x18,
+            TableKind::MethodSpec => 0x2B,
+            TableKind::Module => 0x00,
+            TableKind::ModuleRef => 0x1A,
+            TableKind::NestedClass => 0x29,
+            TableKind::Param => 0x08,
+            TableKind::Property => 0x17,
+            TableKind::PropertyMap => 0x15,
+            TableKind::StandAloneSig => 0x11,
+            TableKind::TypeDef => 0x02,
+            TableKind::TypeRef => 0x01,
+            TableKind::TypeSpec => 0x1B,
         }
     }
 }

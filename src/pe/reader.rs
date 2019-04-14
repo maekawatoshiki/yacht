@@ -1,3 +1,5 @@
+// TODO: What a dirty code
+
 // use super::attribute::{
 //     Annotation, Attribute, AttributeInfo, CodeAttribute, ElementValue, ElementValuePair, Exception,
 //     InnerClassesBody, LineNumber, StackMapFrame, StackMapFrameBody, VerificationTypeInfo,
@@ -8,6 +10,7 @@
 // use super::field::FieldInfo;
 // use super::method::MethodInfo;
 use crate::pe::{header::*, metadata::*};
+use rustc_hash::FxHashMap;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::io::{Seek, SeekFrom};
@@ -91,11 +94,63 @@ impl PEFileReader {
             stream_headers.push(stream);
         }
 
-        dprintln!("Streams: {:?}", stream_headers);
+        dprintln!("Stream headers: {:?}", stream_headers);
 
-        self.read_metadata_stream(metadata_offset, &metadata_header, &stream_headers)?;
+        let metadata_streams =
+            self.read_metadata_streams(metadata_offset, &metadata_header, &stream_headers)?;
+
+        self.dump_metadata_tables(&metadata_streams);
+
+        let kind = cli_header.entry_point_token as usize >> (32 - 8);
+        let row = cli_header.entry_point_token as usize & 0x00ffffff;
+        println!("entrytoken: kind: {:02X}, row: {:02X}", kind, row);
+
+        println!(
+            "entry: {:?}",
+            metadata_streams.metadata_stream.tables[kind][row]
+        );
 
         Some(())
+    }
+
+    fn dump_metadata_tables(&mut self, metadata_streams: &MetaDataStreams) {
+        for (_i, table) in metadata_streams.metadata_stream.tables.iter().enumerate() {
+            for row in table {
+                match row {
+                    Table::AssemblyRef(at) => unsafe {
+                        println!(
+                            ".assembly extern {} {{\n  \
+                             .ver {}:{}:{}:{}\n  \
+                             .publickeytoken = ({})\n}}",
+                            metadata_streams.strings.get(&(at.name as u32)).unwrap(),
+                            at.major_version,
+                            at.minor_version,
+                            at.build_number,
+                            at.revision_number,
+                            metadata_streams
+                                .blob
+                                .get(&(at.public_key_or_token as u32))
+                                .unwrap()
+                                .iter()
+                                .fold("".to_string(), |acc, x| format!("{}{:02X} ", acc, x))
+                        );
+                    },
+                    Table::Assembly(at) => unsafe {
+                        println!(
+                            ".assembly '{}' {{\n  \
+                             .ver {}:{}:{}:{}\n  \
+                             .custom\n}}",
+                            metadata_streams.strings.get(&(at.name as u32)).unwrap(),
+                            at.major_version,
+                            at.minor_version,
+                            at.build_number,
+                            at.revision_number,
+                        );
+                    },
+                    _ => {}
+                }
+            }
+        }
     }
 
     fn read_msdos_header(&mut self) -> Option<()> {
@@ -466,7 +521,7 @@ impl PEFileReader {
         Some(StreamHeader { offset, size, name })
     }
 
-    fn read_hash_tilda_stream(&mut self) -> Option<HashTildaStream> {
+    fn read_metadata_stream(&mut self) -> Option<MetaDataStream> {
         let reserved = self.read_u32()?;
         try_eq!(reserved == 0);
 
@@ -495,7 +550,7 @@ impl PEFileReader {
         let tables = self.read_metadata_tables(&table_kinds, &rows)?;
         dprintln!("MetaData Tables: {:?}", tables);
 
-        Some(HashTildaStream {
+        Some(MetaDataStream {
             major_version,
             minor_version,
             heap_sizes,
@@ -510,13 +565,15 @@ impl PEFileReader {
         &mut self,
         table_kinds: &[TableKind],
         rows: &[u32],
-    ) -> Option<Vec<Table>> {
-        let mut tables = vec![];
+    ) -> Option<Vec<Vec<Table>>> {
+        let mut tables: Vec<Vec<Table>> = ::std::iter::repeat_with(|| vec![])
+            .take(NUM_TABLES)
+            .collect();
 
         for (i, kind) in table_kinds.iter().enumerate() {
             let num = rows[i];
             for _ in 0..num {
-                tables.push(match kind {
+                tables[kind.into_num()].push(match kind {
                     TableKind::Module => Table::Module(self.read_struct::<ModuleTable>()?),
                     TableKind::TypeRef => Table::TypeRef(self.read_struct::<TypeRefTable>()?),
                     TableKind::TypeDef => Table::TypeDef(self.read_struct::<TypeDefTable>()?),
@@ -537,14 +594,14 @@ impl PEFileReader {
         Some(tables)
     }
 
-    fn read_metadata_stream(
+    fn read_metadata_streams(
         &mut self,
         metadata_offset: u64,
         metadata_header: &MetaDataHeader,
         stream_headers: &[StreamHeader],
     ) -> Option<MetaDataStreams> {
         // Some of followings are not streams, heaps.
-        let mut hash_tilda_stream = None;
+        let mut metadata_stream = None;
         let mut strings = None;
         let mut user_strings = None;
         let mut blob = None;
@@ -558,20 +615,30 @@ impl PEFileReader {
                 .ok()?;
             match stream_headers[i].name.as_str() {
                 "#~" => {
-                    let htstream = self.read_hash_tilda_stream()?;
-                    dprintln!("#~ stream: {:?}", htstream);
-                    hash_tilda_stream = Some(htstream);
+                    let stream = self.read_metadata_stream()?;
+                    dprintln!("#~ stream: {:?}", stream);
+                    metadata_stream = Some(stream);
                 }
                 "#Strings" => {
                     dprint!("#Strings stream:");
+                    let mut strings_ = FxHashMap::default();
                     let mut bytes = vec![];
-                    for _ in 0..stream_headers[i].size {
-                        let c = self.read_u8()? as char;
+                    let mut bgn = 0;
+                    for i in 0..stream_headers[i].size {
+                        let c = self.read_u8()?;
                         bytes.push(c);
-                        dprint!("{}", if c == '\0' { ' ' } else { c });
+                        if c == 0 {
+                            strings_
+                                .insert(bgn, ::std::str::from_utf8(&bytes).unwrap().to_string());
+                            bytes.clear();
+                            bgn = i + 1;
+                            dprint!(" ");
+                        } else {
+                            dprint!("{}", c as char);
+                        }
                     }
                     dprintln!("");
-                    strings = Some(bytes);
+                    strings = Some(strings_);
                 }
                 "#US" => {
                     let mut bytes = vec![];
@@ -586,12 +653,40 @@ impl PEFileReader {
                     user_strings = Some(bytes);
                 }
                 "#Blob" => {
+                    let mut blob_ = FxHashMap::default();
                     let mut bytes = vec![];
-                    for _ in 0..stream_headers[i].size {
-                        bytes.push(self.read_u8()?);
+                    let mut count = 0;
+
+                    while count < stream_headers[i].size {
+                        let bgn = count;
+                        let first = self.read_u8()? as u32;
+                        let len = if first & 0b10000000 == 0 {
+                            count += 1;
+                            first & 0b01111111
+                        } else if first & 0b10000000 > 0 {
+                            count += 2;
+                            ((first & 0b01111111) << 8) + self.read_u8()? as u32
+                        } else if first & 0b11000000 > 0 {
+                            count += 4;
+                            let x = self.read_u8()? as u32;
+                            let y = self.read_u8()? as u32;
+                            let z = self.read_u8()? as u32;
+                            ((first & 0b00111111) << 24) + (x << 16) + (y << 8) + z
+                        } else {
+                            return None;
+                        };
+
+                        for _ in 0..len {
+                            bytes.push(self.read_u8()?);
+                        }
+
+                        blob_.insert(bgn as u32, bytes.clone());
+                        bytes.clear();
+                        count += len as u32;
                     }
-                    dprintln!("#Blob stream: {:?}", bytes);
-                    blob = Some(bytes);
+
+                    dprintln!("#Blob stream: {:?}", blob_);
+                    blob = Some(blob_);
                 }
                 "#GUID" => {
                     let data1 = self.read_u32()?;
@@ -620,7 +715,7 @@ impl PEFileReader {
         }
 
         Some(MetaDataStreams {
-            metadata_stream: hash_tilda_stream.unwrap(),
+            metadata_stream: metadata_stream.unwrap(),
             strings: strings.unwrap(),
             user_strings: user_strings.unwrap(),
             blob: blob.unwrap(),
@@ -694,19 +789,3 @@ impl PEFileReader {
         }
     }
 }
-
-// ** blob **
-// let first = self.read_u8()? as usize;
-// println!(" first {} ", first);
-// let len = if first & 0b10000000 == 0 {
-//     first & 0b01111111
-// } else if first & 0b10000000 > 0 {
-//     ((first & 0b01111111) << 8) + self.read_u8()? as usize
-// } else if first & 0b11000000 > 0 {
-//     let x = self.read_u8()? as usize;
-//     let y = self.read_u8()? as usize;
-//     let z = self.read_u8()? as usize;
-//     ((first & 0b00111111) << 24) + (x << 16) + (y << 8) + z
-// } else {
-//     panic!()
-// };
