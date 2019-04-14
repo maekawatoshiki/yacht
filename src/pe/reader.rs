@@ -9,6 +9,7 @@
 // use super::constant::{Constant, ConstantType};
 // use super::field::FieldInfo;
 // use super::method::MethodInfo;
+use crate::exec::decode::BytesToInstructions;
 use crate::pe::{header::*, metadata::*, method::*};
 use rustc_hash::FxHashMap;
 use std::{
@@ -17,6 +18,7 @@ use std::{
     iter,
 };
 // use std::mem::transmute;
+use std::{cell::RefCell, rc::Rc};
 
 #[derive(Debug)]
 pub struct PEFileReader {
@@ -43,7 +45,7 @@ impl PEFileReader {
         })
     }
 
-    pub fn read(&mut self) -> Option<()> {
+    pub fn create_image(&mut self) -> Option<Image> {
         self.read_msdos_header()?;
 
         let pe_file_header = self.read_pe_file_header()?;
@@ -101,25 +103,49 @@ impl PEFileReader {
         let metadata_streams =
             self.read_metadata_streams(metadata_offset, &metadata_header, &stream_headers)?;
 
-        self.dump_metadata_tables(&metadata_streams);
+        // // self.dump_metadata_tables(&metadata_streams);
 
-        let kind = cli_header.entry_point_token as usize >> (32 - 8);
-        let row = cli_header.entry_point_token as usize & 0x00ffffff;
-        println!("entrytoken: kind: {:02X}, row: {:02X}", kind, row);
+        Some(Image {
+            cli_info: CLIInfo {
+                cli_header,
+                sections,
+            },
+            metadata: metadata_streams,
+            method_cache: FxHashMap::default(),
+            reader: None,
+        })
+    }
 
-        let method_or_file = &metadata_streams.metadata_stream.tables[kind][row - 1];
-        let method = match method_or_file {
+    pub fn read_entry_method(&mut self, image: &mut Image) -> Option<MethodBodyRef> {
+        let text_section = image
+            .cli_info
+            .sections
+            .iter()
+            .find(|section| section.name == ".text")
+            .unwrap();
+        let kind = image.cli_info.cli_header.entry_point_token as usize >> (32 - 8);
+        let row = image.cli_info.cli_header.entry_point_token as usize & 0x00ffffff;
+        let method_or_file = &image.metadata.metadata_stream.tables[kind][row - 1];
+        let method_table = match method_or_file {
             Table::MethodDef(t) => t,
             // TOOD: File
             _ => return None,
         };
-        println!("entry: {:?}", method);
-        let start =
-            (method.rva - text_section.virtual_address + text_section.pointer_to_raw_data) as u64;
-        println!("instrs begin at: {}", start);
-        println!("method: {:?}", self.read_method_body(start)?);
+        dprintln!("entry: {:?}", method_table);
+        let start = (method_table.rva - text_section.virtual_address
+            + text_section.pointer_to_raw_data) as u64;
+        dprintln!("method body begin at: {}", start);
+        let method = self.read_method_body(start)?;
+        println!("Method: {:?}", method);
+        println!(
+            "Instructions: {:?}",
+            BytesToInstructions::new(&method.body).convert()?
+        );
 
-        Some(())
+        let method_ref = Rc::new(RefCell::new(method));
+        image.method_cache.insert(row, method_ref.clone());
+
+        Some(method_ref)
     }
 
     fn read_method_body(&mut self, start: u64) -> Option<MethodBody> {
@@ -138,46 +164,46 @@ impl PEFileReader {
         }
     }
 
-    fn dump_metadata_tables(&mut self, metadata_streams: &MetaDataStreams) {
-        println!("A few tables are supported to dump:");
-        for (_i, table) in metadata_streams.metadata_stream.tables.iter().enumerate() {
-            for row in table {
-                match row {
-                    Table::AssemblyRef(at) => unsafe {
-                        println!(
-                            ".assembly extern {} {{\n  \
-                             .ver {}:{}:{}:{}\n  \
-                             .publickeytoken = ({})\n}}",
-                            metadata_streams.strings.get(&(at.name as u32)).unwrap(),
-                            at.major_version,
-                            at.minor_version,
-                            at.build_number,
-                            at.revision_number,
-                            metadata_streams
-                                .blob
-                                .get(&(at.public_key_or_token as u32))
-                                .unwrap()
-                                .iter()
-                                .fold("".to_string(), |acc, x| format!("{}{:02X} ", acc, x))
-                        );
-                    },
-                    Table::Assembly(at) => unsafe {
-                        println!(
-                            ".assembly '{}' {{\n  \
-                             .ver {}:{}:{}:{}\n  \
-                             .custom\n}}",
-                            metadata_streams.strings.get(&(at.name as u32)).unwrap(),
-                            at.major_version,
-                            at.minor_version,
-                            at.build_number,
-                            at.revision_number,
-                        );
-                    },
-                    _ => {}
-                }
-            }
-        }
-    }
+    // fn dump_metadata_tables(&mut self, metadata_streams: &MetaDataStreams) {
+    //     println!("A few tables are supported to dump:");
+    //     for (_i, table) in metadata_streams.metadata_stream.tables.iter().enumerate() {
+    //         for row in table {
+    //             match row {
+    //                 Table::AssemblyRef(at) => unsafe {
+    //                     println!(
+    //                         ".assembly extern {} {{\n  \
+    //                          .ver {}:{}:{}:{}\n  \
+    //                          .publickeytoken = ({})\n}}",
+    //                         metadata_streams.strings.get(&(at.name as u32)).unwrap(),
+    //                         at.major_version,
+    //                         at.minor_version,
+    //                         at.build_number,
+    //                         at.revision_number,
+    //                         metadata_streams
+    //                             .blob
+    //                             .get(&(at.public_key_or_token as u32))
+    //                             .unwrap()
+    //                             .iter()
+    //                             .fold("".to_string(), |acc, x| format!("{}{:02X} ", acc, x))
+    //                     );
+    //                 },
+    //                 Table::Assembly(at) => unsafe {
+    //                     println!(
+    //                         ".assembly '{}' {{\n  \
+    //                          .ver {}:{}:{}:{}\n  \
+    //                          .custom\n}}",
+    //                         metadata_streams.strings.get(&(at.name as u32)).unwrap(),
+    //                         at.major_version,
+    //                         at.minor_version,
+    //                         at.build_number,
+    //                         at.revision_number,
+    //                     );
+    //                 },
+    //                 _ => {}
+    //             }
+    //         }
+    //     }
+    // }
 
     fn read_msdos_header(&mut self) -> Option<()> {
         let mut first = [0u8; 60];

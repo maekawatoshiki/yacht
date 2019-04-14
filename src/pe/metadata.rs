@@ -1,5 +1,24 @@
-// use crate::pe::header::SectionHeader;
+use crate::pe::{
+    header::{CLIHeader, SectionHeader},
+    method::*,
+    reader::PEFileReader,
+};
 use rustc_hash::FxHashMap;
+use std::{cell::RefCell, rc::Rc};
+
+#[derive(Debug, Clone)]
+pub struct Image {
+    pub cli_info: CLIInfo,
+    pub metadata: MetaDataStreams,
+    pub method_cache: FxHashMap<usize, MethodBodyRef>,
+    pub reader: Option<Rc<RefCell<PEFileReader>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CLIInfo {
+    pub cli_header: CLIHeader,
+    pub sections: Vec<SectionHeader>,
+}
 
 /// #~ Stream
 #[derive(Debug, Clone)]

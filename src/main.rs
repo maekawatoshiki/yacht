@@ -33,7 +33,8 @@ fn main() {
         format!("File not found '{}'", filename)
     );
 
-    expect!(pe_file_reader.read(), "Broken file");
+    let mut image = expect!(pe_file_reader.create_image(), "Broken file");
+    pe_file_reader.read_entry_method(&mut image).unwrap();
 }
 
 #[cfg(test)]

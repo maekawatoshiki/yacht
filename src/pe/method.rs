@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 pub const TINY_FORMAT: u8 = 0x2;
 pub const FAT_FORMAT: u8 = 0x3;
 
@@ -24,3 +26,5 @@ pub struct MethodBody {
     pub ty: MethodHeaderType,
     pub body: Vec<u8>,
 }
+
+pub type MethodBodyRef = Rc<RefCell<MethodBody>>;
