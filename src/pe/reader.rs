@@ -11,9 +11,11 @@
 // use super::method::MethodInfo;
 use crate::pe::{header::*, metadata::*, method::*};
 use rustc_hash::FxHashMap;
-use std::fs::File;
-use std::io::{BufReader, Read};
-use std::io::{Seek, SeekFrom};
+use std::{
+    fs::File,
+    io::{BufReader, Read, Seek, SeekFrom},
+    iter,
+};
 // use std::mem::transmute;
 
 #[derive(Debug)]
@@ -137,6 +139,7 @@ impl PEFileReader {
     }
 
     fn dump_metadata_tables(&mut self, metadata_streams: &MetaDataStreams) {
+        println!("A few tables are supported to dump:");
         for (_i, table) in metadata_streams.metadata_stream.tables.iter().enumerate() {
             for row in table {
                 match row {
@@ -589,9 +592,7 @@ impl PEFileReader {
         table_kinds: &[TableKind],
         rows: &[u32],
     ) -> Option<Vec<Vec<Table>>> {
-        let mut tables: Vec<Vec<Table>> = ::std::iter::repeat_with(|| vec![])
-            .take(NUM_TABLES)
-            .collect();
+        let mut tables: Vec<Vec<Table>> = iter::repeat_with(|| vec![]).take(NUM_TABLES).collect();
 
         for (i, kind) in table_kinds.iter().enumerate() {
             let num = rows[i];
@@ -664,16 +665,40 @@ impl PEFileReader {
                     strings = Some(strings_);
                 }
                 "#US" => {
+                    let mut user_strings_ = FxHashMap::default();
                     let mut bytes = vec![];
-                    for _ in 0..stream_headers[i].size / 2 {
-                        let c = self.read_u16()?;
-                        bytes.push(c);
+                    let mut count = 0;
+                    while count < stream_headers[i].size {
+                        let bgn = count;
+                        let first = self.read_u8()? as u32;
+                        let len = if first & 0b10000000 == 0 {
+                            count += 1;
+                            first & 0b01111111
+                        } else if first & 0b10000000 > 0 {
+                            count += 2;
+                            ((first & 0b01111111) << 8) + self.read_u8()? as u32
+                        } else if first & 0b11000000 > 0 {
+                            count += 4;
+                            let x = self.read_u8()? as u32;
+                            let y = self.read_u8()? as u32;
+                            let z = self.read_u8()? as u32;
+                            ((first & 0b00111111) << 24) + (x << 16) + (y << 8) + z
+                        } else {
+                            return None;
+                        };
+
+                        for _ in 0..len / 2 {
+                            bytes.push(self.read_u16()?);
+                        }
+
+                        user_strings_.insert(bgn as u32, bytes.clone());
+                        bytes.clear();
+                        count += len as u32;
                     }
-                    dprintln!(
-                        "#US stream (roughly conveted into UTF8): {}",
-                        String::from_utf16(&bytes).unwrap()
-                    );
-                    user_strings = Some(bytes);
+                    when_debug!(for (i, us) in &user_strings_ {
+                        dprintln!("#US({:02X}): '{}'", i, String::from_utf16(&us).ok()?)
+                    });
+                    user_strings = Some(user_strings_);
                 }
                 "#Blob" => {
                     let mut blob_ = FxHashMap::default();

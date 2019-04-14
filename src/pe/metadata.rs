@@ -32,7 +32,7 @@ pub struct MetaDataStream {
 pub struct MetaDataStreams {
     pub metadata_stream: MetaDataStream,
     pub strings: FxHashMap<u32, String>,
-    pub user_strings: Vec<u16>,
+    pub user_strings: FxHashMap<u32, Vec<u16>>,
     pub blob: FxHashMap<u32, Vec<u8>>,
     pub guid: String,
 }
