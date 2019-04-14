@@ -9,7 +9,7 @@
 // use super::constant::{Constant, ConstantType};
 // use super::field::FieldInfo;
 // use super::method::MethodInfo;
-use crate::pe::{header::*, metadata::*};
+use crate::pe::{header::*, metadata::*, method::*};
 use rustc_hash::FxHashMap;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -105,12 +105,35 @@ impl PEFileReader {
         let row = cli_header.entry_point_token as usize & 0x00ffffff;
         println!("entrytoken: kind: {:02X}, row: {:02X}", kind, row);
 
-        println!(
-            "entry: {:?}",
-            metadata_streams.metadata_stream.tables[kind][row]
-        );
+        let method_or_file = &metadata_streams.metadata_stream.tables[kind][row - 1];
+        let method = match method_or_file {
+            Table::MethodDef(t) => t,
+            // TOOD: File
+            _ => return None,
+        };
+        println!("entry: {:?}", method);
+        let start =
+            (method.rva - text_section.virtual_address + text_section.pointer_to_raw_data) as u64;
+        println!("instrs begin at: {}", start);
+        println!("method: {:?}", self.read_method_body(start)?);
 
         Some(())
+    }
+
+    fn read_method_body(&mut self, start: u64) -> Option<MethodBody> {
+        self.reader.seek(SeekFrom::Start(start)).ok()?;
+
+        let first = self.read_u8()?;
+        let ty = MethodHeaderType::check(first)?;
+
+        match ty {
+            MethodHeaderType::TinyFormat { bytes } => {
+                let mut body = vec![0u8; bytes];
+                self.read_bytes(body.as_mut_slice())?;
+                Some(MethodBody { ty, body })
+            }
+            MethodHeaderType::FatFormat => None,
+        }
     }
 
     fn dump_metadata_tables(&mut self, metadata_streams: &MetaDataStreams) {
