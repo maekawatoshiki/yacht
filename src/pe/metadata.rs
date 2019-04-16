@@ -367,6 +367,12 @@ impl TableKind {
     }
 }
 
+impl Image {
+    pub fn get_string<T: Into<u32>>(&self, n: T) -> &String {
+        self.metadata.strings.get(&n.into()).unwrap()
+    }
+}
+
 #[test]
 fn test_table_kind() {
     TableKind::into_table_kind(0x20).unwrap();

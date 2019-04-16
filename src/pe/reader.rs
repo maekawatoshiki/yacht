@@ -136,7 +136,7 @@ impl PEFileReader {
             + text_section.pointer_to_raw_data) as u64;
         dprintln!("method body begin at: {}", start);
         let method = self.read_method_body(start)?;
-        println!("Method: {:?}", method);
+        dprintln!("Method: {:?}", method);
 
         let method_ref = Rc::new(RefCell::new(method));
         image.method_cache.insert(row, method_ref.clone());
