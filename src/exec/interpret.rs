@@ -1,6 +1,6 @@
 use crate::{
     exec::instruction::*,
-    pe::{metadata::Image, method::MethodBodyRef},
+    pe::{metadata::*, method::MethodBodyRef},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,8 +34,41 @@ impl Interpreter {
                     self.stack_push(Value::String(*us_offset));
                 }
                 Instruction::Call { table, entry } => {
+                    // TODO: Refacotr
                     let table = &image.metadata.metadata_stream.tables[*table][*entry - 1];
-                    println!("call table {:?}", table);
+                    match table {
+                        Table::MemberRef(mrt) => {
+                            println!("call:");
+                            let name = image.metadata.strings.get(&(mrt.name as u32)).unwrap();
+                            let (table, entry) = mrt.class_table_and_entry();
+                            let class = &image.metadata.metadata_stream.tables[table][entry - 1];
+                            match class {
+                                Table::TypeRef(trt) => {
+                                    let (table, entry) = trt.resolution_scope_table_and_entry();
+                                    println!(
+                                        "  resolution:\n    \
+                                         {:?}\n    \
+                                         {:?}\n    \
+                                         {:?}",
+                                        image.metadata.metadata_stream.tables[table][entry - 1],
+                                        image
+                                            .metadata
+                                            .strings
+                                            .get(&(trt.type_name as u32))
+                                            .unwrap(),
+                                        image
+                                            .metadata
+                                            .strings
+                                            .get(&(trt.type_namespace as u32))
+                                            .unwrap(),
+                                    );
+                                }
+                                _ => unimplemented!(),
+                            }
+                            println!("  name: {:?}, class: {:?}", name, class);
+                        }
+                        _ => unimplemented!(),
+                    }
                 }
                 _ => {}
             }

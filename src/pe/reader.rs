@@ -690,7 +690,6 @@ impl PEFileReader {
                     let mut bgn = 0;
                     for i in 0..stream_headers[i].size {
                         let c = self.read_u8()?;
-                        bytes.push(c);
                         if c == 0 {
                             strings_
                                 .insert(bgn, ::std::str::from_utf8(&bytes).unwrap().to_string());
@@ -699,6 +698,7 @@ impl PEFileReader {
                             dprint!(" ");
                         } else {
                             dprint!("{}", c as char);
+                            bytes.push(c);
                         }
                     }
                     dprintln!("");

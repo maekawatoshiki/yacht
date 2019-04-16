@@ -237,6 +237,37 @@ pub struct TypeRefTable {
     pub type_namespace: u16,
 }
 
+impl MemberRefTable {
+    pub fn class_table_and_entry(&self) -> (usize, usize) {
+        let tag = self.class & 0b0000_0000_0000_0111; // MemberRefParent
+        let table = match tag {
+            0 => TableKind::TypeDef.into_num(),
+            1 => TableKind::TypeRef.into_num(),
+            2 => TableKind::ModuleRef.into_num(),
+            3 => TableKind::MethodDef.into_num(),
+            4 => TableKind::TypeSpec.into_num(),
+            _ => unreachable!(),
+        };
+        let entry = self.class as usize >> 3;
+        (table, entry)
+    }
+}
+
+impl TypeRefTable {
+    pub fn resolution_scope_table_and_entry(&self) -> (usize, usize) {
+        let tag = self.resolution_scope & 0b0000_0000_0000_0011; // ResolutionScope
+        let table = match tag {
+            0 => TableKind::Module.into_num(),
+            1 => TableKind::ModuleRef.into_num(),
+            2 => TableKind::AssemblyRef.into_num(),
+            3 => TableKind::TypeRef.into_num(),
+            _ => unreachable!(),
+        };
+        let entry = self.resolution_scope as usize >> 2;
+        (table, entry)
+    }
+}
+
 impl TableKind {
     pub fn table_kinds(valid: u64) -> Vec<TableKind> {
         let mut tables = vec![];
