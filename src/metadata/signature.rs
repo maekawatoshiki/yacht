@@ -8,6 +8,7 @@ pub struct Type {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ElementType {
     Void,
+    I4,
     String,
     FnPtr(Box<MethodSignature>),
 }
@@ -37,10 +38,20 @@ impl Type {
     pub fn into_type<'a>(sig: &mut Iter<'a, u8>) -> Option<Self> {
         match sig.next()? {
             0x1 => Some(Type::new(ElementType::Void)),
+            0x8 => Some(Type::new(ElementType::I4)),
             0xe => Some(Type::new(ElementType::String)),
             // TODO
             // 0x1b => Some(ElementType::FnPtr
             _ => None,
+        }
+    }
+
+    pub fn equal_method(&self, ret: ElementType, params: &[ElementType]) -> bool {
+        match self.base {
+            ElementType::FnPtr(ref ms) => {
+                ms.ret.base == ret && ms.params.iter().zip(params).all(|(p, q)| &p.base == q)
+            }
+            _ => false,
         }
     }
 }

@@ -139,7 +139,25 @@ impl PEFileReader {
         dprintln!("Method: {:?}", method);
 
         let method_ref = Rc::new(RefCell::new(method));
-        image.method_cache.insert(row, method_ref.clone());
+        image.method_cache.insert(start, method_ref.clone());
+
+        Some(method_ref)
+    }
+
+    pub fn read_method(&mut self, image: &mut Image, rva: u32) -> Option<MethodBodyRef> {
+        let text_section = image
+            .cli_info
+            .sections
+            .iter()
+            .find(|section| section.name == ".text")
+            .unwrap();
+        let start = (rva - text_section.virtual_address + text_section.pointer_to_raw_data) as u64;
+        dprintln!("Method body begin at: {}", start);
+        let method = self.read_method_body(start)?;
+        dprintln!("Method: {:?}", method);
+
+        let method_ref = Rc::new(RefCell::new(method));
+        image.method_cache.insert(start, method_ref.clone());
 
         Some(method_ref)
     }

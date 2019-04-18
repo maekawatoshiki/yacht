@@ -12,7 +12,7 @@ pub struct Image {
     pub metadata: MetaDataStreams,
     pub reader: Option<Rc<RefCell<PEFileReader>>>,
     // Cache
-    pub method_cache: FxHashMap<usize, MethodBodyRef>,
+    pub method_cache: FxHashMap<u64, MethodBodyRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
 }

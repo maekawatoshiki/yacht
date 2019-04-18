@@ -1,4 +1,5 @@
 use crate::exec::instruction::*;
+// mdt.rva
 use std::slice::Iter;
 
 #[derive(Debug, Clone)]
@@ -29,6 +30,10 @@ impl<'a> BytesToInstructions<'a> {
                     let table = token as usize >> (32 - 8);
                     let entry = token as usize & 0x00ffffff;
                     iseq.push(Instruction::Call { table, entry })
+                }
+                // ldc.i4.1
+                0x17 => {
+                    iseq.push(Instruction::Ldc_I4_1);
                 }
                 // ret
                 0x2a => iseq.push(Instruction::Ret),
