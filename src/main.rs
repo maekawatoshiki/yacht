@@ -1,5 +1,5 @@
 extern crate yacht;
-use yacht::{exec::interpret, pe::reader};
+use yacht::{exec::interpret, metadata::file_reader};
 
 extern crate clap;
 use clap::{App, Arg};
@@ -31,7 +31,7 @@ fn main() {
     } }}; }
 
     let mut pe_file_reader = expect!(
-        reader::PEFileReader::new(filename),
+        file_reader::PEFileReader::new(filename),
         format!("File not found '{}'", filename)
     );
 
@@ -45,12 +45,12 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
-    use yacht::{exec::interpret, pe::reader};
+    use yacht::{exec::interpret, metadata::file_reader};
 
     #[test]
     fn pe_file_reader() {
         for filename in &["./examples/hello.exe"] {
-            let mut pe_file_reader = reader::PEFileReader::new(filename).unwrap();
+            let mut pe_file_reader = file_reader::PEFileReader::new(filename).unwrap();
             let mut image = pe_file_reader.create_image().unwrap();
             let method = pe_file_reader.read_entry_method(&mut image).unwrap();
             image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));

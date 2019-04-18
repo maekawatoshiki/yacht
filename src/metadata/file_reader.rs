@@ -10,7 +10,7 @@
 // use super::field::FieldInfo;
 // use super::method::MethodInfo;
 use crate::exec::decode::BytesToInstructions;
-use crate::pe::{header::*, metadata::*, method::*};
+use crate::metadata::{header::*, metadata::*, method::*};
 use rustc_hash::FxHashMap;
 use std::{
     fs::File,

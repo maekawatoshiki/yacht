@@ -1,6 +1,6 @@
 use crate::{
     exec::instruction::*,
-    pe::{metadata::*, method::MethodBodyRef},
+    metadata::{metadata::*, method::MethodBodyRef, signature::*},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,6 +62,12 @@ impl Interpreter {
                                         ty_namespace,
                                         ty_name,
                                         name
+                                    );
+
+                                    when_debug!(
+                                        let sig = image.metadata.blob.get(&(mrt.signature as u32)).unwrap();
+                                        let ty = SignatureParser::new(sig).parse_method_ref_sig();
+                                        dprintln!("Method type: {:?}", ty);
                                     );
 
                                     if ar_name == "mscorlib"

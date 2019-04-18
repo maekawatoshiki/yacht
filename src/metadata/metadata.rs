@@ -1,7 +1,7 @@
-use crate::pe::{
+use crate::metadata::{
+    file_reader::PEFileReader,
     header::{CLIHeader, SectionHeader},
     method::*,
-    reader::PEFileReader,
 };
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
