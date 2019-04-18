@@ -28,13 +28,20 @@ impl<'a> BytesToInstructions<'a> {
                 0x28 => {
                     let token = self.read_u32()?;
                     let table = token as usize >> (32 - 8);
-                    let entry = token as usize & 0x00ffffff;
+                    let entry = token as usize & 0x00ff_ffff;
                     iseq.push(Instruction::Call { table, entry })
                 }
                 // ldc.i4.1
                 0x17 => {
                     iseq.push(Instruction::Ldc_I4_1);
                 }
+                // ldc.i4.s
+                0x1f => {
+                    let n = self.read_u8()?;
+                    iseq.push(Instruction::Ldc_I4_S { n: n as i32 })
+                }
+                // ldarg.0
+                0x02 => iseq.push(Instruction::Ldarg_0),
                 // ret
                 0x2a => iseq.push(Instruction::Ret),
                 _ => {}
@@ -46,6 +53,11 @@ impl<'a> BytesToInstructions<'a> {
 }
 
 impl<'a> BytesToInstructions<'a> {
+    fn read_u8(&mut self) -> Option<u8> {
+        let x = *self.iter.next()?;
+        Some(x)
+    }
+
     fn read_u32(&mut self) -> Option<u32> {
         let x = *self.iter.next()? as u32;
         let y = *self.iter.next()? as u32;

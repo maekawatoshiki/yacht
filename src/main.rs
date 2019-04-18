@@ -39,7 +39,7 @@ fn main() {
     let method = pe_file_reader.read_entry_method(&mut image).unwrap();
     image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
     let mut interpreter = interpret::Interpreter::new();
-    interpreter.interpret(&mut image, method);
+    interpreter.interpret(&mut image, method, &[]);
 }
 
 #[cfg(test)]

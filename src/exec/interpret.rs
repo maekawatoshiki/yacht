@@ -2,6 +2,7 @@ use crate::{
     exec::instruction::*,
     metadata::{metadata::*, method::MethodBodyRef, signature::*},
 };
+use std::iter::repeat_with;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
@@ -25,18 +26,20 @@ impl Interpreter {
         }
     }
 
-    pub fn interpret(&mut self, image: &mut Image, method: MethodBodyRef) {
+    pub fn interpret(&mut self, image: &mut Image, method: MethodBodyRef, arguments: &[Value]) {
         dprintln!("Interpreter starts");
         let iseq = &method.borrow().body;
 
         for instr in iseq {
+            dprintln!("stack({:?}): {:?}", instr, &self.stack[0..8]);
             match instr {
                 Instruction::Ldstr { us_offset } => self.stack_push(Value::String(*us_offset)),
                 Instruction::Ldc_I4_1 => self.stack_push(Value::Int32(1)),
+                Instruction::Ldc_I4_S { n } => self.stack_push(Value::Int32(*n)),
+                Instruction::Ldarg_0 => self.stack_push(arguments[0]),
                 Instruction::Call { table, entry } => self.instr_call(image, *table, *entry),
                 Instruction::Ret => break,
             }
-            dprintln!("stack: {:?}", &self.stack[0..8]);
         }
     }
 
@@ -105,9 +108,17 @@ impl Interpreter {
                 }
             }
             Table::MethodDef(mdt) => {
+                let params = {
+                    let sig = image.metadata.blob.get(&(mdt.signature as u32)).unwrap();
+                    let ty = SignatureParser::new(sig).parse_method_def_sig().unwrap();
+                    let method_sig = ty.as_fnptr().unwrap();
+                    repeat_with(|| self.stack_pop())
+                        .take(method_sig.params.len() as usize)
+                        .collect::<Vec<Value>>()
+                };
                 let reader = image.reader.as_mut().unwrap().clone();
                 let method_ref = reader.borrow_mut().read_method(image, mdt.rva).unwrap();
-                self.interpret(image, method_ref);
+                self.interpret(image, method_ref, &params);
             }
             e => unimplemented!("call: unimplemented: {:?}", e),
         }

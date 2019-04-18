@@ -651,7 +651,8 @@ impl PEFileReader {
                     TableKind::AssemblyRef => {
                         Table::AssemblyRef(self.read_struct::<AssemblyRefTable>()?)
                     }
-                    _ => Table::ModuleRef,
+                    TableKind::Param => Table::Param(self.read_struct::<ParamTable>()?),
+                    e => unimplemented!("{:?}", e),
                 })
             }
         }

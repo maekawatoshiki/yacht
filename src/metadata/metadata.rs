@@ -134,9 +134,9 @@ pub enum Table {
     // MethodSemantics,
     // MethodSpec,
     Module(ModuleTable),
-    ModuleRef,
+    // ModuleRef,
     // NestedClass,
-    // Param,
+    Param(ParamTable),
     // Property,
     // PropertyMap,
     // StandAloneSig,
@@ -214,6 +214,15 @@ pub struct ModuleTable {
     pub mvid: u16,
     pub env_id: u16,
     pub env_base_id: u16,
+}
+
+/// II.22.33 Param
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct ParamTable {
+    flags: u16,
+    sequence: u16,
+    name: u16,
 }
 
 /// II.22.37 TypeDef

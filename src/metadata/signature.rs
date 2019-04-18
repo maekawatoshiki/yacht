@@ -15,14 +15,14 @@ pub enum ElementType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodSignature {
-    /// Represent ``HASTHIS``, ``EXPLICITTHIS`` and ``VARARG``
-    info: u8,
+    /// Represent ``HASTHIS``, ``EXPLICITTHIS``, ``DEFAULT``, ``GENERIC`` and ``VARARG``
+    pub info: u8,
 
     /// Return type
-    ret: Type,
+    pub ret: Type,
 
     /// Parameters' types
-    params: Vec<Type>,
+    pub params: Vec<Type>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +54,13 @@ impl Type {
             _ => false,
         }
     }
+
+    pub fn as_fnptr(&self) -> Option<&MethodSignature> {
+        match self.base {
+            ElementType::FnPtr(ref fnptr) => Some(fnptr),
+            _ => None,
+        }
+    }
 }
 
 impl<'a> SignatureParser<'a> {
@@ -81,6 +88,28 @@ impl<'a> SignatureParser<'a> {
         } else {
             vec![]
         };
+
+        Some(Type::new(ElementType::FnPtr(Box::new(MethodSignature {
+            info: first,
+            ret,
+            params,
+        }))))
+    }
+
+    pub fn parse_method_def_sig(&mut self) -> Option<Type> {
+        let first = *self.sig.next()?;
+        let _default = first == 0;
+        let _has_this = first & 0x20;
+        let _explicit_this = first & 0x40;
+        let _var_arg = first & 0x5;
+        let _generic = first & 0x10;
+
+        let param_count = self.decompress_uint()?;
+        let ret = Type::into_type(&mut self.sig)?;
+
+        let params = repeat_with(|| Type::into_type(&mut self.sig).unwrap())
+            .take(param_count as usize)
+            .collect();
 
         Some(Type::new(ElementType::FnPtr(Box::new(MethodSignature {
             info: first,

@@ -3,6 +3,8 @@
 pub enum Instruction {
     Ldstr { us_offset: u32 },
     Ldc_I4_1,
+    Ldc_I4_S { n: i32 },
+    Ldarg_0,
     Call { table: usize, entry: usize },
     Ret,
 }
