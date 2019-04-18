@@ -42,6 +42,10 @@ impl<'a> BytesToInstructions<'a> {
                 }
                 // ldarg.0
                 0x02 => iseq.push(Instruction::Ldarg_0),
+                // ldarg.1
+                0x03 => iseq.push(Instruction::Ldarg_1),
+                // add
+                0x58 => iseq.push(Instruction::Add),
                 // ret
                 0x2a => iseq.push(Instruction::Ret),
                 _ => {}

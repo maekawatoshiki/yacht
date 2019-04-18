@@ -2,7 +2,6 @@ use crate::{
     exec::instruction::*,
     metadata::{metadata::*, method::MethodBodyRef, signature::*},
 };
-use std::iter::repeat_with;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
@@ -27,6 +26,14 @@ impl Interpreter {
     }
 
     pub fn interpret(&mut self, image: &mut Image, method: MethodBodyRef, arguments: &[Value]) {
+        macro_rules! numeric_op {
+            ($op:ident) => {{
+                let y = self.stack_pop();
+                let x = self.stack_pop();
+                self.stack_push(x.$op(y))
+            }};
+        }
+
         dprintln!("Interpreter starts");
         let iseq = &method.borrow().body;
 
@@ -37,6 +44,8 @@ impl Interpreter {
                 Instruction::Ldc_I4_1 => self.stack_push(Value::Int32(1)),
                 Instruction::Ldc_I4_S { n } => self.stack_push(Value::Int32(*n)),
                 Instruction::Ldarg_0 => self.stack_push(arguments[0]),
+                Instruction::Ldarg_1 => self.stack_push(arguments[1]),
+                Instruction::Add => numeric_op!(add),
                 Instruction::Call { table, entry } => self.instr_call(image, *table, *entry),
                 Instruction::Ret => break,
             }
@@ -53,6 +62,12 @@ impl Interpreter {
     pub fn stack_pop(&mut self) -> Value {
         self.stack_ptr -= 1;
         self.stack[self.base_ptr + self.stack_ptr]
+    }
+
+    #[inline]
+    pub fn stack_pop_last_elements(&mut self, n: usize) -> Vec<Value> {
+        self.stack_ptr -= n;
+        self.stack[(self.base_ptr + self.stack_ptr)..].to_vec()
     }
 }
 
@@ -112,9 +127,7 @@ impl Interpreter {
                     let sig = image.metadata.blob.get(&(mdt.signature as u32)).unwrap();
                     let ty = SignatureParser::new(sig).parse_method_def_sig().unwrap();
                     let method_sig = ty.as_fnptr().unwrap();
-                    repeat_with(|| self.stack_pop())
-                        .take(method_sig.params.len() as usize)
-                        .collect::<Vec<Value>>()
+                    self.stack_pop_last_elements(method_sig.params.len() as usize)
                 };
                 let reader = image.reader.as_mut().unwrap().clone();
                 let method_ref = reader.borrow_mut().read_method(image, mdt.rva).unwrap();
@@ -137,6 +150,13 @@ impl Value {
         match self {
             Value::Int32(n) => Some(*n),
             _ => None,
+        }
+    }
+
+    pub fn add(self, y: Value) -> Value {
+        match (self, y) {
+            (Value::Int32(x), Value::Int32(y)) => Value::Int32(x + y),
+            _ => panic!(),
         }
     }
 }
