@@ -14,6 +14,7 @@ pub struct Interpreter {
     stack: [Value; 1024],
     base_ptr: usize,
     stack_ptr: usize,
+    program_counter: usize,
 }
 
 impl Interpreter {
@@ -22,6 +23,7 @@ impl Interpreter {
             stack: [Value::Int32(0); 1024],
             base_ptr: 0,
             stack_ptr: 0,
+            program_counter: 0,
         }
     }
 
@@ -34,21 +36,24 @@ impl Interpreter {
             }};
         }
 
-        dprintln!("Interpreter starts");
         let iseq = &method.borrow().body;
 
-        for instr in iseq {
-            dprintln!("stack({:?}): {:?}", instr, &self.stack[0..8]);
+        loop {
+            let instr = &iseq[self.program_counter];
             match instr {
                 Instruction::Ldstr { us_offset } => self.stack_push(Value::String(*us_offset)),
+                Instruction::Ldc_I4_0 => self.stack_push(Value::Int32(0)),
                 Instruction::Ldc_I4_1 => self.stack_push(Value::Int32(1)),
                 Instruction::Ldc_I4_S { n } => self.stack_push(Value::Int32(*n)),
                 Instruction::Ldarg_0 => self.stack_push(arguments[0]),
                 Instruction::Ldarg_1 => self.stack_push(arguments[1]),
+                Instruction::Pop => self.stack_ptr -= 1,
+                Instruction::Bge { target } => self.instr_bge(image, *target),
                 Instruction::Add => numeric_op!(add),
                 Instruction::Call { table, entry } => self.instr_call(image, *table, *entry),
                 Instruction::Ret => break,
             }
+            self.program_counter += 1;
         }
     }
 
@@ -123,17 +128,30 @@ impl Interpreter {
                 }
             }
             Table::MethodDef(mdt) => {
+                let saved_program_counter = self.program_counter;
+                self.program_counter = 0;
+
                 let params = {
                     let sig = image.metadata.blob.get(&(mdt.signature as u32)).unwrap();
                     let ty = SignatureParser::new(sig).parse_method_def_sig().unwrap();
                     let method_sig = ty.as_fnptr().unwrap();
                     self.stack_pop_last_elements(method_sig.params.len() as usize)
                 };
-                let reader = image.reader.as_mut().unwrap().clone();
-                let method_ref = reader.borrow_mut().read_method(image, mdt.rva).unwrap();
+                let method_ref = image.get_method(mdt.rva);
+
                 self.interpret(image, method_ref, &params);
+
+                self.program_counter = saved_program_counter;
             }
             e => unimplemented!("call: unimplemented: {:?}", e),
+        }
+    }
+
+    fn instr_bge(&mut self, _image: &mut Image, target: usize) {
+        let val2 = self.stack_pop();
+        let val1 = self.stack_pop();
+        if val1.ge(val2) {
+            self.program_counter = target /* interpret() everytime increments pc */- 1
         }
     }
 }
@@ -156,6 +174,13 @@ impl Value {
     pub fn add(self, y: Value) -> Value {
         match (self, y) {
             (Value::Int32(x), Value::Int32(y)) => Value::Int32(x + y),
+            _ => panic!(),
+        }
+    }
+
+    pub fn ge(self, y: Value) -> bool {
+        match (self, y) {
+            (Value::Int32(x), Value::Int32(y)) => x >= y,
             _ => panic!(),
         }
     }

@@ -12,7 +12,7 @@ pub struct Image {
     pub metadata: MetaDataStreams,
     pub reader: Option<Rc<RefCell<PEFileReader>>>,
     // Cache
-    pub method_cache: FxHashMap<u64, MethodBodyRef>,
+    pub method_cache: FxHashMap<u32, MethodBodyRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
 }
@@ -379,6 +379,16 @@ impl TableKind {
 impl Image {
     pub fn get_string<T: Into<u32>>(&self, n: T) -> &String {
         self.metadata.strings.get(&n.into()).unwrap()
+    }
+
+    pub fn get_method(&mut self, rva: u32) -> MethodBodyRef {
+        if let Some(method_ref) = self.method_cache.get(&rva) {
+            return method_ref.clone();
+        }
+        let reader = self.reader.as_mut().unwrap().clone();
+        let method_ref = reader.borrow_mut().read_method(self, rva).unwrap();
+        self.method_cache.insert(rva, method_ref.clone());
+        method_ref
     }
 }
 

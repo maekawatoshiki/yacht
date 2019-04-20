@@ -139,7 +139,9 @@ impl PEFileReader {
         dprintln!("Method: {:?}", method);
 
         let method_ref = Rc::new(RefCell::new(method));
-        image.method_cache.insert(start, method_ref.clone());
+        image
+            .method_cache
+            .insert(method_table.rva, method_ref.clone());
 
         Some(method_ref)
     }
@@ -157,7 +159,7 @@ impl PEFileReader {
         dprintln!("Method: {:?}", method);
 
         let method_ref = Rc::new(RefCell::new(method));
-        image.method_cache.insert(start, method_ref.clone());
+        image.method_cache.insert(rva, method_ref.clone());
 
         Some(method_ref)
     }
