@@ -44,12 +44,14 @@ impl Interpreter {
                 Instruction::Ldstr { us_offset } => self.stack_push(Value::String(*us_offset)),
                 Instruction::Ldc_I4_0 => self.stack_push(Value::Int32(0)),
                 Instruction::Ldc_I4_1 => self.stack_push(Value::Int32(1)),
+                Instruction::Ldc_I4_2 => self.stack_push(Value::Int32(2)),
                 Instruction::Ldc_I4_S { n } => self.stack_push(Value::Int32(*n)),
                 Instruction::Ldarg_0 => self.stack_push(arguments[0]),
                 Instruction::Ldarg_1 => self.stack_push(arguments[1]),
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Bge { target } => self.instr_bge(image, *target),
                 Instruction::Add => numeric_op!(add),
+                Instruction::Sub => numeric_op!(sub),
                 Instruction::Call { table, entry } => self.instr_call(image, *table, *entry),
                 Instruction::Ret => break,
             }
@@ -174,6 +176,13 @@ impl Value {
     pub fn add(self, y: Value) -> Value {
         match (self, y) {
             (Value::Int32(x), Value::Int32(y)) => Value::Int32(x + y),
+            _ => panic!(),
+        }
+    }
+
+    pub fn sub(self, y: Value) -> Value {
+        match (self, y) {
+            (Value::Int32(x), Value::Int32(y)) => Value::Int32(x - y),
             _ => panic!(),
         }
     }

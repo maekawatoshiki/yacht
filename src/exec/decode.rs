@@ -23,7 +23,7 @@ impl<'a> BytesToInstructions<'a> {
         self.make_target_map();
 
         while let Some((i, byte)) = self.iter.next() {
-            match byte {
+            match *byte {
                 // ldstr
                 0x72 => {
                     let token = self.read_u32()?;
@@ -42,6 +42,8 @@ impl<'a> BytesToInstructions<'a> {
                 0x16 => iseq.push(Instruction::Ldc_I4_0),
                 // ldc.i4.1
                 0x17 => iseq.push(Instruction::Ldc_I4_1),
+                // ldc.i4.2
+                0x18 => iseq.push(Instruction::Ldc_I4_2),
                 // ldc.i4.s
                 0x1f => {
                     let n = self.read_u8()?;
@@ -62,6 +64,8 @@ impl<'a> BytesToInstructions<'a> {
                 }
                 // add
                 0x58 => iseq.push(Instruction::Add),
+                // sub
+                il_instr::SUB => iseq.push(Instruction::Sub),
                 // ret
                 0x2a => iseq.push(Instruction::Ret),
                 e => unimplemented!("{:?}", e),
