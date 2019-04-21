@@ -158,6 +158,12 @@ impl PEFileReader {
         let method = self.read_method_body(start)?;
         dprintln!("Method: {:?}", method);
 
+        use crate::exec::cfg::CFGMaker;
+        println!(
+            "basic blocks: {:?}",
+            CFGMaker::new().make_basic_blocks(&method.body)
+        );
+
         let method_ref = Rc::new(RefCell::new(method));
         image.method_cache.insert(rva, method_ref.clone());
 
@@ -168,14 +174,18 @@ impl PEFileReader {
         self.reader.seek(SeekFrom::Start(start)).ok()?;
 
         let first = self.read_u8()?;
-        let ty = MethodHeaderType::check(first)?;
+        let header_ty = MethodHeaderType::check(first)?;
 
-        match ty {
+        match header_ty {
             MethodHeaderType::TinyFormat { bytes } => {
                 let mut raw_body = vec![0u8; bytes];
                 self.read_bytes(raw_body.as_mut_slice())?;
                 let body = BytesToInstructions::new(&raw_body).convert()?;
-                Some(MethodBody { ty, body })
+                Some(MethodBody {
+                    header_ty,
+                    body,
+                    ty: None,
+                })
             }
             MethodHeaderType::FatFormat => None,
         }

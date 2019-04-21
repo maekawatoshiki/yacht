@@ -2,7 +2,7 @@ use std::{iter::repeat_with, slice::Iter};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
-    base: ElementType,
+    pub base: ElementType,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +46,13 @@ impl Type {
         }
     }
 
+    pub fn as_fnptr(&self) -> Option<&MethodSignature> {
+        match self.base {
+            ElementType::FnPtr(ref fnptr) => Some(fnptr),
+            _ => None,
+        }
+    }
+
     pub fn equal_method(&self, ret: ElementType, params: &[ElementType]) -> bool {
         match self.base {
             ElementType::FnPtr(ref ms) => {
@@ -55,11 +62,8 @@ impl Type {
         }
     }
 
-    pub fn as_fnptr(&self) -> Option<&MethodSignature> {
-        match self.base {
-            ElementType::FnPtr(ref fnptr) => Some(fnptr),
-            _ => None,
-        }
+    pub fn is_void(&self) -> bool {
+        self.base == ElementType::Void
     }
 }
 

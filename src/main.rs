@@ -1,5 +1,8 @@
 extern crate yacht;
-use yacht::{exec::interpret, metadata::file_reader};
+use yacht::{
+    exec::{interpret, jit},
+    metadata::file_reader,
+};
 
 extern crate clap;
 use clap::{App, Arg};
@@ -39,7 +42,12 @@ fn main() {
     let method = pe_file_reader.read_entry_method(&mut image).unwrap();
     image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
     let mut interpreter = interpret::Interpreter::new();
-    interpreter.interpret(&mut image, method, &[]);
+    interpreter.interpret(&mut image, method.clone(), &[]);
+    unsafe {
+        let mut jit = jit::JITCompiler::new(&mut image);
+        let main = jit.generate_main(method);
+        jit.run_main(main);
+    }
 }
 
 #[cfg(test)]
