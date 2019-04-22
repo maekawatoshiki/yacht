@@ -493,6 +493,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldc_I4_0 => stack.push(llvm_const_int32(self.context, 0)),
                 Instruction::Ldc_I4_1 => stack.push(llvm_const_int32(self.context, 1)),
                 Instruction::Ldc_I4_2 => stack.push(llvm_const_int32(self.context, 2)),
+                Instruction::Ldc_I4_3 => stack.push(llvm_const_int32(self.context, 3)),
                 Instruction::Ldc_I4_S { n } => {
                     stack.push(llvm_const_int32(self.context, *n as u64))
                 }
@@ -541,6 +542,26 @@ impl<'a> JITCompiler<'a> {
                         CString::new("sub").unwrap().as_ptr(),
                     ));
                 }
+                Instruction::Mul => {
+                    let val2 = stack.pop().unwrap();
+                    let val1 = stack.pop().unwrap();
+                    stack.push(LLVMBuildMul(
+                        self.builder,
+                        val1,
+                        val2,
+                        CString::new("mul").unwrap().as_ptr(),
+                    ));
+                }
+                Instruction::Rem => {
+                    let val2 = stack.pop().unwrap();
+                    let val1 = stack.pop().unwrap();
+                    stack.push(LLVMBuildSRem(
+                        self.builder,
+                        val1,
+                        val2,
+                        CString::new("rem").unwrap().as_ptr(),
+                    ));
+                }
                 Instruction::Ret => {
                     if LLVMGetTypeKind(LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(
                         self.generating.unwrap(),
@@ -552,30 +573,44 @@ impl<'a> JITCompiler<'a> {
                         LLVMBuildRet(self.builder, val);
                     }
                 }
-                Instruction::Bge { .. } => {
-                    let val2 = stack.pop().unwrap();
+                Instruction::Brfalse { .. } | Instruction::Brtrue { .. } => {
                     let val1 = stack.pop().unwrap();
                     let cond_val = LLVMBuildICmp(
                         self.builder,
-                        llvm::LLVMIntPredicate::LLVMIntSGE,
+                        match instr {
+                            Instruction::Brfalse { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
+                            Instruction::Brtrue { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
+                            _ => unreachable!(),
+                        },
                         val1,
-                        val2,
-                        CString::new("bge").unwrap().as_ptr(),
+                        LLVMConstNull(LLVMTypeOf(val1)),
+                        CString::new("").unwrap().as_ptr(),
                     );
                     let destinations = block.kind.get_conditional_jump_destinations();
                     let bb_then = self.get_basic_block(destinations[0]).retrieve();
                     let bb_else = self.get_basic_block(destinations[1]).retrieve();
                     LLVMBuildCondBr(self.builder, cond_val, bb_then, bb_else);
                 }
-                Instruction::Blt { .. } => {
+                Instruction::Bge { .. }
+                | Instruction::Blt { .. }
+                | Instruction::Ble { .. }
+                | Instruction::Bne_un { .. }
+                | Instruction::Bgt { .. } => {
                     let val2 = stack.pop().unwrap();
                     let val1 = stack.pop().unwrap();
                     let cond_val = LLVMBuildICmp(
                         self.builder,
-                        llvm::LLVMIntPredicate::LLVMIntSLT,
+                        match instr {
+                            Instruction::Bge { .. } => llvm::LLVMIntPredicate::LLVMIntSGE,
+                            Instruction::Blt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
+                            Instruction::Ble { .. } => llvm::LLVMIntPredicate::LLVMIntSLE,
+                            Instruction::Bgt { .. } => llvm::LLVMIntPredicate::LLVMIntSGT,
+                            Instruction::Bne_un { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
+                            _ => unreachable!(),
+                        },
                         val1,
                         val2,
-                        CString::new("bge").unwrap().as_ptr(),
+                        CString::new("").unwrap().as_ptr(),
                     );
                     let destinations = block.kind.get_conditional_jump_destinations();
                     let bb_then = self.get_basic_block(destinations[0]).retrieve();
@@ -732,6 +767,7 @@ impl CastIntoLLVMType for Type {
     unsafe fn to_llvmty(&self, ctx: LLVMContextRef) -> LLVMTypeRef {
         match self.base {
             ElementType::Void => LLVMVoidTypeInContext(ctx),
+            ElementType::Boolean => LLVMInt8TypeInContext(ctx),
             ElementType::I4 => LLVMInt32TypeInContext(ctx),
             ElementType::String => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
             _ => unimplemented!()

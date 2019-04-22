@@ -8,6 +8,7 @@ pub struct Type {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ElementType {
     Void,
+    Boolean,
     I4,
     String,
     FnPtr(Box<MethodSignature>),
@@ -38,6 +39,7 @@ impl Type {
     pub fn into_type<'a>(sig: &mut Iter<'a, u8>) -> Option<Self> {
         match sig.next()? {
             0x1 => Some(Type::new(ElementType::Void)),
+            0x2 => Some(Type::new(ElementType::Boolean)),
             0x8 => Some(Type::new(ElementType::I4)),
             0xe => Some(Type::new(ElementType::String)),
             // TODO

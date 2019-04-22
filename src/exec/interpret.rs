@@ -51,6 +51,7 @@ impl Interpreter {
                 Instruction::Ldc_I4_0 => self.stack_push(Value::Int32(0)),
                 Instruction::Ldc_I4_1 => self.stack_push(Value::Int32(1)),
                 Instruction::Ldc_I4_2 => self.stack_push(Value::Int32(2)),
+                Instruction::Ldc_I4_3 => self.stack_push(Value::Int32(3)),
                 Instruction::Ldc_I4_S { n } => self.stack_push(Value::Int32(*n)),
                 Instruction::Ldc_I4 { n } => self.stack_push(Value::Int32(*n)),
                 Instruction::Ldarg_0 => self.stack_push(arguments[0]),
@@ -59,10 +60,17 @@ impl Interpreter {
                 Instruction::Stloc_0 => locals[0] = self.stack_pop(),
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Bge { target } => self.instr_bge(image, *target),
+                Instruction::Bgt { target } => self.instr_bgt(image, *target),
                 Instruction::Blt { target } => self.instr_blt(image, *target),
+                Instruction::Ble { target } => self.instr_ble(image, *target),
+                Instruction::Bne_un { target } => self.instr_bne_un(image, *target),
+                Instruction::Brtrue { target } => self.instr_brtrue(image, *target),
+                Instruction::Brfalse { target } => self.instr_brfalse(image, *target),
                 Instruction::Br { target } => self.program_counter = target - 1,
                 Instruction::Add => numeric_op!(add),
                 Instruction::Sub => numeric_op!(sub),
+                Instruction::Mul => numeric_op!(mul),
+                Instruction::Rem => numeric_op!(rem),
                 Instruction::Call { table, entry } => self.instr_call(image, *table, *entry),
                 Instruction::Ret => break,
             }
@@ -168,10 +176,48 @@ impl Interpreter {
         }
     }
 
+    fn instr_bgt(&mut self, _image: &mut Image, target: usize) {
+        let val2 = self.stack_pop();
+        let val1 = self.stack_pop();
+        if val1.gt(val2) {
+            self.program_counter = target /* interpret() everytime increments pc */- 1
+        }
+    }
+
+    fn instr_ble(&mut self, _image: &mut Image, target: usize) {
+        let val2 = self.stack_pop();
+        let val1 = self.stack_pop();
+        if val1.le(val2) {
+            self.program_counter = target /* interpret() everytime increments pc */- 1
+        }
+    }
+
     fn instr_blt(&mut self, _image: &mut Image, target: usize) {
         let val2 = self.stack_pop();
         let val1 = self.stack_pop();
         if val1.lt(val2) {
+            self.program_counter = target /* interpret() everytime increments pc */- 1
+        }
+    }
+
+    fn instr_bne_un(&mut self, _image: &mut Image, target: usize) {
+        let val2 = self.stack_pop();
+        let val1 = self.stack_pop();
+        if val1.ne(val2) {
+            self.program_counter = target /* interpret() everytime increments pc */- 1
+        }
+    }
+
+    fn instr_brtrue(&mut self, _image: &mut Image, target: usize) {
+        let val1 = self.stack_pop();
+        if val1.is_true() {
+            self.program_counter = target /* interpret() everytime increments pc */- 1
+        }
+    }
+
+    fn instr_brfalse(&mut self, _image: &mut Image, target: usize) {
+        let val1 = self.stack_pop();
+        if val1.is_false() {
             self.program_counter = target /* interpret() everytime increments pc */- 1
         }
     }
@@ -192,6 +238,17 @@ impl Value {
         }
     }
 
+    pub fn is_true(&self) -> bool {
+        !self.is_false()
+    }
+
+    pub fn is_false(&self) -> bool {
+        match self {
+            Value::Int32(n) => *n == 0,
+            _ => false,
+        }
+    }
+
     pub fn add(self, y: Value) -> Value {
         match (self, y) {
             (Value::Int32(x), Value::Int32(y)) => Value::Int32(x + y),
@@ -206,6 +263,20 @@ impl Value {
         }
     }
 
+    pub fn mul(self, y: Value) -> Value {
+        match (self, y) {
+            (Value::Int32(x), Value::Int32(y)) => Value::Int32(x * y),
+            _ => panic!(),
+        }
+    }
+
+    pub fn rem(self, y: Value) -> Value {
+        match (self, y) {
+            (Value::Int32(x), Value::Int32(y)) => Value::Int32(x % y),
+            _ => panic!(),
+        }
+    }
+
     pub fn ge(self, y: Value) -> bool {
         match (self, y) {
             (Value::Int32(x), Value::Int32(y)) => x >= y,
@@ -213,9 +284,30 @@ impl Value {
         }
     }
 
+    pub fn gt(self, y: Value) -> bool {
+        match (self, y) {
+            (Value::Int32(x), Value::Int32(y)) => x > y,
+            _ => panic!(),
+        }
+    }
+
+    pub fn le(self, y: Value) -> bool {
+        match (self, y) {
+            (Value::Int32(x), Value::Int32(y)) => x <= y,
+            _ => panic!(),
+        }
+    }
+
     pub fn lt(self, y: Value) -> bool {
         match (self, y) {
             (Value::Int32(x), Value::Int32(y)) => x < y,
+            _ => panic!(),
+        }
+    }
+
+    pub fn ne(self, y: Value) -> bool {
+        match (self, y) {
+            (Value::Int32(x), Value::Int32(y)) => x != y,
             _ => panic!(),
         }
     }

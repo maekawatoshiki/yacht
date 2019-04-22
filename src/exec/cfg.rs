@@ -32,7 +32,13 @@ impl CFGMaker {
 
         for (pc, instr) in code.iter().enumerate() {
             match instr {
-                Instruction::Bge { target } | Instruction::Blt { target } => {
+                Instruction::Bge { target }
+                | Instruction::Bgt { target }
+                | Instruction::Ble { target }
+                | Instruction::Blt { target }
+                | Instruction::Bne_un { target }
+                | Instruction::Brfalse { target }
+                | Instruction::Brtrue { target } => {
                     map.insert(
                         pc,
                         BrKind::ConditionalJmp {

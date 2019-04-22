@@ -39,6 +39,7 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::LDC_I4_0 => iseq.push(Instruction::Ldc_I4_0),
                 il_instr::LDC_I4_1 => iseq.push(Instruction::Ldc_I4_1),
                 il_instr::LDC_I4_2 => iseq.push(Instruction::Ldc_I4_2),
+                il_instr::LDC_I4_3 => iseq.push(Instruction::Ldc_I4_3),
                 il_instr::LDC_I4_S => {
                     let n = self.read_u8()?;
                     iseq.push(Instruction::Ldc_I4_S { n: n as i32 })
@@ -58,9 +59,39 @@ impl<'a> BytesToInstructions<'a> {
                         target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
                     })
                 }
+                il_instr::BGT => {
+                    let target = self.read_u32()? as i32;
+                    iseq.push(Instruction::Bgt {
+                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
+                    })
+                }
                 il_instr::BLT => {
                     let target = self.read_u32()? as i32;
                     iseq.push(Instruction::Blt {
+                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
+                    })
+                }
+                il_instr::BLE => {
+                    let target = self.read_u32()? as i32;
+                    iseq.push(Instruction::Ble {
+                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
+                    })
+                }
+                il_instr::BNE_UN => {
+                    let target = self.read_u32()? as i32;
+                    iseq.push(Instruction::Bne_un {
+                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
+                    })
+                }
+                il_instr::BRFALSE => {
+                    let target = self.read_u32()? as i32;
+                    iseq.push(Instruction::Brfalse {
+                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
+                    })
+                }
+                il_instr::BRTRUE => {
+                    let target = self.read_u32()? as i32;
+                    iseq.push(Instruction::Brtrue {
                         target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
                     })
                 }
@@ -70,12 +101,11 @@ impl<'a> BytesToInstructions<'a> {
                         target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
                     })
                 }
-                // add
-                0x58 => iseq.push(Instruction::Add),
-                // sub
+                il_instr::ADD => iseq.push(Instruction::Add),
                 il_instr::SUB => iseq.push(Instruction::Sub),
-                // ret
-                0x2a => iseq.push(Instruction::Ret),
+                il_instr::MUL => iseq.push(Instruction::Mul),
+                il_instr::REM => iseq.push(Instruction::Rem),
+                il_instr::RET => iseq.push(Instruction::Ret),
                 e => unimplemented!("{:?}", e),
             }
         }
