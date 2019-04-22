@@ -40,9 +40,15 @@ pub struct JITCompiler<'a> {
     generated: FxHashMap<u32, LLVMValueRef>, // RVA, Value
     basic_blocks: FxHashMap<usize, BasicBlockInfo>,
     phi_stack: FxHashMap<usize, Vec<PhiStack>>, // destination,
-    env: FxHashMap<usize, LLVMValueRef>,
+    env: Environment,
     compile_queue: VecDeque<(MethodSignature, LLVMValueRef, MethodBodyRef)>,
     builtin_functions: FxHashMap<String, LLVMValueRef>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Environment {
+    pub arguments: FxHashMap<usize, LLVMValueRef>,
+    pub locals: FxHashMap<usize, LLVMValueRef>,
 }
 
 impl<'a> JITCompiler<'a> {
@@ -76,7 +82,7 @@ impl<'a> JITCompiler<'a> {
             generated: FxHashMap::default(),
             basic_blocks: FxHashMap::default(),
             phi_stack: FxHashMap::default(),
-            env: FxHashMap::default(),
+            env: Environment::new(),
             compile_queue: VecDeque::new(),
             builtin_functions: {
                 let mut fs = FxHashMap::default();
@@ -120,8 +126,9 @@ impl<'a> JITCompiler<'a> {
         llvm::execution_engine::LLVMRunFunction(ee, main, 0, vec![].as_mut_ptr());
     }
 
-    pub unsafe fn generate_main(&mut self, method: MethodBodyRef) -> LLVMValueRef {
-        let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.borrow().body);
+    pub unsafe fn generate_main(&mut self, method_ref: MethodBodyRef) -> LLVMValueRef {
+        let method = method_ref.borrow();
+        let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let (ret_ty, mut params_ty): (LLVMTypeRef, Vec<LLVMTypeRef>) =
             { (Type::new(ElementType::Void).to_llvmty(self.context), vec![]) };
         let func_ty = LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
@@ -141,6 +148,11 @@ impl<'a> JITCompiler<'a> {
         );
 
         LLVMPositionBuilderAtEnd(self.builder, bb_entry);
+
+        // Declare locals
+        for (i, ty) in method.locals_ty.iter().enumerate() {
+            self.get_local(i, Some(&ty));
+        }
 
         self.basic_blocks
             .insert(0, BasicBlockInfo::Positioned(bb_entry));
@@ -188,7 +200,6 @@ impl<'a> JITCompiler<'a> {
 
         self.basic_blocks.clear();
         self.phi_stack.clear();
-        self.env.clear();
 
         while let Some((sig, func, method)) = self.compile_queue.pop_front() {
             self.generate_func(sig, func, method);
@@ -213,12 +224,11 @@ impl<'a> JITCompiler<'a> {
         method_ref: MethodBodyRef,
     ) {
         self.generating = Some(func);
+        self.env = Environment::new();
 
         let method = method_ref.borrow();
         let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let ret_ty = LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(func)));
-
-        self.env = FxHashMap::default();
 
         let bb_entry = LLVMAppendBasicBlockInContext(
             self.context,
@@ -232,8 +242,13 @@ impl<'a> JITCompiler<'a> {
             LLVMBuildStore(
                 self.builder,
                 LLVMGetParam(func, i as u32),
-                self.get_local_var(i, &ty),
+                self.get_argument(i, Some(&ty)),
             );
+        }
+
+        // Declare locals
+        for (i, ty) in method.locals_ty.iter().enumerate() {
+            self.get_local(i, Some(&ty));
         }
 
         self.basic_blocks
@@ -282,11 +297,10 @@ impl<'a> JITCompiler<'a> {
 
         self.basic_blocks.clear();
         self.phi_stack.clear();
-        self.env.clear();
     }
 
-    unsafe fn get_local_var(&mut self, id: usize, ty: &Type) -> LLVMValueRef {
-        if let Some(v) = self.env.get(&id) {
+    unsafe fn get_local(&mut self, id: usize, ty: Option<&Type>) -> LLVMValueRef {
+        if let Some(v) = self.env.locals.get(&id) {
             return *v;
         }
 
@@ -303,11 +317,37 @@ impl<'a> JITCompiler<'a> {
 
         let var = LLVMBuildAlloca(
             builder,
-            ty.to_llvmty(self.context),
+            ty.unwrap().to_llvmty(self.context),
             CString::new("").unwrap().as_ptr(),
         );
 
-        self.env.insert(id, var);
+        self.env.locals.insert(id, var);
+        var
+    }
+
+    unsafe fn get_argument(&mut self, id: usize, ty: Option<&Type>) -> LLVMValueRef {
+        if let Some(v) = self.env.arguments.get(&id) {
+            return *v;
+        }
+
+        let func = self.generating.unwrap();
+        let builder = LLVMCreateBuilderInContext(self.context);
+        let entry_bb = LLVMGetEntryBasicBlock(func);
+        let first_inst = LLVMGetFirstInstruction(entry_bb);
+        // A variable is always declared at the first point of entry block
+        if first_inst == ptr::null_mut() {
+            LLVMPositionBuilderAtEnd(builder, entry_bb);
+        } else {
+            LLVMPositionBuilderBefore(builder, first_inst);
+        }
+
+        let var = LLVMBuildAlloca(
+            builder,
+            ty.unwrap().to_llvmty(self.context),
+            CString::new("").unwrap().as_ptr(),
+        );
+
+        self.env.arguments.insert(id, var);
         var
     }
 
@@ -435,14 +475,22 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Call { table, entry } => {
                     self.gen_instr_call(&mut stack, *table, *entry)
                 }
+                Instruction::Ldloc_0 => stack.push(LLVMBuildLoad(
+                    self.builder,
+                    self.get_local(0, None),
+                    CString::new("").unwrap().as_ptr(),
+                )),
+                Instruction::Stloc_0 => {
+                    LLVMBuildStore(self.builder, stack.pop().unwrap(), self.get_local(0, None));
+                }
                 Instruction::Ldarg_0 => stack.push(LLVMBuildLoad(
                     self.builder,
-                    *self.env.get(&0).unwrap(),
+                    self.get_argument(0, None),
                     CString::new("").unwrap().as_ptr(),
                 )),
                 Instruction::Ldarg_1 => stack.push(LLVMBuildLoad(
                     self.builder,
-                    *self.env.get(&1).unwrap(),
+                    self.get_argument(1, None),
                     CString::new("").unwrap().as_ptr(),
                 )),
                 Instruction::Add => {
@@ -671,6 +719,15 @@ impl BasicBlockInfo {
         match self {
             BasicBlockInfo::Positioned(_) => true,
             _ => false,
+        }
+    }
+}
+
+impl Environment {
+    pub fn new() -> Self {
+        Environment {
+            arguments: FxHashMap::default(),
+            locals: FxHashMap::default(),
         }
     }
 }

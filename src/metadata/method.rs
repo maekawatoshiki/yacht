@@ -6,18 +6,23 @@ pub const FAT_FORMAT: u8 = 0x3;
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum MethodHeaderType {
-    TinyFormat { bytes: usize },
-    FatFormat,
+    TinyFormat {
+        bytes: usize,
+    },
+    FatFormat {
+        flags: u16,
+        size: u8,
+        max_stack: u16,
+        code_size: u32,
+        local_var_sig_tok: u32,
+    },
 }
 
 impl MethodHeaderType {
-    pub fn check(n: u8) -> Option<MethodHeaderType> {
-        match n & 0b00000011 {
-            TINY_FORMAT => Some(MethodHeaderType::TinyFormat {
-                bytes: n as usize >> 2,
-            }),
-            FAT_FORMAT => Some(MethodHeaderType::FatFormat),
-            _ => None,
+    pub fn max_stack(&self) -> usize {
+        match self {
+            MethodHeaderType::TinyFormat { .. } => 8,
+            MethodHeaderType::FatFormat { max_stack, .. } => *max_stack as usize,
         }
     }
 }
@@ -28,6 +33,7 @@ pub type MethodBodyRef = Rc<RefCell<MethodBody>>;
 pub struct MethodBody {
     pub header_ty: MethodHeaderType,
     pub ty: Option<Type>,
+    pub locals_ty: Vec<Type>,
     pub body: Vec<Instruction>,
 }
 

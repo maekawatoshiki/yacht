@@ -49,12 +49,11 @@ impl<'a> BytesToInstructions<'a> {
                     let n = self.read_u8()?;
                     iseq.push(Instruction::Ldc_I4_S { n: n as i32 })
                 }
-                // ldarg.0
-                0x02 => iseq.push(Instruction::Ldarg_0),
-                // ldarg.1
-                0x03 => iseq.push(Instruction::Ldarg_1),
-                // pop
-                0x26 => iseq.push(Instruction::Pop),
+                il_instr::LDARG_0 => iseq.push(Instruction::Ldarg_0),
+                il_instr::LDARG_1 => iseq.push(Instruction::Ldarg_1),
+                il_instr::LDLOC_0 => iseq.push(Instruction::Ldloc_0),
+                il_instr::STLOC_0 => iseq.push(Instruction::Stloc_0),
+                il_instr::POP => iseq.push(Instruction::Pop),
                 // bge
                 0x3c => {
                     let target = self.read_u32()? as i32;

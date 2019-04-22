@@ -10,7 +10,7 @@
 // use super::field::FieldInfo;
 // use super::method::MethodInfo;
 use crate::exec::decode::BytesToInstructions;
-use crate::metadata::{header::*, metadata::*, method::*};
+use crate::metadata::{header::*, metadata::*, method::*, signature::*};
 use rustc_hash::FxHashMap;
 use std::{
     fs::File,
@@ -125,17 +125,17 @@ impl PEFileReader {
             .unwrap();
         let kind = image.cli_info.cli_header.entry_point_token as usize >> (32 - 8);
         let row = image.cli_info.cli_header.entry_point_token as usize & 0x00ffffff;
-        let method_or_file = &image.metadata.metadata_stream.tables[kind][row - 1];
+        let method_or_file = image.metadata.metadata_stream.tables[kind][row - 1].clone();
         let method_table = match method_or_file {
             Table::MethodDef(t) => t,
             // TOOD: File
-            _ => return None,
+            _ => unimplemented!(),
         };
         dprintln!("entry: {:?}", method_table);
         let start = (method_table.rva - text_section.virtual_address
             + text_section.pointer_to_raw_data) as u64;
         dprintln!("method body begin at: {}", start);
-        let method = self.read_method_body(start)?;
+        let method = self.read_method_body(image, start).unwrap();
         dprintln!("Method: {:?}", method);
 
         let method_ref = Rc::new(RefCell::new(method));
@@ -155,7 +155,7 @@ impl PEFileReader {
             .unwrap();
         let start = (rva - text_section.virtual_address + text_section.pointer_to_raw_data) as u64;
         dprintln!("Method body begin at: {}", start);
-        let method = self.read_method_body(start)?;
+        let method = self.read_method_body(image, start)?;
         dprintln!("Method: {:?}", method);
 
         use crate::exec::cfg::CFGMaker;
@@ -170,11 +170,10 @@ impl PEFileReader {
         Some(method_ref)
     }
 
-    fn read_method_body(&mut self, start: u64) -> Option<MethodBody> {
+    fn read_method_body(&mut self, image: &mut Image, start: u64) -> Option<MethodBody> {
         self.reader.seek(SeekFrom::Start(start)).ok()?;
 
-        let first = self.read_u8()?;
-        let header_ty = MethodHeaderType::check(first)?;
+        let header_ty = self.read_method_header_type()?;
 
         match header_ty {
             MethodHeaderType::TinyFormat { bytes } => {
@@ -184,10 +183,72 @@ impl PEFileReader {
                 Some(MethodBody {
                     header_ty,
                     body,
+                    locals_ty: vec![],
                     ty: None,
                 })
             }
-            MethodHeaderType::FatFormat => None,
+            MethodHeaderType::FatFormat {
+                code_size,
+                local_var_sig_tok,
+                ..
+            } => {
+                let kind = local_var_sig_tok as usize >> (32 - 8);
+                let row = local_var_sig_tok as usize & 0x00ffffff;
+
+                let locals_ty = match image.metadata.metadata_stream.tables[kind][row - 1] {
+                    Table::StandAloneSig(sast) => {
+                        let mut blob = image
+                            .metadata
+                            .blob
+                            .get(&(sast.signature as u32))
+                            .unwrap()
+                            .iter();
+                        assert_eq!(blob.next()?, &0x07);
+                        let len = *blob.next()? as usize;
+                        use std::iter::repeat_with;
+                        repeat_with(|| Type::into_type(&mut blob).unwrap())
+                            .take(len)
+                            .collect()
+                    }
+                    _ => unimplemented!(),
+                };
+
+                let mut raw_body = vec![0u8; code_size as usize];
+                self.read_bytes(raw_body.as_mut_slice())?;
+                let body = BytesToInstructions::new(&raw_body).convert()?;
+
+                Some(MethodBody {
+                    header_ty,
+                    body,
+                    locals_ty,
+                    ty: None,
+                })
+            }
+        }
+    }
+
+    fn read_method_header_type(&mut self) -> Option<MethodHeaderType> {
+        let first = self.read_u8()?;
+        match first & 0b00000011 {
+            TINY_FORMAT => Some(MethodHeaderType::TinyFormat {
+                bytes: first as usize >> 2,
+            }),
+            FAT_FORMAT => {
+                // TODO: More flags
+                let flags_size = self.read_u8()?;
+                let size = flags_size & 0b0000_1111;
+                let max_stack = self.read_u16()?;
+                let code_size = self.read_u32()?;
+                let local_var_sig_tok = self.read_u32()?;
+                Some(MethodHeaderType::FatFormat {
+                    flags: ((first as u16) << 8) + ((flags_size as u16) >> 4),
+                    size,
+                    max_stack,
+                    code_size,
+                    local_var_sig_tok,
+                })
+            }
+            _ => None,
         }
     }
 
@@ -664,6 +725,9 @@ impl PEFileReader {
                         Table::AssemblyRef(self.read_struct::<AssemblyRefTable>()?)
                     }
                     TableKind::Param => Table::Param(self.read_struct::<ParamTable>()?),
+                    TableKind::StandAloneSig => {
+                        Table::StandAloneSig(self.read_struct::<StandAlongSigTable>()?)
+                    }
                     e => unimplemented!("{:?}", e),
                 })
             }

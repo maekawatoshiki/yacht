@@ -139,7 +139,7 @@ pub enum Table {
     Param(ParamTable),
     // Property,
     // PropertyMap,
-    // StandAloneSig,
+    StandAloneSig(StandAlongSigTable),
     TypeDef(TypeDefTable),
     TypeRef(TypeRefTable),
     // TypeSpec,
@@ -223,6 +223,13 @@ pub struct ParamTable {
     flags: u16,
     sequence: u16,
     name: u16,
+}
+
+/// II.22.36 StandAloneSig
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct StandAlongSigTable {
+    pub signature: u16,
 }
 
 /// II.22.37 TypeDef

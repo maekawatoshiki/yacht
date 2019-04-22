@@ -36,7 +36,13 @@ impl Interpreter {
             }};
         }
 
-        let iseq = &method.borrow().body;
+        let (iseq, mut locals) = {
+            let method = method.borrow();
+            (
+                method.body.clone(),
+                vec![Value::Int32(0); method.header_ty.max_stack()],
+            )
+        };
 
         loop {
             let instr = &iseq[self.program_counter];
@@ -48,6 +54,8 @@ impl Interpreter {
                 Instruction::Ldc_I4_S { n } => self.stack_push(Value::Int32(*n)),
                 Instruction::Ldarg_0 => self.stack_push(arguments[0]),
                 Instruction::Ldarg_1 => self.stack_push(arguments[1]),
+                Instruction::Ldloc_0 => self.stack_push(locals[0]),
+                Instruction::Stloc_0 => locals[0] = self.stack_pop(),
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Bge { target } => self.instr_bge(image, *target),
                 Instruction::Add => numeric_op!(add),
