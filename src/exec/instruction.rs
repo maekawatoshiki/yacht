@@ -6,12 +6,15 @@ pub enum Instruction {
     Ldc_I4_1,
     Ldc_I4_2,
     Ldc_I4_S { n: i32 },
+    Ldc_I4 { n: i32 },
     Ldarg_0,
     Ldarg_1,
     Ldloc_0,
     Stloc_0,
     Pop,
     Bge { target: usize },
+    Blt { target: usize },
+    Br { target: usize },
     Add,
     Sub,
     Call { table: usize, entry: usize },
@@ -26,19 +29,24 @@ pub mod il_instr {
     pub const LDC_I4_1 : u8 = 0x17;
     pub const LDC_I4_2 : u8 = 0x18;
     pub const LDC_I4_S : u8 = 0x1f;
+    pub const LDC_I4   : u8 = 0x20;
     pub const LDARG_0  : u8 = 0x02;
     pub const LDARG_1  : u8 = 0x03;
     pub const LDLOC_0  : u8 = 0x06;
     pub const STLOC_0  : u8 = 0x0a;
     pub const POP      : u8 = 0x26;
+    pub const BR       : u8 = 0x38;
     pub const BGE      : u8 = 0x3c;
+    pub const BLT      : u8 = 0x3f;
     pub const ADD      : u8 = 0x58;
     pub const SUB      : u8 = 0x59;
     pub const RET      : u8 = 0x2A;
 
     pub fn get_instr_size(instr: u8) -> usize {
         match instr {
-            LDSTR | CALL | BGE => 5,
+            LDSTR | CALL | 
+            BGE | BR | BLT |
+            LDC_I4 => 5,
             LDC_I4_0 | LDC_I4_1 | LDC_I4_2 | 
             LDARG_0 | LDARG_1 |
             LDLOC_0 |

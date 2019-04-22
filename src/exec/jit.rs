@@ -469,6 +469,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldc_I4_S { n } => {
                     stack.push(llvm_const_int32(self.context, *n as u64))
                 }
+                Instruction::Ldc_I4 { n } => stack.push(llvm_const_int32(self.context, *n as u64)),
                 Instruction::Pop => {
                     stack.pop();
                 }
@@ -539,7 +540,28 @@ impl<'a> JITCompiler<'a> {
                     let bb_else = self.get_basic_block(destinations[1]).retrieve();
                     LLVMBuildCondBr(self.builder, cond_val, bb_then, bb_else);
                 }
-                _ => {}
+                Instruction::Blt { .. } => {
+                    let val2 = stack.pop().unwrap();
+                    let val1 = stack.pop().unwrap();
+                    let cond_val = LLVMBuildICmp(
+                        self.builder,
+                        llvm::LLVMIntPredicate::LLVMIntSLT,
+                        val1,
+                        val2,
+                        CString::new("bge").unwrap().as_ptr(),
+                    );
+                    let destinations = block.kind.get_conditional_jump_destinations();
+                    let bb_then = self.get_basic_block(destinations[0]).retrieve();
+                    let bb_else = self.get_basic_block(destinations[1]).retrieve();
+                    LLVMBuildCondBr(self.builder, cond_val, bb_then, bb_else);
+                }
+                Instruction::Br { .. } => {
+                    let destination = block.kind.get_unconditional_jump_destination();
+                    let bb_br = self.get_basic_block(destination).retrieve();
+                    if cur_bb_has_no_terminator(self.builder) {
+                        LLVMBuildBr(self.builder, bb_br);
+                    }
+                }
             }
         }
 

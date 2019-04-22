@@ -32,7 +32,7 @@ impl CFGMaker {
 
         for (pc, instr) in code.iter().enumerate() {
             match instr {
-                Instruction::Bge { target } => {
+                Instruction::Bge { target } | Instruction::Blt { target } => {
                     map.insert(
                         pc,
                         BrKind::ConditionalJmp {
@@ -42,12 +42,15 @@ impl CFGMaker {
                     map.insert(*target, BrKind::BlockStart);
                     map.insert(pc + 1, BrKind::BlockStart);
                 }
-                // Inst::goto => {
-                //     let branch = ((code[pc + 1] as i16) << 8) + code[pc + 2] as i16;
-                //     let dst = (pc as isize + branch as isize) as usize;
-                //     map.insert(pc + 3 - 1, BrKind::UnconditionalJmp { destination: dst });
-                //     map.insert(dst, BrKind::BlockStart);
-                // }
+                Instruction::Br { target } => {
+                    map.insert(
+                        pc,
+                        BrKind::UnconditionalJmp {
+                            destination: *target,
+                        },
+                    );
+                    map.insert(*target, BrKind::BlockStart);
+                }
                 _ => {}
             }
         }

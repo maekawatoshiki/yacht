@@ -7,9 +7,10 @@ public class Hello {
   }
 
   public static void Main() {
-    int i = 1;
     Console.WriteLine(f(10));
-    Console.WriteLine(i);
+    for (int i = 0; i < 1000; i++) {
+      Console.WriteLine(i);
+    }
     // Console.WriteLine("Hello world!");
     // Console.WriteLine(f(10));
   }

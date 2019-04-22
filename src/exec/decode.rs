@@ -24,40 +24,49 @@ impl<'a> BytesToInstructions<'a> {
 
         while let Some((i, byte)) = self.iter.next() {
             match *byte {
-                // ldstr
-                0x72 => {
+                il_instr::LDSTR => {
                     let token = self.read_u32()?;
                     assert!(token & 0xff000000 == 0x70000000);
                     let us_offset = token & 0x00ffffff;
                     iseq.push(Instruction::Ldstr { us_offset })
                 }
-                // call
-                0x28 => {
+                il_instr::CALL => {
                     let token = self.read_u32()?;
                     let table = token as usize >> (32 - 8);
                     let entry = token as usize & 0x00ff_ffff;
                     iseq.push(Instruction::Call { table, entry })
                 }
-                // ldc.i4.0
-                0x16 => iseq.push(Instruction::Ldc_I4_0),
-                // ldc.i4.1
-                0x17 => iseq.push(Instruction::Ldc_I4_1),
-                // ldc.i4.2
-                0x18 => iseq.push(Instruction::Ldc_I4_2),
-                // ldc.i4.s
-                0x1f => {
+                il_instr::LDC_I4_0 => iseq.push(Instruction::Ldc_I4_0),
+                il_instr::LDC_I4_1 => iseq.push(Instruction::Ldc_I4_1),
+                il_instr::LDC_I4_2 => iseq.push(Instruction::Ldc_I4_2),
+                il_instr::LDC_I4_S => {
                     let n = self.read_u8()?;
                     iseq.push(Instruction::Ldc_I4_S { n: n as i32 })
+                }
+                il_instr::LDC_I4 => {
+                    let n = self.read_u32()?;
+                    iseq.push(Instruction::Ldc_I4 { n: n as i32 })
                 }
                 il_instr::LDARG_0 => iseq.push(Instruction::Ldarg_0),
                 il_instr::LDARG_1 => iseq.push(Instruction::Ldarg_1),
                 il_instr::LDLOC_0 => iseq.push(Instruction::Ldloc_0),
                 il_instr::STLOC_0 => iseq.push(Instruction::Stloc_0),
                 il_instr::POP => iseq.push(Instruction::Pop),
-                // bge
-                0x3c => {
+                il_instr::BGE => {
                     let target = self.read_u32()? as i32;
                     iseq.push(Instruction::Bge {
+                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
+                    })
+                }
+                il_instr::BLT => {
+                    let target = self.read_u32()? as i32;
+                    iseq.push(Instruction::Blt {
+                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
+                    })
+                }
+                il_instr::BR => {
+                    let target = self.read_u32()? as i32;
+                    iseq.push(Instruction::Br {
                         target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
                     })
                 }

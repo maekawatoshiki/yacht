@@ -52,12 +52,15 @@ impl Interpreter {
                 Instruction::Ldc_I4_1 => self.stack_push(Value::Int32(1)),
                 Instruction::Ldc_I4_2 => self.stack_push(Value::Int32(2)),
                 Instruction::Ldc_I4_S { n } => self.stack_push(Value::Int32(*n)),
+                Instruction::Ldc_I4 { n } => self.stack_push(Value::Int32(*n)),
                 Instruction::Ldarg_0 => self.stack_push(arguments[0]),
                 Instruction::Ldarg_1 => self.stack_push(arguments[1]),
                 Instruction::Ldloc_0 => self.stack_push(locals[0]),
                 Instruction::Stloc_0 => locals[0] = self.stack_pop(),
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Bge { target } => self.instr_bge(image, *target),
+                Instruction::Blt { target } => self.instr_blt(image, *target),
+                Instruction::Br { target } => self.program_counter = target - 1,
                 Instruction::Add => numeric_op!(add),
                 Instruction::Sub => numeric_op!(sub),
                 Instruction::Call { table, entry } => self.instr_call(image, *table, *entry),
@@ -164,6 +167,14 @@ impl Interpreter {
             self.program_counter = target /* interpret() everytime increments pc */- 1
         }
     }
+
+    fn instr_blt(&mut self, _image: &mut Image, target: usize) {
+        let val2 = self.stack_pop();
+        let val1 = self.stack_pop();
+        if val1.lt(val2) {
+            self.program_counter = target /* interpret() everytime increments pc */- 1
+        }
+    }
 }
 
 impl Value {
@@ -198,6 +209,13 @@ impl Value {
     pub fn ge(self, y: Value) -> bool {
         match (self, y) {
             (Value::Int32(x), Value::Int32(y)) => x >= y,
+            _ => panic!(),
+        }
+    }
+
+    pub fn lt(self, y: Value) -> bool {
+        match (self, y) {
+            (Value::Int32(x), Value::Int32(y)) => x < y,
             _ => panic!(),
         }
     }
