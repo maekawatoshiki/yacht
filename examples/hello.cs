@@ -1,17 +1,15 @@
 using System;
 
 public class Hello {
-  static int f(int x) {
+  static int fibo(int x) {
     if (x < 2) return 1;
-    return f(x - 1) + f(x - 2);
+    return fibo(x - 1) + fibo(x - 2);
   }
 
+  // static 
+
   public static void Main() {
-    Console.WriteLine(f(10));
-    for (int i = 0; i < 1000; i++) {
-      Console.WriteLine(i);
-    }
-    // Console.WriteLine("Hello world!");
-    // Console.WriteLine(f(10));
+    Console.WriteLine("Hello world!");
+    Console.WriteLine(fibo(10));
   }
 }

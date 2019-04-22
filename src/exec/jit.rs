@@ -43,6 +43,7 @@ pub struct JITCompiler<'a> {
     env: Environment,
     compile_queue: VecDeque<(MethodSignature, LLVMValueRef, MethodBodyRef)>,
     builtin_functions: FxHashMap<String, LLVMValueRef>,
+    strings: Vec<*mut String>,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +85,7 @@ impl<'a> JITCompiler<'a> {
             phi_stack: FxHashMap::default(),
             env: Environment::new(),
             compile_queue: VecDeque::new(),
+            strings: vec![],
             builtin_functions: {
                 let mut fs = FxHashMap::default();
                 fs.insert(
@@ -94,6 +96,19 @@ impl<'a> JITCompiler<'a> {
                         LLVMFunctionType(
                             LLVMVoidTypeInContext(context),
                             vec![LLVMInt32TypeInContext(context)].as_mut_ptr(),
+                            1,
+                            0,
+                        ),
+                    ),
+                );
+                fs.insert(
+                    "WriteLine(string)".to_string(),
+                    LLVMAddFunction(
+                        module,
+                        CString::new("WriteLine(string)").unwrap().as_ptr(),
+                        LLVMFunctionType(
+                            LLVMVoidTypeInContext(context),
+                            vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
                             1,
                             0,
                         ),
@@ -121,6 +136,12 @@ impl<'a> JITCompiler<'a> {
             ee,
             f,
             write_line_int as *mut ::std::ffi::c_void,
+        );
+        let f = *self.builtin_functions.get_mut("WriteLine(string)").unwrap();
+        llvm::execution_engine::LLVMAddGlobalMapping(
+            ee,
+            f,
+            write_line_string as *mut ::std::ffi::c_void,
         );
 
         llvm::execution_engine::LLVMRunFunction(ee, main, 0, vec![].as_mut_ptr());
@@ -462,7 +483,13 @@ impl<'a> JITCompiler<'a> {
 
         for instr in code {
             match instr {
-                Instruction::Ldstr { .. } => {}
+                Instruction::Ldstr { us_offset } => stack.push(llvm_const_ptr(self.context, {
+                    let s = String::from_utf16_lossy(
+                        self.image.metadata.user_strings.get(&us_offset).unwrap(),
+                    );
+                    self.strings.push(Box::into_raw(Box::new(s)));
+                    *self.strings.last().unwrap() as *mut u64
+                })),
                 Instruction::Ldc_I4_0 => stack.push(llvm_const_int32(self.context, 0)),
                 Instruction::Ldc_I4_1 => stack.push(llvm_const_int32(self.context, 1)),
                 Instruction::Ldc_I4_2 => stack.push(llvm_const_int32(self.context, 2)),
@@ -602,16 +629,10 @@ impl<'a> JITCompiler<'a> {
                         {
                             let val = stack.pop().unwrap();
                             if ty.equal_method(ElementType::Void, &[ElementType::String]) {
-                                // println!(
-                                //     "{}",
-                                //     String::from_utf16_lossy(
-                                //         self.image
-                                //             .metadata
-                                //             .user_strings
-                                //             .get(&val.as_string().unwrap())
-                                //             .unwrap()
-                                //     )
-                                // );
+                                self.call_function(
+                                    *self.builtin_functions.get("WriteLine(string)").unwrap(),
+                                    vec![val],
+                                );
                             } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
                                 self.call_function(
                                     *self.builtin_functions.get("WriteLine(int)").unwrap(),
@@ -712,6 +733,7 @@ impl CastIntoLLVMType for Type {
         match self.base {
             ElementType::Void => LLVMVoidTypeInContext(ctx),
             ElementType::I4 => LLVMInt32TypeInContext(ctx),
+            ElementType::String => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
             _ => unimplemented!()
             // &VariableType::Int => LLVMInt32TypeInContext(ctx),
             // &VariableType::Double => LLVMDoubleTypeInContext(ctx),
@@ -758,9 +780,20 @@ unsafe fn llvm_const_int32(ctx: LLVMContextRef, n: u64) -> LLVMValueRef {
     LLVMConstInt(LLVMInt32TypeInContext(ctx), n, 1)
 }
 
+unsafe fn llvm_const_ptr(ctx: LLVMContextRef, p: *mut u64) -> LLVMValueRef {
+    let ptr_as_int = LLVMConstInt(LLVMInt64TypeInContext(ctx), p as u64, 0);
+    let const_ptr = LLVMConstIntToPtr(ptr_as_int, LLVMPointerType(LLVMInt8TypeInContext(ctx), 0));
+    const_ptr
+}
+
 // Builtins
 
 #[no_mangle]
 fn write_line_int(n: i32) {
     println!("{}", n);
+}
+
+#[no_mangle]
+fn write_line_string(s: *mut String) {
+    println!("{}", unsafe { &*s });
 }
