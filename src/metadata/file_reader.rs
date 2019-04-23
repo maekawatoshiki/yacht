@@ -18,7 +18,6 @@ use std::{
     iter,
 };
 // use std::mem::transmute;
-use std::{cell::RefCell, rc::Rc};
 
 #[derive(Debug)]
 pub struct PEFileReader {
@@ -116,7 +115,7 @@ impl PEFileReader {
         })
     }
 
-    pub fn read_entry_method(&mut self, image: &mut Image) -> Option<MethodBodyRef> {
+    pub fn read_entry_method(&mut self, image: &mut Image) -> Option<MethodBody> {
         let text_section = image
             .cli_info
             .sections
@@ -135,18 +134,17 @@ impl PEFileReader {
         let start = (method_table.rva - text_section.virtual_address
             + text_section.pointer_to_raw_data) as u64;
         dprintln!("method body begin at: {}", start);
-        let method = self.read_method_body(image, start).unwrap();
+        let method = self
+            .read_method_body(image, method_table.rva, start)
+            .unwrap();
         dprintln!("Method: {:?}", method);
 
-        let method_ref = Rc::new(RefCell::new(method));
-        image
-            .method_cache
-            .insert(method_table.rva, method_ref.clone());
+        image.method_cache.insert(method_table.rva, method.clone());
 
-        Some(method_ref)
+        Some(method)
     }
 
-    pub fn read_method(&mut self, image: &mut Image, rva: u32) -> Option<MethodBodyRef> {
+    pub fn read_method(&mut self, image: &mut Image, rva: u32) -> Option<MethodBody> {
         let text_section = image
             .cli_info
             .sections
@@ -155,23 +153,27 @@ impl PEFileReader {
             .unwrap();
         let start = (rva - text_section.virtual_address + text_section.pointer_to_raw_data) as u64;
         dprintln!("Method body begin at: {}", start);
-        let method = self.read_method_body(image, start)?;
+        let method = self.read_method_body(image, rva, start)?;
         dprintln!("Method: {:?}", method);
 
-        use crate::exec::cfg::CFGMaker;
-        println!(
-            "basic blocks: {:?}",
-            CFGMaker::new().make_basic_blocks(&method.body)
-        );
+        image.method_cache.insert(rva, method.clone());
 
-        let method_ref = Rc::new(RefCell::new(method));
-        image.method_cache.insert(rva, method_ref.clone());
-
-        Some(method_ref)
+        Some(method)
     }
 
-    fn read_method_body(&mut self, image: &mut Image, start: u64) -> Option<MethodBody> {
+    fn read_method_body(&mut self, image: &mut Image, rva: u32, start: u64) -> Option<MethodBody> {
         self.reader.seek(SeekFrom::Start(start)).ok()?;
+
+        let (name, ty) = unsafe {
+            let MethodDefTable {
+                name, signature, ..
+            } = image.get_method_def_table_by_rva(rva).unwrap();
+            let sig = image.metadata.blob.get(&(*signature as u32)).unwrap();
+            (
+                image.metadata.strings.get(&(*name as u32)).unwrap().clone(),
+                SignatureParser::new(sig).parse_method_def_sig().unwrap(),
+            )
+        };
 
         let header_ty = self.read_method_header_type()?;
 
@@ -181,10 +183,11 @@ impl PEFileReader {
                 self.read_bytes(raw_body.as_mut_slice())?;
                 let body = BytesToInstructions::new(&raw_body).convert()?;
                 Some(MethodBody {
+                    name,
                     header_ty,
                     body,
                     locals_ty: vec![],
-                    ty: None,
+                    ty,
                 })
             }
             MethodHeaderType::FatFormat {
@@ -218,10 +221,11 @@ impl PEFileReader {
                 let body = BytesToInstructions::new(&raw_body).convert()?;
 
                 Some(MethodBody {
+                    name,
                     header_ty,
                     body,
                     locals_ty,
-                    ty: None,
+                    ty,
                 })
             }
         }

@@ -12,7 +12,7 @@ pub struct Image {
     pub metadata: MetaDataStreams,
     pub reader: Option<Rc<RefCell<PEFileReader>>>,
     // Cache
-    pub method_cache: FxHashMap<u32, MethodBodyRef>,
+    pub method_cache: FxHashMap<u32, MethodBody>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
 }
@@ -103,7 +103,7 @@ pub enum TableKind {
     TypeSpec,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Table {
     Assembly(AssemblyTable),
     // AssemblyOS,
@@ -388,14 +388,29 @@ impl Image {
         self.metadata.strings.get(&n.into()).unwrap()
     }
 
-    pub fn get_method(&mut self, rva: u32) -> MethodBodyRef {
-        if let Some(method_ref) = self.method_cache.get(&rva) {
-            return method_ref.clone();
+    pub fn get_method(&mut self, rva: u32) -> MethodBody {
+        if let Some(method) = self.method_cache.get(&rva) {
+            return method.clone();
         }
+
         let reader = self.reader.as_mut().unwrap().clone();
-        let method_ref = reader.borrow_mut().read_method(self, rva).unwrap();
-        self.method_cache.insert(rva, method_ref.clone());
-        method_ref
+        let method = reader.borrow_mut().read_method(self, rva).unwrap();
+        self.method_cache.insert(rva, method.clone());
+        method
+    }
+
+    pub fn get_method_def_table_by_rva(&self, rva: u32) -> Option<&MethodDefTable> {
+        for method_def in &self.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()] {
+            match method_def {
+                Table::MethodDef(mdt) => {
+                    if mdt.rva == rva {
+                        return Some(mdt);
+                    }
+                }
+                _ => return None,
+            }
+        }
+        None
     }
 }
 

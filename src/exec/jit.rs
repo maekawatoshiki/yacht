@@ -41,7 +41,7 @@ pub struct JITCompiler<'a> {
     basic_blocks: FxHashMap<usize, BasicBlockInfo>,
     phi_stack: FxHashMap<usize, Vec<PhiStack>>, // destination,
     env: Environment,
-    compile_queue: VecDeque<(MethodSignature, LLVMValueRef, MethodBodyRef)>,
+    compile_queue: VecDeque<(LLVMValueRef, MethodBody)>,
     builtin_functions: FxHashMap<String, LLVMValueRef>,
     strings: Vec<*mut String>,
 }
@@ -147,8 +147,11 @@ impl<'a> JITCompiler<'a> {
         llvm::execution_engine::LLVMRunFunction(ee, main, 0, vec![].as_mut_ptr());
     }
 
-    pub unsafe fn generate_main(&mut self, method_ref: MethodBodyRef) -> LLVMValueRef {
-        let method = method_ref.borrow();
+    pub unsafe fn generate_main(&mut self, method: &MethodBody) -> LLVMValueRef {
+        self.basic_blocks.clear();
+        self.phi_stack.clear();
+        self.env = Environment::new();
+
         let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let (ret_ty, mut params_ty): (LLVMTypeRef, Vec<LLVMTypeRef>) =
             { (Type::new(ElementType::Void).to_llvmty(self.context), vec![]) };
@@ -210,20 +213,13 @@ impl<'a> JITCompiler<'a> {
             if LLVMIsATerminatorInst(LLVMGetLastInstruction(iter_bb)) == ptr::null_mut() {
                 let terminator_builder = LLVMCreateBuilderInContext(self.context);
                 LLVMPositionBuilderAtEnd(terminator_builder, iter_bb);
-                // if ret_ty == VariableType::Void {
                 LLVMBuildRetVoid(self.builder);
-                // } else {
-                //     LLVMBuildRet(terminator_builder, LLVMConstNull(func_ret_ty));
-                // }
             }
             iter_bb = LLVMGetNextBasicBlock(iter_bb);
         }
 
-        self.basic_blocks.clear();
-        self.phi_stack.clear();
-
-        while let Some((sig, func, method)) = self.compile_queue.pop_front() {
-            self.generate_func(sig, func, method);
+        while let Some((func, method)) = self.compile_queue.pop_front() {
+            self.generate_func(func, &method);
         }
 
         when_debug!(LLVMDumpModule(self.module));
@@ -238,19 +234,13 @@ impl<'a> JITCompiler<'a> {
         func
     }
 
-    unsafe fn generate_func(
-        &mut self,
-        sig: MethodSignature,
-        func: LLVMValueRef,
-        method_ref: MethodBodyRef,
-    ) {
+    unsafe fn generate_func(&mut self, func: LLVMValueRef, method: &MethodBody) {
         self.generating = Some(func);
         self.env = Environment::new();
 
-        let method = method_ref.borrow();
+        let method_ty = method.ty.as_fnptr().unwrap();
         let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let ret_ty = LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(func)));
-
         let bb_entry = LLVMAppendBasicBlockInContext(
             self.context,
             func,
@@ -259,7 +249,7 @@ impl<'a> JITCompiler<'a> {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_entry);
 
-        for (i, ty) in sig.params.iter().enumerate() {
+        for (i, ty) in method_ty.params.iter().enumerate() {
             LLVMBuildStore(
                 self.builder,
                 LLVMGetParam(func, i as u32),
@@ -372,6 +362,7 @@ impl<'a> JITCompiler<'a> {
         var
     }
 
+    // Returns destination
     unsafe fn compile_block(
         &mut self,
         blocks: &mut [BasicBlock],
@@ -379,34 +370,39 @@ impl<'a> JITCompiler<'a> {
         init_stack: Vec<LLVMValueRef>,
     ) -> CResult<usize> {
         #[rustfmt::skip]
-        macro_rules! block { () => {{ &mut blocks[idx] }}; };
+        macro_rules! cur_block { () => {{ &blocks[idx] }}; };
+        #[rustfmt::skip]
+        macro_rules! cur_block_mut { () => {{ &mut blocks[idx] }}; };
 
-        if block!().generated {
+        fn find_block(start: usize, blocks: &[BasicBlock]) -> Option<usize> {
+            blocks.iter().enumerate().find_map(
+                |(i, block)| {
+                    if block.start == start {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                },
+            )
+        }
+
+        if cur_block!().generated {
             return Ok(0);
         }
 
-        block!().generated = true;
+        cur_block_mut!().generated = true;
 
-        let bb = self.basic_blocks.get_mut(&block!().start).unwrap();
+        let bb = self.basic_blocks.get_mut(&cur_block!().start).unwrap();
         LLVMPositionBuilderAtEnd(self.builder, bb.set_positioned().retrieve());
 
-        let phi_stack = self.build_phi_stack(block!().start, init_stack);
-        let stack = self.compile_bytecode(block!(), phi_stack)?;
+        let phi_stack = self.build_phi_stack(cur_block!().start, init_stack);
+        let stack = self.compile_bytecode(cur_block!(), phi_stack)?;
 
-        fn find(pc: usize, blocks: &[BasicBlock]) -> Option<usize> {
-            for (i, block) in blocks.iter().enumerate() {
-                if block.start == pc {
-                    return Some(i);
-                }
-            }
-            None
-        }
-
-        match block!().kind.clone() {
+        match &cur_block!().kind {
             BrKind::ConditionalJmp { destinations } => {
                 let mut d = 0;
-                for dst in destinations {
-                    if let Some(i) = find(dst, blocks) {
+                for dst in destinations.clone() {
+                    if let Some(i) = find_block(dst, blocks) {
                         d = self.compile_block(blocks, i, stack.clone())?;
                     } else {
                         continue;
@@ -416,27 +412,27 @@ impl<'a> JITCompiler<'a> {
                 Ok(d)
             }
             BrKind::UnconditionalJmp { destination } => {
-                let src_bb = self.get_basic_block(block!().start).retrieve();
+                let src_bb = self.get_basic_block(cur_block!().start).retrieve();
                 self.phi_stack
-                    .entry(destination)
+                    .entry(*destination)
                     .or_insert(vec![])
                     .push(PhiStack { src_bb, stack });
-                Ok(destination)
+                Ok(*destination)
             }
             BrKind::JmpRequired { destination } => {
-                let src_bb = self.get_basic_block(block!().start).retrieve();
+                let src_bb = self.get_basic_block(cur_block!().start).retrieve();
                 if cur_bb_has_no_terminator(self.builder) {
                     let bb = self
-                        .get_basic_block(destination)
+                        .get_basic_block(*destination)
                         .set_positioned()
                         .retrieve();
                     LLVMBuildBr(self.builder, bb);
                 }
                 self.phi_stack
-                    .entry(destination)
+                    .entry(*destination)
                     .or_insert(vec![])
                     .push(PhiStack { src_bb, stack });
-                Ok(destination)
+                Ok(*destination)
             }
             _ => Ok(0),
         }
@@ -447,10 +443,10 @@ impl<'a> JITCompiler<'a> {
         start: usize,
         mut stack: Vec<LLVMValueRef>,
     ) -> Vec<LLVMValueRef> {
-        let init_size = stack.len();
-
         if let Some(phi_stacks) = self.phi_stack.get(&start) {
-            // Firstly, build llvm's phi which needs a type of all conceivable values.
+            let init_stack_size = stack.len();
+
+            // Firstly, build llvm phi which needs a type of all conceivable values.
             let src_bb = phi_stacks[0].src_bb;
             for val in &phi_stacks[0].stack {
                 let phi = LLVMBuildPhi(
@@ -465,7 +461,7 @@ impl<'a> JITCompiler<'a> {
             for phi_stack in &phi_stacks[1..] {
                 let src_bb = phi_stack.src_bb;
                 for (i, val) in (&phi_stack.stack).iter().enumerate() {
-                    let phi = stack[init_size + i];
+                    let phi = stack[init_stack_size + i];
                     LLVMAddIncoming(phi, vec![*val].as_mut_ptr(), vec![src_bb].as_mut_ptr(), 1);
                 }
             }
@@ -627,12 +623,11 @@ impl<'a> JITCompiler<'a> {
             }
         }
 
-        // Instruction::Bge { target } => self.instr_bge(image, *target),
         Ok(stack)
     }
 
     unsafe fn gen_instr_call(&mut self, stack: &mut Vec<LLVMValueRef>, table: usize, entry: usize) {
-        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
+        let table = self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
             Table::MemberRef(mrt) => {
                 let (table, entry) = mrt.class_table_and_entry();
@@ -673,7 +668,6 @@ impl<'a> JITCompiler<'a> {
                                     *self.builtin_functions.get("WriteLine(int)").unwrap(),
                                     vec![val],
                                 );
-                                // println!("{}", val.as_int32().unwrap());
                             }
                         }
                     }
@@ -681,31 +675,15 @@ impl<'a> JITCompiler<'a> {
                 }
             }
             Table::MethodDef(mdt) => {
-                // let saved_program_counter = self.program_counter;
-                // self.program_counter = 0;
-                //
-                let sig = self
-                    .image
-                    .metadata
-                    .blob
-                    .get(&(mdt.signature as u32))
-                    .unwrap();
-                let ty = SignatureParser::new(sig).parse_method_def_sig().unwrap();
-                let method_sig = ty.as_fnptr().unwrap();
-                let params = {
-                    let mut params = vec![];
-                    for _ in 0..method_sig.params.len() {
-                        params.push(stack.pop().unwrap());
-                    }
-                    params.reverse();
-                    params
-                    // self.stack_pop_last_elements(method_sig.params.len() as usize)
-                };
-                let rva = mdt.rva;
-                let func = if let Some(llvm_func) = self.generated.get(&rva) {
+                let method = self.image.get_method(mdt.rva);
+                let method_sig = method.ty.as_fnptr().unwrap();
+                let params = stack
+                    .drain(stack.len() - method_sig.params.len()..)
+                    .collect();
+                let func = if let Some(llvm_func) = self.generated.get(&mdt.rva) {
                     *llvm_func
                 } else {
-                    let method_ref = self.image.get_method(mdt.rva);
+                    let method = self.image.get_method(mdt.rva);
                     let ret_ty = method_sig.ret.to_llvmty(self.context);
                     let mut params_ty = method_sig
                         .params
@@ -714,11 +692,13 @@ impl<'a> JITCompiler<'a> {
                         .collect::<Vec<LLVMTypeRef>>();
                     let func_ty =
                         LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
-                    let func =
-                        LLVMAddFunction(self.module, CString::new("1").unwrap().as_ptr(), func_ty);
-                    self.generated.insert(rva, func);
-                    self.compile_queue
-                        .push_back((method_sig.clone(), func, method_ref));
+                    let func = LLVMAddFunction(
+                        self.module,
+                        CString::new(method.name.as_str()).unwrap().as_ptr(),
+                        func_ty,
+                    );
+                    self.generated.insert(mdt.rva, func);
+                    self.compile_queue.push_back((func, method.clone()));
                     func
                 };
                 let ret = self.call_function(func, params);

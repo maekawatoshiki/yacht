@@ -1,6 +1,6 @@
 use crate::{
     exec::instruction::*,
-    metadata::{metadata::*, method::MethodBodyRef, signature::*},
+    metadata::{metadata::*, method::*, signature::*},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,7 +27,7 @@ impl Interpreter {
         }
     }
 
-    pub fn interpret(&mut self, image: &mut Image, method: MethodBodyRef, arguments: &[Value]) {
+    pub fn interpret(&mut self, image: &mut Image, method: &MethodBody, arguments: &[Value]) {
         macro_rules! numeric_op {
             ($op:ident) => {{
                 let y = self.stack_pop();
@@ -37,9 +37,8 @@ impl Interpreter {
         }
 
         let (iseq, mut locals) = {
-            let method = method.borrow();
             (
-                method.body.clone(),
+                &method.body,
                 vec![Value::Int32(0); method.header_ty.max_stack()],
             )
         };
@@ -152,15 +151,13 @@ impl Interpreter {
                 let saved_program_counter = self.program_counter;
                 self.program_counter = 0;
 
+                let method = image.get_method(mdt.rva);
                 let params = {
-                    let sig = image.metadata.blob.get(&(mdt.signature as u32)).unwrap();
-                    let ty = SignatureParser::new(sig).parse_method_def_sig().unwrap();
-                    let method_sig = ty.as_fnptr().unwrap();
+                    let method_sig = method.ty.as_fnptr().unwrap();
                     self.stack_pop_last_elements(method_sig.params.len() as usize)
                 };
-                let method_ref = image.get_method(mdt.rva);
 
-                self.interpret(image, method_ref, &params);
+                self.interpret(image, &method, &params);
 
                 self.program_counter = saved_program_counter;
             }

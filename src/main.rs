@@ -42,10 +42,10 @@ fn main() {
     let method = pe_file_reader.read_entry_method(&mut image).unwrap();
     image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
     let mut interpreter = interpret::Interpreter::new();
-    interpreter.interpret(&mut image, method.clone(), &[]);
+    interpreter.interpret(&mut image, &method, &[]);
     unsafe {
         let mut jit = jit::JITCompiler::new(&mut image);
-        let main = jit.generate_main(method);
+        let main = jit.generate_main(&method);
         jit.run_main(main);
     }
 }
