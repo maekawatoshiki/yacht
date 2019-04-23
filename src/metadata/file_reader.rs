@@ -813,9 +813,14 @@ impl PEFileReader {
                         let (len, read_bytes) = self.read_blob_length()?;
                         count += read_bytes;
 
-                        /* read 2 bytes at once so divide len by 2 */
+                        /* read 2 bytes each so divide len by 2 */
                         for _ in 0..len / 2 {
                             bytes.push(self.read_u16()?);
+                        }
+
+                        if len % 2 == 1 {
+                            // Consume additional one byte
+                            self.read_u8()?; // TODO
                         }
 
                         user_strings_.insert(bgn as u32, bytes.clone());
