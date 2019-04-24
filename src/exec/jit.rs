@@ -650,7 +650,9 @@ impl<'a> JITCompiler<'a> {
                             .blob
                             .get(&(mrt.signature as u32))
                             .unwrap();
-                        let ty = SignatureParser::new(sig).parse_method_ref_sig().unwrap();
+                        let ty = SignatureParser::new(sig)
+                            .parse_method_ref_sig(self.image)
+                            .unwrap();
 
                         if ar_name == "mscorlib"
                             && ty_namespace == "System"

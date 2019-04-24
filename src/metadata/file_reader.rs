@@ -171,7 +171,9 @@ impl PEFileReader {
             let sig = image.metadata.blob.get(&(*signature as u32)).unwrap();
             (
                 image.metadata.strings.get(&(*name as u32)).unwrap().clone(),
-                SignatureParser::new(sig).parse_method_def_sig().unwrap(),
+                SignatureParser::new(sig)
+                    .parse_method_def_sig(image)
+                    .unwrap(),
             )
         };
 
@@ -209,7 +211,7 @@ impl PEFileReader {
                         assert_eq!(blob.next()?, &0x07);
                         let len = *blob.next()? as usize;
                         use std::iter::repeat_with;
-                        repeat_with(|| Type::into_type(&mut blob).unwrap())
+                        repeat_with(|| Type::into_type(image, &mut blob).unwrap())
                             .take(len)
                             .collect()
                     }
@@ -732,6 +734,7 @@ impl PEFileReader {
                     TableKind::StandAloneSig => {
                         Table::StandAloneSig(self.read_struct::<StandAlongSigTable>()?)
                     }
+                    TableKind::Field => Table::Field(self.read_struct::<FieldTable>()?),
                     e => unimplemented!("{:?}", e),
                 })
             }

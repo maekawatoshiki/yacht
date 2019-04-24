@@ -116,7 +116,9 @@ impl Interpreter {
                         let ty_name = image.get_string(trt.type_name);
                         let name = image.get_string(mrt.name);
                         let sig = image.metadata.blob.get(&(mrt.signature as u32)).unwrap();
-                        let ty = SignatureParser::new(sig).parse_method_ref_sig().unwrap();
+                        let ty = SignatureParser::new(sig)
+                            .parse_method_ref_sig(image)
+                            .unwrap();
 
                         dprintln!(" [{}]{}.{}::{}", ar_name, ty_namespace, ty_name, name);
 

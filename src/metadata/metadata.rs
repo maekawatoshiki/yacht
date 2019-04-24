@@ -118,7 +118,7 @@ pub enum Table {
     // EventMap,
     // Event,
     // ExportedType,
-    // Field,
+    Field(FieldTable),
     // FieldLayout,
     // FieldMarshal,
     // FieldRVA,
@@ -160,7 +160,7 @@ pub struct AssemblyTable {
     pub culture: u16,
 }
 
-/// II.22.15 AssemblyRef
+/// II.22.5 AssemblyRef
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[repr(C, packed)]
 pub struct AssemblyRefTable {
@@ -182,6 +182,15 @@ pub struct CustomAttributeTable {
     pub parent: u16,
     pub type_: u16,
     pub value: u16,
+}
+
+/// II.22.15 Field
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct FieldTable {
+    flags: u16,
+    name: u16,
+    signature: u16,
 }
 
 /// II.22.25 MemberRef

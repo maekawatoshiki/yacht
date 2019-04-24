@@ -1,3 +1,4 @@
+use crate::metadata::{class::ClassInfo, metadata::*};
 use std::{iter::repeat_with, slice::Iter};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -11,6 +12,7 @@ pub enum ElementType {
     Boolean,
     I4,
     String,
+    Class(Box<ClassInfo>),
     FnPtr(Box<MethodSignature>),
 }
 
@@ -36,12 +38,28 @@ impl Type {
         Self { base }
     }
 
-    pub fn into_type<'a>(sig: &mut Iter<'a, u8>) -> Option<Self> {
+    pub fn into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
         match sig.next()? {
             0x1 => Some(Type::new(ElementType::Void)),
             0x2 => Some(Type::new(ElementType::Boolean)),
             0x8 => Some(Type::new(ElementType::I4)),
             0xe => Some(Type::new(ElementType::String)),
+            0x12 => {
+                let token = decompress_uint(sig).unwrap();
+                let (table, idx) = decode_typedef_or_ref_token(token);
+                let table = &image.metadata.metadata_stream.tables[table][idx - 1];
+                let (name, namespace) = match table {
+                    Table::TypeDef(tdt) => (
+                        image.get_string(tdt.type_name).clone(),
+                        image.get_string(tdt.type_namespace).clone(),
+                    ),
+                    _ => unimplemented!(),
+                };
+                Some(Type::new(ElementType::Class(Box::new(ClassInfo {
+                    name,
+                    namespace,
+                }))))
+            }
             // TODO
             // 0x1b => Some(ElementType::FnPtr
             _ => None,
@@ -74,21 +92,21 @@ impl<'a> SignatureParser<'a> {
         Self { sig: sig.iter() }
     }
 
-    pub fn parse_method_ref_sig(&mut self) -> Option<Type> {
+    pub fn parse_method_ref_sig(&mut self, image: &Image) -> Option<Type> {
         let first = *self.sig.next()?;
         let _has_this = first & 0x20;
         let _explicit_this = first & 0x40;
         let _var_arg = first & 0x5;
 
-        let param_count = self.decompress_uint()?;
-        let ret = Type::into_type(&mut self.sig)?;
+        let param_count = decompress_uint(&mut self.sig)?;
+        let ret = Type::into_type(image, &mut self.sig)?;
 
-        let params = repeat_with(|| Type::into_type(&mut self.sig).unwrap())
+        let params = repeat_with(|| Type::into_type(image, &mut self.sig).unwrap())
             .take(param_count as usize)
             .collect();
 
         let _var_arg_params = if let Some(0x41) = self.sig.next() {
-            repeat_with(|| Type::into_type(&mut self.sig).unwrap())
+            repeat_with(|| Type::into_type(image, &mut self.sig).unwrap())
                 .take(param_count as usize)
                 .collect()
         } else {
@@ -102,7 +120,7 @@ impl<'a> SignatureParser<'a> {
         }))))
     }
 
-    pub fn parse_method_def_sig(&mut self) -> Option<Type> {
+    pub fn parse_method_def_sig(&mut self, image: &Image) -> Option<Type> {
         let first = *self.sig.next()?;
         let _default = first == 0;
         let _has_this = first & 0x20;
@@ -110,10 +128,10 @@ impl<'a> SignatureParser<'a> {
         let _var_arg = first & 0x5;
         let _generic = first & 0x10;
 
-        let param_count = self.decompress_uint()?;
-        let ret = Type::into_type(&mut self.sig)?;
+        let param_count = decompress_uint(&mut self.sig)?;
+        let ret = Type::into_type(image, &mut self.sig)?;
 
-        let params = repeat_with(|| Type::into_type(&mut self.sig).unwrap())
+        let params = repeat_with(|| Type::into_type(image, &mut self.sig).unwrap())
             .take(param_count as usize)
             .collect();
 
@@ -123,22 +141,33 @@ impl<'a> SignatureParser<'a> {
             params,
         }))))
     }
+}
 
-    fn decompress_uint(&mut self) -> Option<u32> {
-        let x = *self.sig.next()? as u32;
-        if x & 0b1000_0000 == 0 {
-            // 1 byte
-            Some(x)
-        } else if x & 0b1000_0000 > 0 {
-            // 2 bytes
-            let y = *self.sig.next()? as u32;
-            Some(((x & 0b0011_1111) << 8) + y)
-        } else {
-            // 4 bytes
-            let y = *self.sig.next()? as u32;
-            let z = *self.sig.next()? as u32;
-            let u = *self.sig.next()? as u32;
-            Some(((x & 0b0001_1111) << 24) + (y << 16) + (z << 8) + u)
-        }
+pub fn decompress_uint<'a>(sig: &mut Iter<'a, u8>) -> Option<u32> {
+    let x = *sig.next()? as u32;
+    if x & 0b1000_0000 == 0 {
+        // 1 byte
+        Some(x)
+    } else if x & 0b1000_0000 > 0 {
+        // 2 bytes
+        let y = *sig.next()? as u32;
+        Some(((x & 0b0011_1111) << 8) + y)
+    } else {
+        // 4 bytes
+        let y = *sig.next()? as u32;
+        let z = *sig.next()? as u32;
+        let u = *sig.next()? as u32;
+        Some(((x & 0b0001_1111) << 24) + (y << 16) + (z << 8) + u)
+    }
+}
+
+pub fn decode_typedef_or_ref_token(token: u32) -> (usize, usize) {
+    let tag = token & 0b11;
+    let idx = token as usize >> 2;
+    match tag {
+        0 => (TableKind::TypeDef.into_num(), idx),
+        1 => (TableKind::TypeRef.into_num(), idx),
+        2 => (TableKind::TypeSpec.into_num(), idx),
+        _ => unreachable!(),
     }
 }
