@@ -1,4 +1,4 @@
-use crate::metadata::{class::ClassInfo, metadata::*};
+use crate::metadata::{class::*, metadata::*};
 use std::{iter::repeat_with, slice::Iter};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,22 +44,7 @@ impl Type {
             0x2 => Some(Type::new(ElementType::Boolean)),
             0x8 => Some(Type::new(ElementType::I4)),
             0xe => Some(Type::new(ElementType::String)),
-            0x12 => {
-                let token = decompress_uint(sig).unwrap();
-                let (table, idx) = decode_typedef_or_ref_token(token);
-                let table = &image.metadata.metadata_stream.tables[table][idx - 1];
-                let (name, namespace) = match table {
-                    Table::TypeDef(tdt) => (
-                        image.get_string(tdt.type_name).clone(),
-                        image.get_string(tdt.type_namespace).clone(),
-                    ),
-                    _ => unimplemented!(),
-                };
-                Some(Type::new(ElementType::Class(Box::new(ClassInfo {
-                    name,
-                    namespace,
-                }))))
-            }
+            0x12 => Type::class_into_type(image, sig),
             // TODO
             // 0x1b => Some(ElementType::FnPtr
             _ => None,
@@ -84,6 +69,51 @@ impl Type {
 
     pub fn is_void(&self) -> bool {
         self.base == ElementType::Void
+    }
+
+    fn class_into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
+        let token = decompress_uint(sig).unwrap();
+        let (table, idx) = decode_typedef_or_ref_token(token);
+        let tables = &image.metadata.metadata_stream.tables[table];
+        let table = &tables[idx - 1];
+        let (name, namespace, fields) = match table {
+            Table::TypeDef(tdt) => {
+                let next_table = tables.get(idx);
+                let field_list_bgn = tdt.field_list as usize - 1;
+                let field_list_end = match next_table {
+                    Some(table) => match table {
+                        Table::TypeDef(tdt) => tdt.field_list as usize - 1,
+                        _ => unreachable!(),
+                    },
+                    None => tables.len(),
+                };
+                let fields = image.metadata.metadata_stream.tables[TableKind::Field.into_num()]
+                    [field_list_bgn..field_list_end]
+                    .iter()
+                    .map(|t| match t {
+                        Table::Field(ft) => {
+                            let name = image.get_string(ft.name).clone();
+                            let mut sig = image.get_blob(ft.signature).iter();
+                            assert_eq!(sig.next().unwrap(), &0x06);
+                            let ty = Type::into_type(image, &mut sig).unwrap();
+                            ClassField { name, ty }
+                        }
+                        _ => unreachable!(),
+                    })
+                    .collect();
+                (
+                    image.get_string(tdt.type_name).clone(),
+                    image.get_string(tdt.type_namespace).clone(),
+                    fields,
+                )
+            }
+            _ => unimplemented!(),
+        };
+        Some(Type::new(ElementType::Class(Box::new(ClassInfo {
+            name,
+            namespace,
+            fields,
+        }))))
     }
 }
 

@@ -500,6 +500,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Call { table, entry } => {
                     self.gen_instr_call(&mut stack, *table, *entry)
                 }
+                Instruction::Newobj { table, entry } => {}
                 Instruction::Ldloc_0 => stack.push(LLVMBuildLoad(
                     self.builder,
                     self.get_local(0, None),

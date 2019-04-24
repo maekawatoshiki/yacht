@@ -71,6 +71,7 @@ impl Interpreter {
                 Instruction::Mul => numeric_op!(mul),
                 Instruction::Rem => numeric_op!(rem),
                 Instruction::Call { table, entry } => self.instr_call(image, *table, *entry),
+                Instruction::Newobj { table, entry } => self.instr_newobj(image, *table, *entry),
                 Instruction::Ret => break,
             }
             self.program_counter += 1;
@@ -165,6 +166,10 @@ impl Interpreter {
             }
             e => unimplemented!("call: unimplemented: {:?}", e),
         }
+    }
+
+    fn instr_newobj(&mut self, image: &mut Image, table: usize, entry: usize) {
+        self.stack_push(Value::Int32(0))
     }
 
     fn instr_bge(&mut self, _image: &mut Image, target: usize) {

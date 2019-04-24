@@ -188,9 +188,9 @@ pub struct CustomAttributeTable {
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[repr(C, packed)]
 pub struct FieldTable {
-    flags: u16,
-    name: u16,
-    signature: u16,
+    pub flags: u16,
+    pub name: u16,
+    pub signature: u16,
 }
 
 /// II.22.25 MemberRef
@@ -420,6 +420,10 @@ impl Image {
             }
         }
         None
+    }
+
+    pub fn get_blob<T: Into<u32>>(&self, n: T) -> &Vec<u8> {
+        self.metadata.blob.get(&n.into()).unwrap()
     }
 }
 

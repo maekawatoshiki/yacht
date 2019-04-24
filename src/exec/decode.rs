@@ -36,6 +36,12 @@ impl<'a> BytesToInstructions<'a> {
                     let entry = token as usize & 0x00ff_ffff;
                     iseq.push(Instruction::Call { table, entry })
                 }
+                il_instr::NEWOBJ => {
+                    let token = self.read_u32()?;
+                    let table = token as usize >> (32 - 8);
+                    let entry = token as usize & 0x00ff_ffff;
+                    iseq.push(Instruction::Newobj { table, entry })
+                }
                 il_instr::LDC_I4_0 => iseq.push(Instruction::Ldc_I4_0),
                 il_instr::LDC_I4_1 => iseq.push(Instruction::Ldc_I4_1),
                 il_instr::LDC_I4_2 => iseq.push(Instruction::Ldc_I4_2),

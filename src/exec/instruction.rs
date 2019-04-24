@@ -26,6 +26,7 @@ pub enum Instruction {
     Mul,
     Rem,
     Call { table: usize, entry: usize },
+    Newobj { table: usize, entry: usize },
     Ret,
 }
 
@@ -56,11 +57,12 @@ pub mod il_instr {
     pub const SUB      : u8 = 0x59;
     pub const MUL      : u8 = 0x5a;
     pub const REM      : u8 = 0x5d;
+    pub const NEWOBJ   : u8 = 0x73;
     pub const RET      : u8 = 0x2a;
 
     pub fn get_instr_size(instr: u8) -> usize {
         match instr {
-            LDSTR | CALL | 
+            LDSTR | CALL | NEWOBJ |
             BGE | BR | BLT | BNE_UN | BRFALSE | BGT
              | BRTRUE | BLE |
             LDC_I4 => 5, 
