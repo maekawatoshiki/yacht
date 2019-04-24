@@ -250,7 +250,7 @@ pub struct TypeDefTable {
     pub type_namespace: u16,
     pub extends: u16,
     pub field_list: u16,
-    pub module_list: u16,
+    pub method_list: u16,
 }
 
 /// II.22.38 TypeRef

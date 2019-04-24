@@ -173,6 +173,12 @@ impl<'a> SignatureParser<'a> {
     }
 }
 
+impl MethodSignature {
+    pub fn has_this(&self) -> bool {
+        self.info & 0x20 > 0
+    }
+}
+
 pub fn decompress_uint<'a>(sig: &mut Iter<'a, u8>) -> Option<u32> {
     let x = *sig.next()? as u32;
     if x & 0b1000_0000 == 0 {
