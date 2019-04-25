@@ -1,6 +1,6 @@
 use crate::{
     exec::{cfg::*, instruction::*},
-    metadata::{metadata::*, method::*, signature::*},
+    metadata::{class::*, metadata::*, method::*, signature::*},
 };
 use llvm;
 use llvm::{core::*, prelude::*};
@@ -24,9 +24,15 @@ pub enum BasicBlockInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct TypedValue {
+    pub ty: Type,
+    pub val: LLVMValueRef,
+}
+
+#[derive(Debug, Clone)]
 pub struct PhiStack {
     src_bb: LLVMBasicBlockRef,
-    stack: Vec<LLVMValueRef>,
+    stack: Vec<TypedValue>,
 }
 
 #[derive(Debug)]
@@ -44,12 +50,18 @@ pub struct JITCompiler<'a> {
     compile_queue: VecDeque<(LLVMValueRef, MethodBody)>,
     builtin_functions: FxHashMap<String, LLVMValueRef>,
     strings: Vec<*mut String>,
+    class_types: ClassTypesHolder,
 }
 
 #[derive(Debug, Clone)]
 pub struct Environment {
-    pub arguments: FxHashMap<usize, LLVMValueRef>,
-    pub locals: FxHashMap<usize, LLVMValueRef>,
+    pub arguments: FxHashMap<usize, TypedValue>,
+    pub locals: FxHashMap<usize, TypedValue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClassTypesHolder {
+    pub map: FxHashMap<String, FxHashMap<String, LLVMTypeRef>>,
 }
 
 impl<'a> JITCompiler<'a> {
@@ -86,6 +98,7 @@ impl<'a> JITCompiler<'a> {
             env: Environment::new(),
             compile_queue: VecDeque::new(),
             strings: vec![],
+            class_types: ClassTypesHolder::new(),
             builtin_functions: {
                 let mut fs = FxHashMap::default();
                 fs.insert(
@@ -109,6 +122,19 @@ impl<'a> JITCompiler<'a> {
                         LLVMFunctionType(
                             LLVMVoidTypeInContext(context),
                             vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
+                            1,
+                            0,
+                        ),
+                    ),
+                );
+                fs.insert(
+                    "memory_alloc".to_string(),
+                    LLVMAddFunction(
+                        module,
+                        CString::new("memory_alloc").unwrap().as_ptr(),
+                        LLVMFunctionType(
+                            LLVMPointerType(LLVMInt8TypeInContext(context), 0),
+                            vec![LLVMInt32TypeInContext(context)].as_mut_ptr(),
                             1,
                             0,
                         ),
@@ -143,6 +169,12 @@ impl<'a> JITCompiler<'a> {
             f,
             write_line_string as *mut ::std::ffi::c_void,
         );
+        let f = *self.builtin_functions.get_mut("memory_alloc").unwrap();
+        llvm::execution_engine::LLVMAddGlobalMapping(
+            ee,
+            f,
+            memory_alloc as *mut ::std::ffi::c_void,
+        );
 
         llvm::execution_engine::LLVMRunFunction(ee, main, 0, vec![].as_mut_ptr());
     }
@@ -154,7 +186,7 @@ impl<'a> JITCompiler<'a> {
 
         let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let (ret_ty, mut params_ty): (LLVMTypeRef, Vec<LLVMTypeRef>) =
-            { (Type::new(ElementType::Void).to_llvmty(self.context), vec![]) };
+            { (Type::new(ElementType::Void).to_llvmty(self), vec![]) };
         let func_ty = LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
         let func_name = format!("yacht-Main");
         let func = LLVMAddFunction(
@@ -249,11 +281,24 @@ impl<'a> JITCompiler<'a> {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_entry);
 
+        let shift = if method_ty.has_this() {
+            LLVMBuildStore(
+                self.builder,
+                LLVMGetParam(func, 0),
+                self.get_argument(
+                    0,
+                    Some(&Type::new(ElementType::Class(method.class.clone()))),
+                ),
+            );
+            1
+        } else {
+            0
+        };
         for (i, ty) in method_ty.params.iter().enumerate() {
             LLVMBuildStore(
                 self.builder,
-                LLVMGetParam(func, i as u32),
-                self.get_argument(i, Some(&ty)),
+                LLVMGetParam(func, (i + shift) as u32),
+                self.get_argument(i + shift, Some(&ty)),
             );
         }
 
@@ -310,16 +355,24 @@ impl<'a> JITCompiler<'a> {
         self.phi_stack.clear();
     }
 
+    unsafe fn get_local_ty(&mut self, id: usize) -> Type {
+        self.env.locals.get(&id).unwrap().ty.clone()
+    }
+
+    unsafe fn get_argument_ty(&mut self, id: usize) -> Type {
+        self.env.arguments.get(&id).unwrap().ty.clone()
+    }
+
     unsafe fn get_local(&mut self, id: usize, ty: Option<&Type>) -> LLVMValueRef {
         if let Some(v) = self.env.locals.get(&id) {
-            return *v;
+            return v.val;
         }
 
         let func = self.generating.unwrap();
         let builder = LLVMCreateBuilderInContext(self.context);
         let entry_bb = LLVMGetEntryBasicBlock(func);
         let first_inst = LLVMGetFirstInstruction(entry_bb);
-        // A variable is always declared at the first point of entry block
+        // A variable must be declared at the first point of entry block
         if first_inst == ptr::null_mut() {
             LLVMPositionBuilderAtEnd(builder, entry_bb);
         } else {
@@ -328,17 +381,19 @@ impl<'a> JITCompiler<'a> {
 
         let var = LLVMBuildAlloca(
             builder,
-            ty.unwrap().to_llvmty(self.context),
+            ty.unwrap().to_llvmty(self),
             CString::new("").unwrap().as_ptr(),
         );
 
-        self.env.locals.insert(id, var);
+        self.env
+            .locals
+            .insert(id, TypedValue::new(ty.unwrap().clone(), var));
         var
     }
 
     unsafe fn get_argument(&mut self, id: usize, ty: Option<&Type>) -> LLVMValueRef {
         if let Some(v) = self.env.arguments.get(&id) {
-            return *v;
+            return v.val;
         }
 
         let func = self.generating.unwrap();
@@ -354,11 +409,13 @@ impl<'a> JITCompiler<'a> {
 
         let var = LLVMBuildAlloca(
             builder,
-            ty.unwrap().to_llvmty(self.context),
+            ty.unwrap().to_llvmty(self),
             CString::new("").unwrap().as_ptr(),
         );
 
-        self.env.arguments.insert(id, var);
+        self.env
+            .arguments
+            .insert(id, TypedValue::new(ty.unwrap().clone(), var));
         var
     }
 
@@ -367,7 +424,7 @@ impl<'a> JITCompiler<'a> {
         &mut self,
         blocks: &mut [BasicBlock],
         idx: usize,
-        init_stack: Vec<LLVMValueRef>,
+        init_stack: Vec<TypedValue>,
     ) -> CResult<usize> {
         #[rustfmt::skip]
         macro_rules! cur_block { () => {{ &blocks[idx] }}; };
@@ -441,27 +498,27 @@ impl<'a> JITCompiler<'a> {
     unsafe fn build_phi_stack(
         &mut self,
         start: usize,
-        mut stack: Vec<LLVMValueRef>,
-    ) -> Vec<LLVMValueRef> {
+        mut stack: Vec<TypedValue>,
+    ) -> Vec<TypedValue> {
         if let Some(phi_stacks) = self.phi_stack.get(&start) {
             let init_stack_size = stack.len();
 
             // Firstly, build llvm phi which needs a type of all conceivable values.
             let src_bb = phi_stacks[0].src_bb;
-            for val in &phi_stacks[0].stack {
+            for TypedValue { val, ty } in &phi_stacks[0].stack {
                 let phi = LLVMBuildPhi(
                     self.builder,
                     LLVMTypeOf(*val),
                     CString::new("").unwrap().as_ptr(),
                 );
                 LLVMAddIncoming(phi, vec![*val].as_mut_ptr(), vec![src_bb].as_mut_ptr(), 1);
-                stack.push(phi);
+                stack.push(TypedValue::new(ty.clone(), phi));
             }
 
             for phi_stack in &phi_stacks[1..] {
                 let src_bb = phi_stack.src_bb;
-                for (i, val) in (&phi_stack.stack).iter().enumerate() {
-                    let phi = stack[init_stack_size + i];
+                for (i, TypedValue { val, .. }) in (&phi_stack.stack).iter().enumerate() {
+                    let phi = stack[init_stack_size + i].val;
                     LLVMAddIncoming(phi, vec![*val].as_mut_ptr(), vec![src_bb].as_mut_ptr(), 1);
                 }
             }
@@ -473,94 +530,130 @@ impl<'a> JITCompiler<'a> {
     unsafe fn compile_bytecode(
         &mut self,
         block: &BasicBlock,
-        mut stack: Vec<LLVMValueRef>,
-    ) -> CResult<Vec<LLVMValueRef>> {
+        mut stack: Vec<TypedValue>,
+    ) -> CResult<Vec<TypedValue>> {
+        macro_rules! binop {
+            ($op:ident) => {{
+                let val2 = stack.pop().unwrap();
+                let val1 = stack.pop().unwrap();
+                stack.push(TypedValue::new(
+                    val1.ty,
+                    concat_idents!(LLVMBuild, $op)(
+                        self.builder,
+                        val1.val,
+                        val2.val,
+                        CString::new("").unwrap().as_ptr(),
+                    ),
+                ));
+            }};
+        }
+
         let code = &block.code;
 
         for instr in code {
             match instr {
-                Instruction::Ldstr { us_offset } => stack.push(llvm_const_ptr(self.context, {
-                    let s = String::from_utf16_lossy(
-                        self.image.metadata.user_strings.get(&us_offset).unwrap(),
-                    );
-                    self.strings.push(Box::into_raw(Box::new(s)));
-                    *self.strings.last().unwrap() as *mut u64
-                })),
-                Instruction::Ldc_I4_0 => stack.push(llvm_const_int32(self.context, 0)),
-                Instruction::Ldc_I4_1 => stack.push(llvm_const_int32(self.context, 1)),
-                Instruction::Ldc_I4_2 => stack.push(llvm_const_int32(self.context, 2)),
-                Instruction::Ldc_I4_3 => stack.push(llvm_const_int32(self.context, 3)),
-                Instruction::Ldc_I4_S { n } => {
-                    stack.push(llvm_const_int32(self.context, *n as u64))
-                }
-                Instruction::Ldc_I4 { n } => stack.push(llvm_const_int32(self.context, *n as u64)),
+                Instruction::Ldstr { us_offset } => stack.push(TypedValue::new(
+                    Type::string_ty(),
+                    llvm_const_ptr(self.context, {
+                        let s = String::from_utf16_lossy(
+                            self.image.metadata.user_strings.get(&us_offset).unwrap(),
+                        );
+                        self.strings.push(Box::into_raw(Box::new(s)));
+                        *self.strings.last().unwrap() as *mut u64
+                    }),
+                )),
+                Instruction::Ldc_I4_0 => stack.push(TypedValue::new(
+                    Type::i4_ty(),
+                    llvm_const_int32(self.context, 0),
+                )),
+                Instruction::Ldc_I4_1 => stack.push(TypedValue::new(
+                    Type::i4_ty(),
+                    llvm_const_int32(self.context, 1),
+                )),
+                Instruction::Ldc_I4_2 => stack.push(TypedValue::new(
+                    Type::i4_ty(),
+                    llvm_const_int32(self.context, 2),
+                )),
+                Instruction::Ldc_I4_3 => stack.push(TypedValue::new(
+                    Type::i4_ty(),
+                    llvm_const_int32(self.context, 3),
+                )),
+                Instruction::Ldc_I4_S { n } => stack.push(TypedValue::new(
+                    Type::i4_ty(),
+                    llvm_const_int32(self.context, *n as u64),
+                )),
+                Instruction::Ldc_I4 { n } => stack.push(TypedValue::new(
+                    Type::i4_ty(),
+                    llvm_const_int32(self.context, *n as u64),
+                )),
                 Instruction::Pop => {
                     stack.pop();
                 }
                 Instruction::Call { table, entry } => {
                     self.gen_instr_call(&mut stack, *table, *entry)
                 }
-                Instruction::Newobj { table, entry } => {}
-                Instruction::Ldloc_0 => stack.push(LLVMBuildLoad(
-                    self.builder,
-                    self.get_local(0, None),
-                    CString::new("").unwrap().as_ptr(),
+                Instruction::CallVirt { table, entry } => {
+                    self.gen_instr_callvirt(&mut stack, *table, *entry)
+                }
+                Instruction::Newobj { table, entry } => {
+                    self.gen_instr_newobj(&mut stack, *table, *entry)
+                }
+                Instruction::Ldloc_0 => stack.push(TypedValue::new(
+                    self.get_local_ty(0),
+                    LLVMBuildLoad(
+                        self.builder,
+                        self.get_local(0, None),
+                        CString::new("").unwrap().as_ptr(),
+                    ),
                 )),
-                Instruction::Ldfld { table, entry } => {}
+                Instruction::Ldloc_1 => stack.push(TypedValue::new(
+                    self.get_local_ty(1),
+                    LLVMBuildLoad(
+                        self.builder,
+                        self.get_local(1, None),
+                        CString::new("").unwrap().as_ptr(),
+                    ),
+                )),
+                Instruction::Ldfld { table, entry } => {
+                    self.gen_instr_ldfld(&mut stack, *table, *entry)
+                }
                 Instruction::Stloc_0 => {
-                    LLVMBuildStore(self.builder, stack.pop().unwrap(), self.get_local(0, None));
+                    LLVMBuildStore(
+                        self.builder,
+                        stack.pop().unwrap().val,
+                        self.get_local(0, None),
+                    );
                 }
-                Instruction::Stfld { table, entry } => {}
-                Instruction::Ldarg_0 => stack.push(LLVMBuildLoad(
-                    self.builder,
-                    self.get_argument(0, None),
-                    CString::new("").unwrap().as_ptr(),
+                Instruction::Stloc_1 => {
+                    LLVMBuildStore(
+                        self.builder,
+                        stack.pop().unwrap().val,
+                        self.get_local(1, None),
+                    );
+                }
+                Instruction::Stfld { table, entry } => {
+                    self.gen_instr_stfld(&mut stack, *table, *entry)
+                }
+                Instruction::Ldarg_0 => stack.push(TypedValue::new(
+                    self.get_argument_ty(0),
+                    LLVMBuildLoad(
+                        self.builder,
+                        self.get_argument(0, None),
+                        CString::new("").unwrap().as_ptr(),
+                    ),
                 )),
-                Instruction::Ldarg_1 => stack.push(LLVMBuildLoad(
-                    self.builder,
-                    self.get_argument(1, None),
-                    CString::new("").unwrap().as_ptr(),
+                Instruction::Ldarg_1 => stack.push(TypedValue::new(
+                    self.get_argument_ty(0),
+                    LLVMBuildLoad(
+                        self.builder,
+                        self.get_argument(1, None),
+                        CString::new("").unwrap().as_ptr(),
+                    ),
                 )),
-                Instruction::Add => {
-                    let val2 = stack.pop().unwrap();
-                    let val1 = stack.pop().unwrap();
-                    stack.push(LLVMBuildAdd(
-                        self.builder,
-                        val1,
-                        val2,
-                        CString::new("add").unwrap().as_ptr(),
-                    ));
-                }
-                Instruction::Sub => {
-                    let val2 = stack.pop().unwrap();
-                    let val1 = stack.pop().unwrap();
-                    stack.push(LLVMBuildSub(
-                        self.builder,
-                        val1,
-                        val2,
-                        CString::new("sub").unwrap().as_ptr(),
-                    ));
-                }
-                Instruction::Mul => {
-                    let val2 = stack.pop().unwrap();
-                    let val1 = stack.pop().unwrap();
-                    stack.push(LLVMBuildMul(
-                        self.builder,
-                        val1,
-                        val2,
-                        CString::new("mul").unwrap().as_ptr(),
-                    ));
-                }
-                Instruction::Rem => {
-                    let val2 = stack.pop().unwrap();
-                    let val1 = stack.pop().unwrap();
-                    stack.push(LLVMBuildSRem(
-                        self.builder,
-                        val1,
-                        val2,
-                        CString::new("rem").unwrap().as_ptr(),
-                    ));
-                }
+                Instruction::Add => binop!(Add),
+                Instruction::Sub => binop!(Sub),
+                Instruction::Mul => binop!(Mul),
+                Instruction::Rem => binop!(SRem),
                 Instruction::Ret => {
                     if LLVMGetTypeKind(LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(
                         self.generating.unwrap(),
@@ -568,7 +661,7 @@ impl<'a> JITCompiler<'a> {
                     {
                         LLVMBuildRetVoid(self.builder);
                     } else {
-                        let val = stack.pop().unwrap();
+                        let val = stack.pop().unwrap().val;
                         LLVMBuildRet(self.builder, val);
                     }
                 }
@@ -581,8 +674,8 @@ impl<'a> JITCompiler<'a> {
                             Instruction::Brtrue { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
                             _ => unreachable!(),
                         },
-                        val1,
-                        LLVMConstNull(LLVMTypeOf(val1)),
+                        val1.val,
+                        LLVMConstNull(LLVMTypeOf(val1.val)),
                         CString::new("").unwrap().as_ptr(),
                     );
                     let destinations = block.kind.get_conditional_jump_destinations();
@@ -607,8 +700,8 @@ impl<'a> JITCompiler<'a> {
                             Instruction::Bne_un { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
                             _ => unreachable!(),
                         },
-                        val1,
-                        val2,
+                        val1.val,
+                        val2.val,
                         CString::new("").unwrap().as_ptr(),
                     );
                     let destinations = block.kind.get_conditional_jump_destinations();
@@ -629,7 +722,7 @@ impl<'a> JITCompiler<'a> {
         Ok(stack)
     }
 
-    unsafe fn gen_instr_call(&mut self, stack: &mut Vec<LLVMValueRef>, table: usize, entry: usize) {
+    unsafe fn gen_instr_call(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
         let table = self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
             Table::MemberRef(mrt) => {
@@ -666,12 +759,12 @@ impl<'a> JITCompiler<'a> {
                             if ty.equal_method(ElementType::Void, &[ElementType::String]) {
                                 self.call_function(
                                     *self.builtin_functions.get("WriteLine(string)").unwrap(),
-                                    vec![val],
+                                    vec![val.val],
                                 );
                             } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
                                 self.call_function(
                                     *self.builtin_functions.get("WriteLine(int)").unwrap(),
-                                    vec![val],
+                                    vec![val.val],
                                 );
                             }
                         }
@@ -684,16 +777,17 @@ impl<'a> JITCompiler<'a> {
                 let method_sig = method.ty.as_fnptr().unwrap();
                 let params = stack
                     .drain(stack.len() - method_sig.params.len()..)
+                    .map(|tv| tv.val)
                     .collect();
                 let func = if let Some(llvm_func) = self.generated.get(&mdt.rva) {
                     *llvm_func
                 } else {
                     let method = self.image.get_method(mdt.rva);
-                    let ret_ty = method_sig.ret.to_llvmty(self.context);
+                    let ret_ty = method_sig.ret.to_llvmty(self);
                     let mut params_ty = method_sig
                         .params
                         .iter()
-                        .map(|ty| ty.to_llvmty(self.context))
+                        .map(|ty| ty.to_llvmty(self))
                         .collect::<Vec<LLVMTypeRef>>();
                     let func_ty =
                         LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
@@ -708,8 +802,175 @@ impl<'a> JITCompiler<'a> {
                 };
                 let ret = self.call_function(func, params);
                 if !method_sig.ret.is_void() {
-                    stack.push(ret)
+                    stack.push(TypedValue::new(method_sig.ret.clone(), ret))
                 }
+            }
+            e => unimplemented!("call: unimplemented: {:?}", e),
+        }
+    }
+
+    unsafe fn gen_instr_callvirt(
+        &mut self,
+        stack: &mut Vec<TypedValue>,
+        table: usize,
+        entry: usize,
+    ) {
+        let table = self.image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::MemberRef(_mrt) => {} // TODO
+            Table::MethodDef(mdt) => {
+                let method = self.image.get_method(mdt.rva);
+                let method_sig = method.ty.as_fnptr().unwrap();
+                assert!(method_sig.has_this());
+                let params = stack
+                    .drain(stack.len() - method_sig.params.len() - /*this(obj)=*/1..)
+                    .map(|tv| tv.val)
+                    .collect();
+                let func = if let Some(llvm_func) = self.generated.get(&mdt.rva) {
+                    *llvm_func
+                } else {
+                    let method = self.image.get_method(mdt.rva);
+                    let ret_ty = method_sig.ret.to_llvmty(self);
+                    let mut params_ty = vec![self.get_class_type(&method.class.borrow())];
+                    params_ty.append(
+                        &mut method_sig
+                            .params
+                            .iter()
+                            .map(|ty| ty.to_llvmty(self))
+                            .collect::<Vec<LLVMTypeRef>>(),
+                    );
+                    let func_ty =
+                        LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
+                    let func = LLVMAddFunction(
+                        self.module,
+                        CString::new(method.name.as_str()).unwrap().as_ptr(),
+                        func_ty,
+                    );
+                    self.generated.insert(mdt.rva, func);
+                    self.compile_queue.push_back((func, method.clone()));
+                    func
+                };
+                let ret = self.call_function(func, params);
+                if !method_sig.ret.is_void() {
+                    stack.push(TypedValue::new(method_sig.ret.clone(), ret))
+                }
+            }
+            e => unimplemented!("call: unimplemented: {:?}", e),
+        }
+    }
+
+    unsafe fn gen_instr_stfld(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
+        let val = stack.pop().unwrap();
+        let obj = stack.pop().unwrap();
+        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::Field(f) => {
+                let name = self.image.get_string(f.name);
+                let class = &obj.ty.as_class().unwrap().borrow();
+                let idx = class.fields.iter().position(|f| &f.name == name).unwrap();
+                let gep = LLVMBuildGEP(
+                    self.builder,
+                    obj.val,
+                    vec![
+                        llvm_const_int32(self.context, 0),
+                        llvm_const_int32(self.context, idx as u64),
+                    ]
+                    .as_mut_ptr(),
+                    2,
+                    CString::new("").unwrap().as_ptr(),
+                );
+                LLVMBuildStore(self.builder, val.val, gep);
+            }
+            e => unimplemented!("{:?}", e),
+        }
+    }
+
+    unsafe fn gen_instr_ldfld(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
+        let obj = stack.pop().unwrap();
+        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::Field(f) => {
+                let name = self.image.get_string(f.name);
+                let class = &obj.ty.as_class().unwrap().borrow();
+                let (idx, ty) = class
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, f)| &f.name == name)
+                    .map(|(i, f)| (i, f.ty.clone()))
+                    .unwrap();
+                stack.push(TypedValue::new(ty, {
+                    let gep = LLVMBuildGEP(
+                        self.builder,
+                        obj.val,
+                        vec![
+                            llvm_const_int32(self.context, 0),
+                            llvm_const_int32(self.context, idx as u64),
+                        ]
+                        .as_mut_ptr(),
+                        2,
+                        CString::new("").unwrap().as_ptr(),
+                    );
+                    LLVMBuildLoad(self.builder, gep, CString::new("").unwrap().as_ptr())
+                }));
+            }
+            e => unimplemented!("{:?}", e),
+        }
+    }
+
+    unsafe fn gen_instr_newobj(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
+        let table = self.image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::MemberRef(_mrt) => {} // TODO
+            Table::MethodDef(mdt) => {
+                let method = self.image.get_method(mdt.rva);
+                let method_sig = method.ty.as_fnptr().unwrap();
+                assert!(method_sig.has_this());
+                let mut params_ty = vec![self.get_class_type(&method.class.borrow())];
+                let new_obj = LLVMBuildTruncOrBitCast(
+                    self.builder,
+                    self.call_function(
+                        *self.builtin_functions.get("memory_alloc").unwrap(),
+                        vec![self.get_size_of_llvm_class_type(params_ty[0])],
+                    ),
+                    params_ty[0],
+                    CString::new("").unwrap().as_ptr(),
+                );
+                let mut params = vec![new_obj];
+                params.append(
+                    &mut stack
+                        .drain(stack.len() - method_sig.params.len()..)
+                        .map(|tv| tv.val)
+                        .collect(),
+                );
+                let func = if let Some(llvm_func) = self.generated.get(&mdt.rva) {
+                    *llvm_func
+                } else {
+                    let method = self.image.get_method(mdt.rva);
+                    let ret_ty = method_sig.ret.to_llvmty(self);
+                    params_ty.append(
+                        &mut method_sig
+                            .params
+                            .iter()
+                            .map(|ty| ty.to_llvmty(self))
+                            .collect::<Vec<LLVMTypeRef>>(),
+                    );
+                    let func_ty =
+                        LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
+                    let func = LLVMAddFunction(
+                        self.module,
+                        CString::new(method.name.as_str()).unwrap().as_ptr(),
+                        func_ty,
+                    );
+                    self.generated.insert(mdt.rva, func);
+                    self.compile_queue.push_back((func, method.clone()));
+                    func
+                };
+                self.call_function(func, params);
+                stack.push(TypedValue::new(
+                    Type::new(ElementType::Class(method.class)),
+                    new_obj,
+                ))
             }
             e => unimplemented!("call: unimplemented: {:?}", e),
         }
@@ -738,6 +999,36 @@ impl<'a> JITCompiler<'a> {
             ))
         })
     }
+
+    unsafe fn get_class_type(&mut self, class: &ClassInfo) -> LLVMTypeRef {
+        if let Some(ty) = self.class_types.get(class) {
+            return ty;
+        }
+        let class_ty = LLVMStructCreateNamed(
+            self.context,
+            CString::new(class.name.as_str()).unwrap().as_ptr(),
+        );
+        let class_ptr_ty = LLVMPointerType(class_ty, 0);
+        self.class_types.add(class, class_ptr_ty);
+        let mut fields_ty = class
+            .fields
+            .iter()
+            .map(|ClassField { ty, .. }| ty.to_llvmty(self))
+            .collect::<Vec<LLVMTypeRef>>();
+        LLVMStructSetBody(class_ty, fields_ty.as_mut_ptr(), fields_ty.len() as u32, 0);
+        class_ptr_ty
+    }
+
+    unsafe fn get_size_of_llvm_class_type(&self, class: LLVMTypeRef) -> LLVMValueRef {
+        LLVMConstPtrToInt(
+            LLVMConstGEP(
+                LLVMConstNull(class),
+                vec![llvm_const_int32(self.context, 1)].as_mut_ptr(),
+                1,
+            ),
+            LLVMInt32TypeInContext(self.context),
+        )
+    }
 }
 
 unsafe fn cur_bb_has_no_terminator(builder: LLVMBuilderRef) -> bool {
@@ -745,17 +1036,22 @@ unsafe fn cur_bb_has_no_terminator(builder: LLVMBuilderRef) -> bool {
 }
 
 pub trait CastIntoLLVMType {
-    unsafe fn to_llvmty(&self, ctx: LLVMContextRef) -> LLVMTypeRef;
+    unsafe fn to_llvmty<'a>(&self, compiler: &mut JITCompiler<'a>) -> LLVMTypeRef;
 }
 
 impl CastIntoLLVMType for Type {
-    unsafe fn to_llvmty(&self, ctx: LLVMContextRef) -> LLVMTypeRef {
+    unsafe fn to_llvmty<'a>(&self, compiler: &mut JITCompiler<'a>) -> LLVMTypeRef {
+        let ctx = compiler.context;
         match self.base {
             ElementType::Void => LLVMVoidTypeInContext(ctx),
             ElementType::Boolean => LLVMInt8TypeInContext(ctx),
             ElementType::I4 => LLVMInt32TypeInContext(ctx),
             ElementType::String => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
-            _ => unimplemented!()
+            ElementType::Class(ref class) => {
+                let class = &class.borrow();
+                compiler.get_class_type(class)
+            }
+            _ => unimplemented!(),
             // &VariableType::Int => LLVMInt32TypeInContext(ctx),
             // &VariableType::Double => LLVMDoubleTypeInContext(ctx),
             // &VariableType::Void => LLVMVoidTypeInContext(ctx),
@@ -797,6 +1093,36 @@ impl Environment {
     }
 }
 
+impl TypedValue {
+    pub fn new(ty: Type, val: LLVMValueRef) -> Self {
+        Self { ty, val }
+    }
+}
+
+impl ClassTypesHolder {
+    pub fn new() -> Self {
+        Self {
+            map: FxHashMap::default(),
+        }
+    }
+
+    pub fn get(&mut self, class: &ClassInfo) -> Option<LLVMTypeRef> {
+        if let Some(names) = self.map.get(&class.namespace) {
+            if let Some(ty) = names.get(&class.name) {
+                return Some(*ty);
+            }
+        }
+        None
+    }
+
+    pub fn add(&mut self, class: &ClassInfo, ty: LLVMTypeRef) {
+        self.map
+            .entry(class.namespace.clone())
+            .or_insert(FxHashMap::default())
+            .insert(class.name.clone(), ty);
+    }
+}
+
 unsafe fn llvm_const_int32(ctx: LLVMContextRef, n: u64) -> LLVMValueRef {
     LLVMConstInt(LLVMInt32TypeInContext(ctx), n, 1)
 }
@@ -817,4 +1143,9 @@ fn write_line_int(n: i32) {
 #[no_mangle]
 fn write_line_string(s: *mut String) {
     println!("{}", unsafe { &*s });
+}
+
+#[no_mangle]
+fn memory_alloc(len: u32) -> *mut u8 {
+    Box::into_raw(vec![0u8; len as usize].into_boxed_slice()) as *mut u8
 }

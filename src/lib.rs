@@ -1,3 +1,4 @@
+#![feature(concat_idents)]
 #[macro_use]
 pub mod macros;
 pub mod exec;

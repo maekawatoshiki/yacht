@@ -1,5 +1,17 @@
 using System;
 
+public class Vec {
+  public int x;
+  public int y;
+  public Vec() {
+    x = 0;
+    y = 0;
+  }
+  public int norm2() {
+    return x * x + y * y;
+  }
+}
+
 public class Hello {
   static int fibo(int x) {
     if (x < 2) return 1;
@@ -16,10 +28,14 @@ public class Hello {
   }
 
   public static void Main() {
-    Console.WriteLine("Hello world!");
     Console.WriteLine(fibo(10));
     for (int i = 2; i < 10; i++) {
       if (is_prime(i)) Console.WriteLine(i);
     }
+
+    Vec v = new Vec();
+    Console.WriteLine(v.norm2());
+    v.x = 2; v.y = 3;
+    Console.WriteLine(v.norm2());
   }
 }

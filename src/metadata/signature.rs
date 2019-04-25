@@ -12,7 +12,7 @@ pub enum ElementType {
     Boolean,
     I4,
     String,
-    Class(Box<ClassInfo>),
+    Class(ClassInfoRef),
     FnPtr(Box<MethodSignature>),
 }
 
@@ -38,6 +38,18 @@ impl Type {
         Self { base }
     }
 
+    pub fn string_ty() -> Self {
+        Self::new(ElementType::String)
+    }
+
+    pub fn boolean_ty() -> Self {
+        Self::new(ElementType::Boolean)
+    }
+
+    pub fn i4_ty() -> Self {
+        Self::new(ElementType::I4)
+    }
+
     pub fn into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
         match sig.next()? {
             0x1 => Some(Type::new(ElementType::Void)),
@@ -58,6 +70,13 @@ impl Type {
         }
     }
 
+    pub fn as_class(&self) -> Option<&ClassInfoRef> {
+        match self.base {
+            ElementType::Class(ref class) => Some(class),
+            _ => None,
+        }
+    }
+
     pub fn equal_method(&self, ret: ElementType, params: &[ElementType]) -> bool {
         match self.base {
             ElementType::FnPtr(ref ms) => {
@@ -73,47 +92,8 @@ impl Type {
 
     fn class_into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
         let token = decompress_uint(sig).unwrap();
-        let (table, idx) = decode_typedef_or_ref_token(token);
-        let tables = &image.metadata.metadata_stream.tables[table];
-        let table = &tables[idx - 1];
-        let (name, namespace, fields) = match table {
-            Table::TypeDef(tdt) => {
-                let next_table = tables.get(idx);
-                let field_list_bgn = tdt.field_list as usize - 1;
-                let field_list_end = match next_table {
-                    Some(table) => match table {
-                        Table::TypeDef(tdt) => tdt.field_list as usize - 1,
-                        _ => unreachable!(),
-                    },
-                    None => tables.len(),
-                };
-                let fields = image.metadata.metadata_stream.tables[TableKind::Field.into_num()]
-                    [field_list_bgn..field_list_end]
-                    .iter()
-                    .map(|t| match t {
-                        Table::Field(ft) => {
-                            let name = image.get_string(ft.name).clone();
-                            let mut sig = image.get_blob(ft.signature).iter();
-                            assert_eq!(sig.next().unwrap(), &0x06);
-                            let ty = Type::into_type(image, &mut sig).unwrap();
-                            ClassField { name, ty }
-                        }
-                        _ => unreachable!(),
-                    })
-                    .collect();
-                (
-                    image.get_string(tdt.type_name).clone(),
-                    image.get_string(tdt.type_namespace).clone(),
-                    fields,
-                )
-            }
-            _ => unimplemented!(),
-        };
-        Some(Type::new(ElementType::Class(Box::new(ClassInfo {
-            name,
-            namespace,
-            fields,
-        }))))
+        let class_ref = image.class_cache.get(&token)?;
+        Some(Type::new(ElementType::Class(class_ref.clone())))
     }
 }
 

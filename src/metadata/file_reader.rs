@@ -121,6 +121,8 @@ impl PEFileReader {
         let typedefs = &image.metadata.metadata_stream.tables[TableKind::TypeDef.into_num()];
         let fields = &image.metadata.metadata_stream.tables[TableKind::Field.into_num()];
         let methoddefs = &image.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()];
+        let mut methods_to_setup = vec![];
+
         for (i, typedef) in typedefs.iter().enumerate() {
             let typedef = retrieve!(typedef, Table::TypeDef);
             let next_typedef = typedefs.get(i + 1);
@@ -147,17 +149,22 @@ impl PEFileReader {
                 name: image.get_string(typedef.type_name).clone(),
                 namespace: image.get_string(typedef.type_namespace).clone(),
             }));
-            for methoddef in &methoddefs[method_list_bgn..method_list_end] {
+
+            methods_to_setup.push((class_info.clone(), method_list_bgn..method_list_end));
+            image.class_cache.insert(
+                encode_typedef_or_ref_token(TableKind::TypeDef, i as u32 + 1),
+                class_info,
+            );
+        }
+
+        for (class, range) in methods_to_setup {
+            for methoddef in &methoddefs[range] {
                 let methoddef = retrieve!(methoddef, Table::MethodDef);
                 let method = self
-                    .read_method(image, class_info.clone(), methoddef.rva)
+                    .read_method(image, class.clone(), methoddef.rva)
                     .unwrap();
                 image.method_cache.insert(methoddef.rva, method.clone());
             }
-            image.class_cache.insert(
-                encode_typedef_or_ref_token(TableKind::TypeDef, i as u32),
-                class_info,
-            );
         }
     }
 

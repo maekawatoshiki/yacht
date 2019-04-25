@@ -66,8 +66,10 @@ impl Interpreter {
                 Instruction::Ldarg_0 => self.stack_push(arguments[0].clone()),
                 Instruction::Ldarg_1 => self.stack_push(arguments[1].clone()),
                 Instruction::Ldloc_0 => self.stack_push(locals[0].clone()),
+                Instruction::Ldloc_1 => self.stack_push(locals[1].clone()),
                 Instruction::Ldfld { table, entry } => self.instr_ldfld(image, *table, *entry),
                 Instruction::Stloc_0 => locals[0] = self.stack_pop(),
+                Instruction::Stloc_1 => locals[1] = self.stack_pop(),
                 Instruction::Stfld { table, entry } => self.instr_stfld(image, *table, *entry),
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Bge { target } => self.instr_bge(image, *target),
@@ -83,6 +85,9 @@ impl Interpreter {
                 Instruction::Mul => numeric_op!(mul),
                 Instruction::Rem => numeric_op!(rem),
                 Instruction::Call { table, entry } => self.instr_call(image, *table, *entry),
+                Instruction::CallVirt { table, entry } => {
+                    self.instr_callvirt(image, *table, *entry)
+                }
                 Instruction::Newobj { table, entry } => self.instr_newobj(image, *table, *entry),
                 Instruction::Ret => break,
             }
@@ -218,6 +223,32 @@ impl Interpreter {
         }
     }
 
+    fn instr_callvirt(&mut self, image: &mut Image, table: usize, entry: usize) {
+        // TODO: Refacotr
+        let table = &image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::MemberRef(_mrt) => {} // TODO
+            Table::MethodDef(mdt) => {
+                let saved_program_counter = self.program_counter;
+                self.program_counter = 0;
+
+                let method = image.get_method(mdt.rva);
+                let mut params = {
+                    let method_sig = method.ty.as_fnptr().unwrap();
+                    self.stack_pop_last_elements(method_sig.params.len() as usize)
+                };
+                let obj = self.stack_pop();
+                let mut actual_params = vec![obj];
+                actual_params.append(&mut params);
+
+                self.interpret(image, &method, &actual_params);
+
+                self.program_counter = saved_program_counter;
+            }
+            e => unimplemented!("call: unimplemented: {:?}", e),
+        }
+    }
+
     fn instr_newobj(&mut self, image: &mut Image, table: usize, entry: usize) {
         // TODO: Refacotr
         let table = &image.metadata.metadata_stream.tables[table][entry - 1];
@@ -240,10 +271,11 @@ impl Interpreter {
                     let method_sig = method.ty.as_fnptr().unwrap();
                     self.stack_pop_last_elements(method_sig.params.len() as usize)
                 };
-                let mut actual_params = vec![new_obj];
+                let mut actual_params = vec![new_obj.clone()];
                 actual_params.append(&mut params);
 
                 self.interpret(image, &method, &actual_params);
+                self.stack_push(new_obj);
 
                 self.program_counter = saved_program_counter;
             }
