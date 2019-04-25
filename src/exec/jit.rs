@@ -9,6 +9,12 @@ use std::collections::VecDeque;
 use std::ffi::CString;
 use std::ptr;
 
+macro_rules! cstr0 {
+    () => {
+        CString::new("").unwrap().as_ptr()
+    };
+}
+
 pub type CResult<T> = Result<T, Error>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -217,10 +223,7 @@ impl<'a> JITCompiler<'a> {
             if block.start > 0 {
                 self.basic_blocks.insert(
                     block.start,
-                    BasicBlockInfo::Unpositioned(LLVMAppendBasicBlock(
-                        func,
-                        CString::new("").unwrap().as_ptr(),
-                    )),
+                    BasicBlockInfo::Unpositioned(LLVMAppendBasicBlock(func, cstr0!())),
                 );
             }
         }
@@ -314,10 +317,7 @@ impl<'a> JITCompiler<'a> {
             if block.start > 0 {
                 self.basic_blocks.insert(
                     block.start,
-                    BasicBlockInfo::Unpositioned(LLVMAppendBasicBlock(
-                        func,
-                        CString::new("").unwrap().as_ptr(),
-                    )),
+                    BasicBlockInfo::Unpositioned(LLVMAppendBasicBlock(func, cstr0!())),
                 );
             }
         }
@@ -379,11 +379,7 @@ impl<'a> JITCompiler<'a> {
             LLVMPositionBuilderBefore(builder, first_inst);
         }
 
-        let var = LLVMBuildAlloca(
-            builder,
-            ty.unwrap().to_llvmty(self),
-            CString::new("").unwrap().as_ptr(),
-        );
+        let var = LLVMBuildAlloca(builder, ty.unwrap().to_llvmty(self), cstr0!());
 
         self.env
             .locals
@@ -407,11 +403,7 @@ impl<'a> JITCompiler<'a> {
             LLVMPositionBuilderBefore(builder, first_inst);
         }
 
-        let var = LLVMBuildAlloca(
-            builder,
-            ty.unwrap().to_llvmty(self),
-            CString::new("").unwrap().as_ptr(),
-        );
+        let var = LLVMBuildAlloca(builder, ty.unwrap().to_llvmty(self), cstr0!());
 
         self.env
             .arguments
@@ -506,11 +498,7 @@ impl<'a> JITCompiler<'a> {
             // Firstly, build llvm phi which needs a type of all conceivable values.
             let src_bb = phi_stacks[0].src_bb;
             for TypedValue { val, ty } in &phi_stacks[0].stack {
-                let phi = LLVMBuildPhi(
-                    self.builder,
-                    LLVMTypeOf(*val),
-                    CString::new("").unwrap().as_ptr(),
-                );
+                let phi = LLVMBuildPhi(self.builder, LLVMTypeOf(*val), cstr0!());
                 LLVMAddIncoming(phi, vec![*val].as_mut_ptr(), vec![src_bb].as_mut_ptr(), 1);
                 stack.push(TypedValue::new(ty.clone(), phi));
             }
@@ -532,21 +520,40 @@ impl<'a> JITCompiler<'a> {
         block: &BasicBlock,
         mut stack: Vec<TypedValue>,
     ) -> CResult<Vec<TypedValue>> {
-        macro_rules! binop {
-            ($op:ident) => {{
-                let val2 = stack.pop().unwrap();
-                let val1 = stack.pop().unwrap();
-                stack.push(TypedValue::new(
-                    val1.ty,
-                    concat_idents!(LLVMBuild, $op)(
-                        self.builder,
-                        val1.val,
-                        val2.val,
-                        CString::new("").unwrap().as_ptr(),
-                    ),
-                ));
-            }};
-        }
+        #[rustfmt::skip]
+        macro_rules! binop { ($op:ident) => {{
+            let val2 = stack.pop().unwrap();
+            let val1 = stack.pop().unwrap();
+            stack.push(TypedValue::new(
+                val1.ty,
+                concat_idents!(LLVMBuild, $op)(self.builder, val1.val, val2.val, cstr0!()),
+            ));
+        }}}
+        #[rustfmt::skip]
+        macro_rules! push_i4 { ($n:expr) => {
+             stack.push(TypedValue::new(
+                Type::i4_ty(), llvm_const_int32(self.context, $n as u64),
+            ))
+        }}
+        #[rustfmt::skip]
+        macro_rules! ldloc { ($n:expr) => {
+            stack.push(TypedValue::new(
+                self.get_local_ty($n),
+                LLVMBuildLoad(self.builder, self.get_local($n, None), cstr0!()),
+            ))
+        }}
+        #[rustfmt::skip]
+        macro_rules! stloc { ($n:expr) => {{
+            LLVMBuildStore(
+                self.builder, stack.pop().unwrap().val, self.get_local($n, None));
+        }}; }
+        #[rustfmt::skip]
+        macro_rules! ldarg { ($n:expr) => {
+            stack.push(TypedValue::new(
+                self.get_argument_ty($n),
+                LLVMBuildLoad(self.builder, self.get_argument($n, None), cstr0!()),
+            ))
+        }}
 
         let code = &block.code;
 
@@ -562,30 +569,12 @@ impl<'a> JITCompiler<'a> {
                         *self.strings.last().unwrap() as *mut u64
                     }),
                 )),
-                Instruction::Ldc_I4_0 => stack.push(TypedValue::new(
-                    Type::i4_ty(),
-                    llvm_const_int32(self.context, 0),
-                )),
-                Instruction::Ldc_I4_1 => stack.push(TypedValue::new(
-                    Type::i4_ty(),
-                    llvm_const_int32(self.context, 1),
-                )),
-                Instruction::Ldc_I4_2 => stack.push(TypedValue::new(
-                    Type::i4_ty(),
-                    llvm_const_int32(self.context, 2),
-                )),
-                Instruction::Ldc_I4_3 => stack.push(TypedValue::new(
-                    Type::i4_ty(),
-                    llvm_const_int32(self.context, 3),
-                )),
-                Instruction::Ldc_I4_S { n } => stack.push(TypedValue::new(
-                    Type::i4_ty(),
-                    llvm_const_int32(self.context, *n as u64),
-                )),
-                Instruction::Ldc_I4 { n } => stack.push(TypedValue::new(
-                    Type::i4_ty(),
-                    llvm_const_int32(self.context, *n as u64),
-                )),
+                Instruction::Ldc_I4_0 => push_i4!(0),
+                Instruction::Ldc_I4_1 => push_i4!(1),
+                Instruction::Ldc_I4_2 => push_i4!(2),
+                Instruction::Ldc_I4_3 => push_i4!(3),
+                Instruction::Ldc_I4_S { n } => push_i4!(*n),
+                Instruction::Ldc_I4 { n } => push_i4!(*n),
                 Instruction::Pop => {
                     stack.pop();
                 }
@@ -598,58 +587,18 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Newobj { table, entry } => {
                     self.gen_instr_newobj(&mut stack, *table, *entry)
                 }
-                Instruction::Ldloc_0 => stack.push(TypedValue::new(
-                    self.get_local_ty(0),
-                    LLVMBuildLoad(
-                        self.builder,
-                        self.get_local(0, None),
-                        CString::new("").unwrap().as_ptr(),
-                    ),
-                )),
-                Instruction::Ldloc_1 => stack.push(TypedValue::new(
-                    self.get_local_ty(1),
-                    LLVMBuildLoad(
-                        self.builder,
-                        self.get_local(1, None),
-                        CString::new("").unwrap().as_ptr(),
-                    ),
-                )),
+                Instruction::Ldloc_0 => ldloc!(0),
+                Instruction::Ldloc_1 => ldloc!(1),
                 Instruction::Ldfld { table, entry } => {
                     self.gen_instr_ldfld(&mut stack, *table, *entry)
                 }
-                Instruction::Stloc_0 => {
-                    LLVMBuildStore(
-                        self.builder,
-                        stack.pop().unwrap().val,
-                        self.get_local(0, None),
-                    );
-                }
-                Instruction::Stloc_1 => {
-                    LLVMBuildStore(
-                        self.builder,
-                        stack.pop().unwrap().val,
-                        self.get_local(1, None),
-                    );
-                }
+                Instruction::Stloc_0 => stloc!(0),
+                Instruction::Stloc_1 => stloc!(1),
                 Instruction::Stfld { table, entry } => {
                     self.gen_instr_stfld(&mut stack, *table, *entry)
                 }
-                Instruction::Ldarg_0 => stack.push(TypedValue::new(
-                    self.get_argument_ty(0),
-                    LLVMBuildLoad(
-                        self.builder,
-                        self.get_argument(0, None),
-                        CString::new("").unwrap().as_ptr(),
-                    ),
-                )),
-                Instruction::Ldarg_1 => stack.push(TypedValue::new(
-                    self.get_argument_ty(0),
-                    LLVMBuildLoad(
-                        self.builder,
-                        self.get_argument(1, None),
-                        CString::new("").unwrap().as_ptr(),
-                    ),
-                )),
+                Instruction::Ldarg_0 => ldarg!(0),
+                Instruction::Ldarg_1 => ldarg!(1),
                 Instruction::Add => binop!(Add),
                 Instruction::Sub => binop!(Sub),
                 Instruction::Mul => binop!(Mul),
@@ -676,7 +625,7 @@ impl<'a> JITCompiler<'a> {
                         },
                         val1.val,
                         LLVMConstNull(LLVMTypeOf(val1.val)),
-                        CString::new("").unwrap().as_ptr(),
+                        cstr0!(),
                     );
                     let destinations = block.kind.get_conditional_jump_destinations();
                     let bb_then = self.get_basic_block(destinations[0]).retrieve();
@@ -702,7 +651,7 @@ impl<'a> JITCompiler<'a> {
                         },
                         val1.val,
                         val2.val,
-                        CString::new("").unwrap().as_ptr(),
+                        cstr0!(),
                     );
                     let destinations = block.kind.get_conditional_jump_destinations();
                     let bb_then = self.get_basic_block(destinations[0]).retrieve();
@@ -877,7 +826,7 @@ impl<'a> JITCompiler<'a> {
                     ]
                     .as_mut_ptr(),
                     2,
-                    CString::new("").unwrap().as_ptr(),
+                    cstr0!(),
                 );
                 LLVMBuildStore(self.builder, val.val, gep);
             }
@@ -909,9 +858,9 @@ impl<'a> JITCompiler<'a> {
                         ]
                         .as_mut_ptr(),
                         2,
-                        CString::new("").unwrap().as_ptr(),
+                        cstr0!(),
                     );
-                    LLVMBuildLoad(self.builder, gep, CString::new("").unwrap().as_ptr())
+                    LLVMBuildLoad(self.builder, gep, cstr0!())
                 }));
             }
             e => unimplemented!("{:?}", e),
@@ -926,15 +875,16 @@ impl<'a> JITCompiler<'a> {
                 let method = self.image.get_method(mdt.rva);
                 let method_sig = method.ty.as_fnptr().unwrap();
                 assert!(method_sig.has_this());
-                let mut params_ty = vec![self.get_class_type(&method.class.borrow())];
+                let llvm_class_ty = self.get_class_type(&method.class.borrow());
+                let mut params_ty = vec![llvm_class_ty];
                 let new_obj = LLVMBuildTruncOrBitCast(
                     self.builder,
                     self.call_function(
                         *self.builtin_functions.get("memory_alloc").unwrap(),
-                        vec![self.get_size_of_llvm_class_type(params_ty[0])],
+                        vec![self.get_size_of_llvm_class_type(llvm_class_ty)],
                     ),
-                    params_ty[0],
-                    CString::new("").unwrap().as_ptr(),
+                    llvm_class_ty,
+                    cstr0!(),
                 );
                 let mut params = vec![new_obj];
                 params.append(
@@ -986,18 +936,15 @@ impl<'a> JITCompiler<'a> {
             callee,
             args.as_mut_ptr(),
             args.len() as u32,
-            CString::new("").unwrap().as_ptr(),
+            cstr0!(),
         )
     }
 
     unsafe fn get_basic_block(&mut self, pc: usize) -> &mut BasicBlockInfo {
         let func = self.generating.unwrap();
-        self.basic_blocks.entry(pc).or_insert_with(|| {
-            BasicBlockInfo::Unpositioned(LLVMAppendBasicBlock(
-                func,
-                CString::new("").unwrap().as_ptr(),
-            ))
-        })
+        self.basic_blocks
+            .entry(pc)
+            .or_insert_with(|| BasicBlockInfo::Unpositioned(LLVMAppendBasicBlock(func, cstr0!())))
     }
 
     unsafe fn get_class_type(&mut self, class: &ClassInfo) -> LLVMTypeRef {
