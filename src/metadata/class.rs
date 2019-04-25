@@ -1,4 +1,7 @@
 use crate::metadata::signature::*;
+use std::{cell::RefCell, rc::Rc};
+
+pub type ClassInfoRef = Rc<RefCell<ClassInfo>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassInfo {

@@ -1,4 +1,7 @@
-use crate::{exec::instruction::Instruction, metadata::signature::Type};
+use crate::{
+    exec::instruction::Instruction,
+    metadata::{class::*, signature::Type},
+};
 
 pub const TINY_FORMAT: u8 = 0x2;
 pub const FAT_FORMAT: u8 = 0x3;
@@ -33,6 +36,7 @@ pub struct MethodBody {
     pub ty: Type,
     pub locals_ty: Vec<Type>,
     pub body: Vec<Instruction>,
+    pub class: ClassInfoRef,
 }
 
 // #[derive(Debug, Clone)]

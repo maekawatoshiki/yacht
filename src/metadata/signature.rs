@@ -207,3 +207,14 @@ pub fn decode_typedef_or_ref_token(token: u32) -> (usize, usize) {
         _ => unreachable!(),
     }
 }
+
+pub fn encode_typedef_or_ref_token(table: TableKind, entry: u32) -> u32 {
+    let tag = match table {
+        TableKind::TypeDef => 0,
+        TableKind::TypeRef => 1,
+        TableKind::TypeSpec => 2,
+        _ => unreachable!(),
+    };
+    let idx = entry << 2;
+    tag | idx
+}

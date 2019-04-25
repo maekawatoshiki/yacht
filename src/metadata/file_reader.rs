@@ -10,8 +10,9 @@
 // use super::field::FieldInfo;
 // use super::method::MethodInfo;
 use crate::exec::decode::BytesToInstructions;
-use crate::metadata::{header::*, metadata::*, method::*, signature::*};
+use crate::metadata::{class::*, header::*, metadata::*, method::*, signature::*};
 use rustc_hash::FxHashMap;
+use std::{cell::RefCell, rc::Rc};
 use std::{
     fs::File,
     io::{BufReader, Read, Seek, SeekFrom},
@@ -111,40 +112,61 @@ impl PEFileReader {
             },
             metadata: metadata_streams,
             method_cache: FxHashMap::default(),
+            class_cache: FxHashMap::default(),
             reader: None,
         })
     }
 
-    pub fn read_entry_method(&mut self, image: &mut Image) -> Option<MethodBody> {
-        let text_section = image
-            .cli_info
-            .sections
-            .iter()
-            .find(|section| section.name == ".text")
-            .unwrap();
-        let kind = image.cli_info.cli_header.entry_point_token as usize >> (32 - 8);
-        let row = image.cli_info.cli_header.entry_point_token as usize & 0x00ffffff;
-        let method_or_file = image.metadata.metadata_stream.tables[kind][row - 1].clone();
-        let method_table = match method_or_file {
-            Table::MethodDef(t) => t,
-            // TOOD: File
-            _ => unimplemented!(),
-        };
-        dprintln!("entry: {:?}", method_table);
-        let start = (method_table.rva - text_section.virtual_address
-            + text_section.pointer_to_raw_data) as u64;
-        dprintln!("method body begin at: {}", start);
-        let method = self
-            .read_method_body(image, method_table.rva, start)
-            .unwrap();
-        dprintln!("Method: {:?}", method);
-
-        image.method_cache.insert(method_table.rva, method.clone());
-
-        Some(method)
+    pub fn setup_all_class(&mut self, image: &mut Image) {
+        let typedefs = &image.metadata.metadata_stream.tables[TableKind::TypeDef.into_num()];
+        let fields = &image.metadata.metadata_stream.tables[TableKind::Field.into_num()];
+        let methoddefs = &image.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()];
+        for (i, typedef) in typedefs.iter().enumerate() {
+            let typedef = retrieve!(typedef, Table::TypeDef);
+            let next_typedef = typedefs.get(i + 1);
+            let field_list_bgn = typedef.field_list as usize - 1;
+            let method_list_bgn = typedef.method_list as usize - 1;
+            let (field_list_end, method_list_end) =
+                next_typedef.map_or((fields.len(), methoddefs.len()), |table| {
+                    let td = retrieve!(table, Table::TypeDef);
+                    (td.field_list as usize - 1, td.method_list as usize - 1)
+                });
+            let fields: Vec<ClassField> = fields[field_list_bgn..field_list_end]
+                .iter()
+                .map(|t| {
+                    let ft = retrieve!(t, Table::Field);
+                    let name = image.get_string(ft.name).clone();
+                    let mut sig = image.get_blob(ft.signature).iter();
+                    assert_eq!(sig.next().unwrap(), &0x06);
+                    let ty = Type::into_type(image, &mut sig).unwrap();
+                    ClassField { name, ty }
+                })
+                .collect();
+            let class_info = Rc::new(RefCell::new(ClassInfo {
+                fields,
+                name: image.get_string(typedef.type_name).clone(),
+                namespace: image.get_string(typedef.type_namespace).clone(),
+            }));
+            for methoddef in &methoddefs[method_list_bgn..method_list_end] {
+                let methoddef = retrieve!(methoddef, Table::MethodDef);
+                let method = self
+                    .read_method(image, class_info.clone(), methoddef.rva)
+                    .unwrap();
+                image.method_cache.insert(methoddef.rva, method.clone());
+            }
+            image.class_cache.insert(
+                encode_typedef_or_ref_token(TableKind::TypeDef, i as u32),
+                class_info,
+            );
+        }
     }
 
-    pub fn read_method(&mut self, image: &mut Image, rva: u32) -> Option<MethodBody> {
+    pub fn read_method(
+        &mut self,
+        image: &Image,
+        class: ClassInfoRef,
+        rva: u32,
+    ) -> Option<MethodBody> {
         let text_section = image
             .cli_info
             .sections
@@ -153,15 +175,18 @@ impl PEFileReader {
             .unwrap();
         let start = (rva - text_section.virtual_address + text_section.pointer_to_raw_data) as u64;
         dprintln!("Method body begin at: {}", start);
-        let method = self.read_method_body(image, rva, start)?;
+        let method = self.read_method_body(image, class, rva, start)?;
         dprintln!("Method: {:?}", method);
-
-        image.method_cache.insert(rva, method.clone());
-
         Some(method)
     }
 
-    fn read_method_body(&mut self, image: &mut Image, rva: u32, start: u64) -> Option<MethodBody> {
+    fn read_method_body(
+        &mut self,
+        image: &Image,
+        class: ClassInfoRef,
+        rva: u32,
+        start: u64,
+    ) -> Option<MethodBody> {
         self.reader.seek(SeekFrom::Start(start)).ok()?;
 
         let (name, ty) = unsafe {
@@ -190,6 +215,7 @@ impl PEFileReader {
                     body,
                     locals_ty: vec![],
                     ty,
+                    class,
                 })
             }
             MethodHeaderType::FatFormat {
@@ -228,6 +254,7 @@ impl PEFileReader {
                     body,
                     locals_ty,
                     ty,
+                    class,
                 })
             }
         }

@@ -39,7 +39,8 @@ fn main() {
     );
 
     let mut image = expect!(pe_file_reader.create_image(), "Broken file");
-    let method = pe_file_reader.read_entry_method(&mut image).unwrap();
+    pe_file_reader.setup_all_class(&mut image);
+    let method = image.get_entry_method();
     image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
     let mut interpreter = interpret::Interpreter::new();
     interpreter.interpret(&mut image, &method, &[]);

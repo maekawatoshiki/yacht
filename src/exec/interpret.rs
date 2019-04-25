@@ -1,17 +1,27 @@
 use crate::{
     exec::instruction::*,
-    metadata::{metadata::*, method::*, signature::*},
+    metadata::{class::*, metadata::*, method::*, signature::*},
 };
+use rustc_hash::FxHashMap;
+use std::cell::RefCell;
+use std::iter::repeat_with;
+use std::rc::Rc;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Int32(i32),
     String(u32),
+    Object(Rc<RefCell<ObjectValue>>),
+}
+
+#[derive(Debug, Clone)]
+pub struct ObjectValue {
+    fields: FxHashMap<String, Value>,
 }
 
 #[derive(Clone)]
 pub struct Interpreter {
-    stack: [Value; 1024],
+    stack: Vec<Value>,
     base_ptr: usize,
     stack_ptr: usize,
     program_counter: usize,
@@ -20,7 +30,7 @@ pub struct Interpreter {
 impl Interpreter {
     pub fn new() -> Self {
         Self {
-            stack: [Value::Int32(0); 1024],
+            stack: repeat_with(|| Value::Int32(0)).take(1024).collect(),
             base_ptr: 0,
             stack_ptr: 0,
             program_counter: 0,
@@ -53,9 +63,9 @@ impl Interpreter {
                 Instruction::Ldc_I4_3 => self.stack_push(Value::Int32(3)),
                 Instruction::Ldc_I4_S { n } => self.stack_push(Value::Int32(*n)),
                 Instruction::Ldc_I4 { n } => self.stack_push(Value::Int32(*n)),
-                Instruction::Ldarg_0 => self.stack_push(arguments[0]),
-                Instruction::Ldarg_1 => self.stack_push(arguments[1]),
-                Instruction::Ldloc_0 => self.stack_push(locals[0]),
+                Instruction::Ldarg_0 => self.stack_push(arguments[0].clone()),
+                Instruction::Ldarg_1 => self.stack_push(arguments[1].clone()),
+                Instruction::Ldloc_0 => self.stack_push(locals[0].clone()),
                 Instruction::Stloc_0 => locals[0] = self.stack_pop(),
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Bge { target } => self.instr_bge(image, *target),
@@ -87,7 +97,7 @@ impl Interpreter {
     #[inline]
     pub fn stack_pop(&mut self) -> Value {
         self.stack_ptr -= 1;
-        self.stack[self.base_ptr + self.stack_ptr]
+        self.stack[self.base_ptr + self.stack_ptr].clone()
     }
 
     #[inline]
@@ -169,7 +179,36 @@ impl Interpreter {
     }
 
     fn instr_newobj(&mut self, image: &mut Image, table: usize, entry: usize) {
-        self.stack_push(Value::Int32(0))
+        // TODO: Refacotr
+        let table = &image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::MemberRef(_mrt) => {} // TODO
+            Table::MethodDef(mdt) => {
+                let saved_program_counter = self.program_counter;
+                self.program_counter = 0;
+
+                let method = image.get_method(mdt.rva);
+                let new_obj = Value::Object(Rc::new(RefCell::new({
+                    let class = &method.class.borrow();
+                    let mut fields = FxHashMap::default();
+                    for ClassField { name, .. } in &class.fields {
+                        fields.insert(name.clone(), Value::Int32(0));
+                    }
+                    ObjectValue { fields }
+                })));
+                let mut params = {
+                    let method_sig = method.ty.as_fnptr().unwrap();
+                    self.stack_pop_last_elements(method_sig.params.len() as usize)
+                };
+                let mut actual_params = vec![new_obj];
+                actual_params.append(&mut params);
+
+                self.interpret(image, &method, &actual_params);
+
+                self.program_counter = saved_program_counter;
+            }
+            e => unimplemented!("call: unimplemented: {:?}", e),
+        }
     }
 
     fn instr_bge(&mut self, _image: &mut Image, target: usize) {

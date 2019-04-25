@@ -1,4 +1,5 @@
 use crate::metadata::{
+    class::*,
     file_reader::PEFileReader,
     header::{CLIHeader, SectionHeader},
     method::*,
@@ -13,7 +14,7 @@ pub struct Image {
     pub reader: Option<Rc<RefCell<PEFileReader>>>,
     // Cache
     pub method_cache: FxHashMap<u32, MethodBody>,
-    // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
+    pub class_cache: FxHashMap<u32, ClassInfoRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
 }
 
@@ -397,15 +398,20 @@ impl Image {
         self.metadata.strings.get(&n.into()).unwrap()
     }
 
-    pub fn get_method(&mut self, rva: u32) -> MethodBody {
-        if let Some(method) = self.method_cache.get(&rva) {
-            return method.clone();
-        }
+    pub fn get_entry_method(&mut self) -> MethodBody {
+        let kind = self.cli_info.cli_header.entry_point_token as usize >> (32 - 8);
+        let row = self.cli_info.cli_header.entry_point_token as usize & 0x00ffffff;
+        let method_or_file = self.metadata.metadata_stream.tables[kind][row - 1].clone();
+        let method_table = match method_or_file {
+            Table::MethodDef(t) => t,
+            // TOOD: File
+            _ => unimplemented!(),
+        };
+        self.get_method(method_table.rva)
+    }
 
-        let reader = self.reader.as_mut().unwrap().clone();
-        let method = reader.borrow_mut().read_method(self, rva).unwrap();
-        self.method_cache.insert(rva, method.clone());
-        method
+    pub fn get_method(&self, rva: u32) -> MethodBody {
+        self.method_cache.get(&rva).unwrap().clone()
     }
 
     pub fn get_method_def_table_by_rva(&self, rva: u32) -> Option<&MethodDefTable> {

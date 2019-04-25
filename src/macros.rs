@@ -29,3 +29,13 @@ macro_rules! when_debug {
         }
     };
 }
+
+#[macro_export]
+macro_rules! retrieve {
+    ($e:expr,$p:path) => {{
+        match $e {
+            $p(x) => x,
+            _ => panic!(),
+        }
+    }};
+}
