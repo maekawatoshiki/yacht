@@ -11,7 +11,9 @@ pub enum Instruction {
     Ldarg_0,
     Ldarg_1,
     Ldloc_0,
+    Ldfld { table: usize, entry: usize },
     Stloc_0,
+    Stfld { table: usize, entry: usize },
     Pop,
     Bne_un { target: usize },
     Bge { target: usize },
@@ -43,7 +45,9 @@ pub mod il_instr {
     pub const LDARG_0  : u8 = 0x02;
     pub const LDARG_1  : u8 = 0x03;
     pub const LDLOC_0  : u8 = 0x06;
+    pub const LDFLD    : u8 = 0x7b;
     pub const STLOC_0  : u8 = 0x0a;
+    pub const STFLD    : u8 = 0x7d;
     pub const POP      : u8 = 0x26;
     pub const BR       : u8 = 0x38;
     pub const BGE      : u8 = 0x3c;
@@ -63,6 +67,7 @@ pub mod il_instr {
     pub fn get_instr_size(instr: u8) -> usize {
         match instr {
             LDSTR | CALL | NEWOBJ |
+            STFLD | LDFLD |
             BGE | BR | BLT | BNE_UN | BRFALSE | BGT
              | BRTRUE | BLE |
             LDC_I4 => 5, 

@@ -57,7 +57,19 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::LDARG_0 => iseq.push(Instruction::Ldarg_0),
                 il_instr::LDARG_1 => iseq.push(Instruction::Ldarg_1),
                 il_instr::LDLOC_0 => iseq.push(Instruction::Ldloc_0),
+                il_instr::LDFLD => {
+                    let token = self.read_u32()?;
+                    let table = token as usize >> (32 - 8);
+                    let entry = token as usize & 0x00ff_ffff;
+                    iseq.push(Instruction::Ldfld { table, entry })
+                }
                 il_instr::STLOC_0 => iseq.push(Instruction::Stloc_0),
+                il_instr::STFLD => {
+                    let token = self.read_u32()?;
+                    let table = token as usize >> (32 - 8);
+                    let entry = token as usize & 0x00ff_ffff;
+                    iseq.push(Instruction::Stfld { table, entry })
+                }
                 il_instr::POP => iseq.push(Instruction::Pop),
                 il_instr::BGE => {
                     let target = self.read_u32()? as i32;

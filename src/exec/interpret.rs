@@ -66,7 +66,9 @@ impl Interpreter {
                 Instruction::Ldarg_0 => self.stack_push(arguments[0].clone()),
                 Instruction::Ldarg_1 => self.stack_push(arguments[1].clone()),
                 Instruction::Ldloc_0 => self.stack_push(locals[0].clone()),
+                Instruction::Ldfld { table, entry } => self.instr_ldfld(image, *table, *entry),
                 Instruction::Stloc_0 => locals[0] = self.stack_pop(),
+                Instruction::Stfld { table, entry } => self.instr_stfld(image, *table, *entry),
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Bge { target } => self.instr_bge(image, *target),
                 Instruction::Bgt { target } => self.instr_bgt(image, *target),
@@ -108,6 +110,44 @@ impl Interpreter {
 }
 
 impl Interpreter {
+    fn instr_ldfld(&mut self, image: &mut Image, table: usize, entry: usize) {
+        let obj = self.stack_pop();
+        let table = &image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::Field(f) => {
+                let name = image.get_string(f.name);
+                self.stack_push(
+                    obj.as_object()
+                        .unwrap()
+                        .borrow_mut()
+                        .fields
+                        .get(name)
+                        .unwrap()
+                        .clone(),
+                )
+            }
+            e => unimplemented!("{:?}", e),
+        }
+    }
+
+    fn instr_stfld(&mut self, image: &mut Image, table: usize, entry: usize) {
+        let value = self.stack_pop();
+        let obj = self.stack_pop();
+        let table = &image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::Field(f) => {
+                let name = image.get_string(f.name);
+                *obj.as_object()
+                    .unwrap()
+                    .borrow_mut()
+                    .fields
+                    .get_mut(name)
+                    .unwrap() = value;
+            }
+            e => unimplemented!("{:?}", e),
+        }
+    }
+
     fn instr_call(&mut self, image: &mut Image, table: usize, entry: usize) {
         // TODO: Refacotr
         let table = &image.metadata.metadata_stream.tables[table][entry - 1];
@@ -277,6 +317,13 @@ impl Value {
     pub fn as_int32(&self) -> Option<i32> {
         match self {
             Value::Int32(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    pub fn as_object(&self) -> Option<Rc<RefCell<ObjectValue>>> {
+        match self {
+            Value::Object(obj) => Some(obj.clone()),
             _ => None,
         }
     }

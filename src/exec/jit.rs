@@ -506,9 +506,11 @@ impl<'a> JITCompiler<'a> {
                     self.get_local(0, None),
                     CString::new("").unwrap().as_ptr(),
                 )),
+                Instruction::Ldfld { table, entry } => {}
                 Instruction::Stloc_0 => {
                     LLVMBuildStore(self.builder, stack.pop().unwrap(), self.get_local(0, None));
                 }
+                Instruction::Stfld { table, entry } => {}
                 Instruction::Ldarg_0 => stack.push(LLVMBuildLoad(
                     self.builder,
                     self.get_argument(0, None),
