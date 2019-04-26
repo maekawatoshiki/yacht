@@ -79,6 +79,7 @@ impl<'a> BytesToInstructions<'a> {
                     iseq.push(Instruction::Stfld { table, entry })
                 }
                 il_instr::POP => iseq.push(Instruction::Pop),
+                il_instr::DUP => iseq.push(Instruction::Dup),
                 il_instr::BGE => {
                     let target = self.read_u32()? as i32;
                     iseq.push(Instruction::Bge {
@@ -100,6 +101,12 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::BLE => {
                     let target = self.read_u32()? as i32;
                     iseq.push(Instruction::Ble {
+                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
+                    })
+                }
+                il_instr::BEQ => {
+                    let target = self.read_u32()? as i32;
+                    iseq.push(Instruction::Beq {
                         target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
                     })
                 }
@@ -127,6 +134,11 @@ impl<'a> BytesToInstructions<'a> {
                         target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
                     })
                 }
+                0xfe => match self.iter.next()?.1 {
+                    &il_instr::CLT => iseq.push(Instruction::Clt),
+                    &il_instr::CEQ => iseq.push(Instruction::Ceq),
+                    _ => unimplemented!(),
+                },
                 il_instr::ADD => iseq.push(Instruction::Add),
                 il_instr::SUB => iseq.push(Instruction::Sub),
                 il_instr::MUL => iseq.push(Instruction::Mul),
@@ -144,8 +156,16 @@ impl<'a> BytesToInstructions<'a> {
         let mut iseq_size = 0;
         while let Some((i, byte)) = iter.next() {
             self.target_map.insert(i as i32, iseq_size);
-            for _ in 0..il_instr::get_instr_size(*byte) - 1 {
-                iter.next();
+            if *byte == 0xfe {
+                // 2 bytes instruction
+                let byte = iter.next().unwrap().1;
+                for _ in 0..il_instr::get_instr_size(*byte) - 2 {
+                    iter.next();
+                }
+            } else {
+                for _ in 0..il_instr::get_instr_size(*byte) - 1 {
+                    iter.next();
+                }
             }
             iseq_size += 1;
         }

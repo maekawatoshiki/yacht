@@ -72,14 +72,18 @@ impl Interpreter {
                 Instruction::Stloc_1 => locals[1] = self.stack_pop(),
                 Instruction::Stfld { table, entry } => self.instr_stfld(image, *table, *entry),
                 Instruction::Pop => self.stack_ptr -= 1,
+                Instruction::Dup => self.stack_dup(),
                 Instruction::Bge { target } => self.instr_bge(image, *target),
                 Instruction::Bgt { target } => self.instr_bgt(image, *target),
                 Instruction::Blt { target } => self.instr_blt(image, *target),
                 Instruction::Ble { target } => self.instr_ble(image, *target),
+                Instruction::Beq { target } => self.instr_beq(image, *target),
                 Instruction::Bne_un { target } => self.instr_bne_un(image, *target),
                 Instruction::Brtrue { target } => self.instr_brtrue(image, *target),
                 Instruction::Brfalse { target } => self.instr_brfalse(image, *target),
                 Instruction::Br { target } => self.program_counter = target - 1,
+                Instruction::Clt => self.instr_clt(),
+                Instruction::Ceq => self.instr_ceq(),
                 Instruction::Add => numeric_op!(add),
                 Instruction::Sub => numeric_op!(sub),
                 Instruction::Mul => numeric_op!(mul),
@@ -99,6 +103,17 @@ impl Interpreter {
     pub fn stack_push(&mut self, v: Value) {
         self.stack[self.base_ptr + self.stack_ptr] = v;
         self.stack_ptr += 1;
+    }
+
+    #[inline]
+    pub fn stack_top(&mut self) -> Value {
+        self.stack[self.base_ptr + self.stack_ptr - 1].clone()
+    }
+
+    #[inline]
+    pub fn stack_dup(&mut self) {
+        let top = self.stack_top();
+        self.stack_push(top);
     }
 
     #[inline]
@@ -213,7 +228,8 @@ impl Interpreter {
                 let method = image.get_method(mdt.rva);
                 let params = {
                     let method_sig = method.ty.as_fnptr().unwrap();
-                    self.stack_pop_last_elements(method_sig.params.len() as usize)
+                    let has_this = if method_sig.has_this() { 1 } else { 0 };
+                    self.stack_pop_last_elements(method_sig.params.len() as usize + has_this)
                 };
 
                 self.interpret(image, &method, &params);
@@ -255,7 +271,8 @@ impl Interpreter {
                                 "get_Length" => {
                                     let val = self.stack_pop();
                                     self.stack_push(Value::Int32(
-                                        image.get_string(val.as_string().unwrap()).len() as i32,
+                                        image.get_user_string(val.as_string().unwrap()).len()
+                                            as i32,
                                     ));
                                 }
                                 "get_Chars" => {
@@ -277,15 +294,13 @@ impl Interpreter {
                 self.program_counter = 0;
 
                 let method = image.get_method(mdt.rva);
-                let mut params = {
+                let params = {
                     let method_sig = method.ty.as_fnptr().unwrap();
-                    self.stack_pop_last_elements(method_sig.params.len() as usize)
+                    let has_this = if method_sig.has_this() { 1 } else { 0 };
+                    self.stack_pop_last_elements(method_sig.params.len() as usize + has_this)
                 };
-                let obj = self.stack_pop();
-                let mut actual_params = vec![obj];
-                actual_params.append(&mut params);
 
-                self.interpret(image, &method, &actual_params);
+                self.interpret(image, &method, &params);
 
                 self.program_counter = saved_program_counter;
             }
@@ -359,6 +374,14 @@ impl Interpreter {
         }
     }
 
+    fn instr_beq(&mut self, _image: &mut Image, target: usize) {
+        let val2 = self.stack_pop();
+        let val1 = self.stack_pop();
+        if val1.eq(val2) {
+            self.program_counter = target /* interpret() everytime increments pc */- 1
+        }
+    }
+
     fn instr_bne_un(&mut self, _image: &mut Image, target: usize) {
         let val2 = self.stack_pop();
         let val1 = self.stack_pop();
@@ -379,6 +402,18 @@ impl Interpreter {
         if val1.is_false() {
             self.program_counter = target /* interpret() everytime increments pc */- 1
         }
+    }
+
+    fn instr_clt(&mut self) {
+        let val2 = self.stack_pop();
+        let val1 = self.stack_pop();
+        self.stack_push(Value::Int32(if val1.lt(val2) { 1 } else { 0 }))
+    }
+
+    fn instr_ceq(&mut self) {
+        let val2 = self.stack_pop();
+        let val1 = self.stack_pop();
+        self.stack_push(Value::Int32(if val1.eq(val2) { 1 } else { 0 }))
     }
 }
 
@@ -443,6 +478,13 @@ impl Value {
         }
     }
 
+    pub fn eq(self, y: Value) -> bool {
+        match (self, y) {
+            (Value::Int32(x), Value::Int32(y)) => x == y,
+            _ => panic!(),
+        }
+    }
+
     pub fn ge(self, y: Value) -> bool {
         match (self, y) {
             (Value::Int32(x), Value::Int32(y)) => x >= y,
@@ -472,7 +514,6 @@ impl Value {
     }
 
     pub fn ne(self, y: Value) -> bool {
-        println!("{:?} {:?}", self, y);
         match (self, y) {
             (Value::Int32(x), Value::Int32(y)) => x != y,
             _ => panic!(),

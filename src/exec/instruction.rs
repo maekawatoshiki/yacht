@@ -16,7 +16,9 @@ pub enum Instruction {
     Stloc_0,
     Stloc_1,
     Stfld { table: usize, entry: usize },
+    Dup,
     Pop,
+    Beq { target: usize },
     Bne_un { target: usize },
     Bge { target: usize },
     Bgt { target: usize },
@@ -25,6 +27,8 @@ pub enum Instruction {
     Brfalse { target: usize },
     Brtrue { target: usize },
     Br { target: usize },
+    Clt,
+    Ceq,
     Add,
     Sub,
     Mul,
@@ -54,15 +58,19 @@ pub mod il_instr {
     pub const STLOC_0  : u8 = 0x0a;
     pub const STLOC_1  : u8 = 0x0b;
     pub const STFLD    : u8 = 0x7d;
+    pub const DUP      : u8 = 0x25;
     pub const POP      : u8 = 0x26;
     pub const BR       : u8 = 0x38;
     pub const BGE      : u8 = 0x3c;
     pub const BGT      : u8 = 0x3d;
     pub const BLE      : u8 = 0x3e;
     pub const BLT      : u8 = 0x3f;
+    pub const BEQ      : u8 = 0x3b;
     pub const BNE_UN   : u8 = 0x40;
     pub const BRFALSE  : u8 = 0x39;
     pub const BRTRUE   : u8 = 0x3a;
+    pub const CLT      : u8 = 0x04; // 0xfe leads
+    pub const CEQ      : u8 = 0x01; // 0xfe leads
     pub const ADD      : u8 = 0x58;
     pub const SUB      : u8 = 0x59;
     pub const MUL      : u8 = 0x5a;
@@ -70,19 +78,20 @@ pub mod il_instr {
     pub const NEWOBJ   : u8 = 0x73;
     pub const RET      : u8 = 0x2a;
 
-    pub fn get_instr_size(instr: u8) -> usize {
+    pub fn get_instr_size<'a>(instr: u8) -> usize {
         match instr {
             LDSTR | CALL | NEWOBJ | CALLVIRT |
             STFLD | LDFLD |
             BGE | BR | BLT | BNE_UN | BRFALSE | BGT
-             | BRTRUE | BLE |
+             | BRTRUE | BLE | BEQ |
             LDC_I4 => 5, 
             LDC_I4_0 | LDC_I4_1 | LDC_I4_2 | LDC_I4_3 |
             LDARG_0 | LDARG_1 |
             LDLOC_0 | LDLOC_1 |
             STLOC_0 | STLOC_1 |
             ADD | SUB | MUL | REM |
-            RET | POP => 1,
+            RET | POP | DUP => 1,
+            CLT | CEQ | 
             LDC_I4_S => 2,
             e => panic!("Not an instruction: {}", e),
         }

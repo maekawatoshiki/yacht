@@ -578,6 +578,9 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Pop => {
                     stack.pop();
                 }
+                Instruction::Dup => {
+                    stack.push(stack.last().unwrap().clone());
+                }
                 Instruction::Call { table, entry } => {
                     self.gen_instr_call(&mut stack, *table, *entry)
                 }
@@ -635,6 +638,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Bge { .. }
                 | Instruction::Blt { .. }
                 | Instruction::Ble { .. }
+                | Instruction::Beq { .. }
                 | Instruction::Bne_un { .. }
                 | Instruction::Bgt { .. } => {
                     let val2 = stack.pop().unwrap();
@@ -646,6 +650,7 @@ impl<'a> JITCompiler<'a> {
                             Instruction::Blt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
                             Instruction::Ble { .. } => llvm::LLVMIntPredicate::LLVMIntSLE,
                             Instruction::Bgt { .. } => llvm::LLVMIntPredicate::LLVMIntSGT,
+                            Instruction::Beq { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
                             Instruction::Bne_un { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
                             _ => unreachable!(),
                         },
@@ -665,6 +670,8 @@ impl<'a> JITCompiler<'a> {
                         LLVMBuildBr(self.builder, bb_br);
                     }
                 }
+                Instruction::Clt => {}
+                Instruction::Ceq => {}
             }
         }
 

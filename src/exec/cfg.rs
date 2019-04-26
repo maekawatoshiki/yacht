@@ -36,6 +36,7 @@ impl CFGMaker {
                 | Instruction::Bgt { target }
                 | Instruction::Ble { target }
                 | Instruction::Blt { target }
+                | Instruction::Beq { target }
                 | Instruction::Bne_un { target }
                 | Instruction::Brfalse { target }
                 | Instruction::Brtrue { target } => {
