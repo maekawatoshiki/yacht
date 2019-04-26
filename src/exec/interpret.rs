@@ -163,10 +163,10 @@ impl Interpreter {
                 match class {
                     Table::TypeRef(trt) => {
                         let (table, entry) = trt.resolution_scope_table_and_entry();
-                        let art = match image.metadata.metadata_stream.tables[table][entry - 1] {
-                            Table::AssemblyRef(art) => art,
-                            _ => unimplemented!(),
-                        };
+                        let art = retrieve!(
+                            image.metadata.metadata_stream.tables[table][entry - 1],
+                            Table::AssemblyRef
+                        );
                         let ar_name = image.get_string(art.name);
                         let ty_namespace = image.get_string(trt.type_namespace);
                         let ty_name = image.get_string(trt.type_name);
@@ -190,15 +190,16 @@ impl Interpreter {
                                 println!(
                                     "{}",
                                     String::from_utf16_lossy(
-                                        image
-                                            .metadata
-                                            .user_strings
-                                            .get(&val.as_string().unwrap())
-                                            .unwrap()
+                                        image.get_user_string(val.as_string().unwrap())
                                     )
                                 );
                             } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
                                 println!("{}", val.as_int32().unwrap());
+                            } else if ty.equal_method(ElementType::Void, &[ElementType::Char]) {
+                                println!(
+                                    "{}",
+                                    String::from_utf16_lossy(&[val.as_int32().unwrap() as u16])
+                                );
                             }
                         }
                     }
@@ -227,7 +228,50 @@ impl Interpreter {
         // TODO: Refacotr
         let table = &image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
-            Table::MemberRef(_mrt) => {} // TODO
+            Table::MemberRef(mrt) => {
+                let (table, entry) = mrt.class_table_and_entry();
+                let class = &image.metadata.metadata_stream.tables[table][entry - 1];
+                match class {
+                    Table::TypeRef(trt) => {
+                        let (table, entry) = trt.resolution_scope_table_and_entry();
+                        let art = retrieve!(
+                            image.metadata.metadata_stream.tables[table][entry - 1],
+                            Table::AssemblyRef
+                        );
+                        let ar_name = image.get_string(art.name);
+                        let ty_namespace = image.get_string(trt.type_namespace);
+                        let ty_name = image.get_string(trt.type_name);
+                        let name = image.get_string(mrt.name);
+                        // let sig = image.metadata.blob.get(&(mrt.signature as u32)).unwrap();
+                        // let ty = SignatureParser::new(sig)
+                        //     .parse_method_ref_sig(image)
+                        //     .unwrap();
+
+                        dprintln!("{}-{}-{}-{}", ar_name, ty_namespace, ty_name, name);
+
+                        if ar_name == "mscorlib" && ty_namespace == "System" && ty_name == "String"
+                        {
+                            match name.as_str() {
+                                "get_Length" => {
+                                    let val = self.stack_pop();
+                                    self.stack_push(Value::Int32(
+                                        image.get_string(val.as_string().unwrap()).len() as i32,
+                                    ));
+                                }
+                                "get_Chars" => {
+                                    let idx = self.stack_pop().as_int32().unwrap() as usize;
+                                    let val = self.stack_pop();
+                                    self.stack_push(Value::Int32(
+                                        image.get_user_string(val.as_string().unwrap())[idx] as i32,
+                                    ));
+                                }
+                                _ => unimplemented!(),
+                            }
+                        }
+                    }
+                    _ => unimplemented!(),
+                }
+            } // TODO
             Table::MethodDef(mdt) => {
                 let saved_program_counter = self.program_counter;
                 self.program_counter = 0;
@@ -428,6 +472,7 @@ impl Value {
     }
 
     pub fn ne(self, y: Value) -> bool {
+        println!("{:?} {:?}", self, y);
         match (self, y) {
             (Value::Int32(x), Value::Int32(y)) => x != y,
             _ => panic!(),

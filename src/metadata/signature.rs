@@ -10,6 +10,7 @@ pub struct Type {
 pub enum ElementType {
     Void,
     Boolean,
+    Char,
     I4,
     String,
     Class(ClassInfoRef),
@@ -46,16 +47,21 @@ impl Type {
         Self::new(ElementType::Boolean)
     }
 
+    pub fn char_ty() -> Self {
+        Self::new(ElementType::Char)
+    }
+
     pub fn i4_ty() -> Self {
         Self::new(ElementType::I4)
     }
 
     pub fn into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
         match sig.next()? {
-            0x1 => Some(Type::new(ElementType::Void)),
-            0x2 => Some(Type::new(ElementType::Boolean)),
-            0x8 => Some(Type::new(ElementType::I4)),
-            0xe => Some(Type::new(ElementType::String)),
+            0x01 => Some(Type::new(ElementType::Void)),
+            0x02 => Some(Type::new(ElementType::Boolean)),
+            0x03 => Some(Type::new(ElementType::Char)),
+            0x08 => Some(Type::new(ElementType::I4)),
+            0x0e => Some(Type::new(ElementType::String)),
             0x12 => Type::class_into_type(image, sig),
             // TODO
             // 0x1b => Some(ElementType::FnPtr

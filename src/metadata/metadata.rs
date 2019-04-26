@@ -398,6 +398,10 @@ impl Image {
         self.metadata.strings.get(&n.into()).unwrap()
     }
 
+    pub fn get_user_string<T: Into<u32>>(&self, n: T) -> &Vec<u16> {
+        self.metadata.user_strings.get(&n.into()).unwrap()
+    }
+
     pub fn get_entry_method(&mut self) -> MethodBody {
         let kind = self.cli_info.cli_header.entry_point_token as usize >> (32 - 8);
         let row = self.cli_info.cli_header.entry_point_token as usize & 0x00ffffff;

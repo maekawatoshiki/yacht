@@ -230,25 +230,28 @@ impl PEFileReader {
                 local_var_sig_tok,
                 ..
             } => {
-                let kind = local_var_sig_tok as usize >> (32 - 8);
-                let row = local_var_sig_tok as usize & 0x00ffffff;
-
-                let locals_ty = match image.metadata.metadata_stream.tables[kind][row - 1] {
-                    Table::StandAloneSig(sast) => {
-                        let mut blob = image
-                            .metadata
-                            .blob
-                            .get(&(sast.signature as u32))
-                            .unwrap()
-                            .iter();
-                        assert_eq!(blob.next()?, &0x07);
-                        let len = *blob.next()? as usize;
-                        use std::iter::repeat_with;
-                        repeat_with(|| Type::into_type(image, &mut blob).unwrap())
-                            .take(len)
-                            .collect()
+                let locals_ty = if local_var_sig_tok == 0 {
+                    vec![]
+                } else {
+                    let kind = local_var_sig_tok as usize >> (32 - 8);
+                    let row = local_var_sig_tok as usize & 0x00ffffff;
+                    match image.metadata.metadata_stream.tables[kind][row - 1] {
+                        Table::StandAloneSig(sast) => {
+                            let mut blob = image
+                                .metadata
+                                .blob
+                                .get(&(sast.signature as u32))
+                                .unwrap()
+                                .iter();
+                            assert_eq!(blob.next()?, &0x07);
+                            let len = *blob.next()? as usize;
+                            use std::iter::repeat_with;
+                            repeat_with(|| Type::into_type(image, &mut blob).unwrap())
+                                .take(len)
+                                .collect()
+                        }
+                        _ => unimplemented!(),
                     }
-                    _ => unimplemented!(),
                 };
 
                 let mut raw_body = vec![0u8; code_size as usize];
