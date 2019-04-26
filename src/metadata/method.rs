@@ -20,14 +20,14 @@ pub enum MethodHeaderType {
     },
 }
 
-impl MethodHeaderType {
-    pub fn max_stack(&self) -> usize {
-        match self {
-            MethodHeaderType::TinyFormat { .. } => 8,
-            MethodHeaderType::FatFormat { max_stack, .. } => *max_stack as usize,
-        }
-    }
-}
+// impl MethodHeaderType {
+//     pub fn max_stack(&self) -> usize {
+//         match self {
+//             MethodHeaderType::TinyFormat { .. } => 8,
+//             MethodHeaderType::FatFormat { max_stack, .. } => *max_stack as usize,
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct MethodBody {

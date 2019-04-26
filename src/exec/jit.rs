@@ -6,6 +6,7 @@ use llvm;
 use llvm::{core::*, prelude::*};
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
+use std::ffi::c_void;
 use std::ffi::CString;
 use std::ptr;
 
@@ -134,6 +135,58 @@ impl<'a> JITCompiler<'a> {
                     ),
                 );
                 fs.insert(
+                    "WriteLine(char)".to_string(),
+                    LLVMAddFunction(
+                        module,
+                        CString::new("WriteLine(char)").unwrap().as_ptr(),
+                        LLVMFunctionType(
+                            LLVMVoidTypeInContext(context),
+                            vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
+                            1,
+                            0,
+                        ),
+                    ),
+                );
+                fs.insert(
+                    "Write(int)".to_string(),
+                    LLVMAddFunction(
+                        module,
+                        CString::new("Write(int)").unwrap().as_ptr(),
+                        LLVMFunctionType(
+                            LLVMVoidTypeInContext(context),
+                            vec![LLVMInt32TypeInContext(context)].as_mut_ptr(),
+                            1,
+                            0,
+                        ),
+                    ),
+                );
+                fs.insert(
+                    "Write(string)".to_string(),
+                    LLVMAddFunction(
+                        module,
+                        CString::new("Write(string)").unwrap().as_ptr(),
+                        LLVMFunctionType(
+                            LLVMVoidTypeInContext(context),
+                            vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
+                            1,
+                            0,
+                        ),
+                    ),
+                );
+                fs.insert(
+                    "Write(char)".to_string(),
+                    LLVMAddFunction(
+                        module,
+                        CString::new("Write(char)").unwrap().as_ptr(),
+                        LLVMFunctionType(
+                            LLVMVoidTypeInContext(context),
+                            vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
+                            1,
+                            0,
+                        ),
+                    ),
+                );
+                fs.insert(
                     "memory_alloc".to_string(),
                     LLVMAddFunction(
                         module,
@@ -142,6 +195,36 @@ impl<'a> JITCompiler<'a> {
                             LLVMPointerType(LLVMInt8TypeInContext(context), 0),
                             vec![LLVMInt32TypeInContext(context)].as_mut_ptr(),
                             1,
+                            0,
+                        ),
+                    ),
+                );
+                fs.insert(
+                    "get_Length()".to_string(),
+                    LLVMAddFunction(
+                        module,
+                        CString::new("get_Length()").unwrap().as_ptr(),
+                        LLVMFunctionType(
+                            LLVMInt32TypeInContext(context),
+                            vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
+                            1,
+                            0,
+                        ),
+                    ),
+                );
+                fs.insert(
+                    "get_Chars(int32)".to_string(),
+                    LLVMAddFunction(
+                        module,
+                        CString::new("get_Chars(int32)").unwrap().as_ptr(),
+                        LLVMFunctionType(
+                            LLVMInt32TypeInContext(context),
+                            vec![
+                                LLVMPointerType(LLVMInt8TypeInContext(context), 0),
+                                LLVMInt32TypeInContext(context),
+                            ]
+                            .as_mut_ptr(),
+                            2,
                             0,
                         ),
                     ),
@@ -163,24 +246,22 @@ impl<'a> JITCompiler<'a> {
             panic!("llvm error: failed to initialize execute engine")
         }
 
-        let f = *self.builtin_functions.get_mut("WriteLine(int)").unwrap();
-        llvm::execution_engine::LLVMAddGlobalMapping(
-            ee,
-            f,
-            write_line_int as *mut ::std::ffi::c_void,
-        );
-        let f = *self.builtin_functions.get_mut("WriteLine(string)").unwrap();
-        llvm::execution_engine::LLVMAddGlobalMapping(
-            ee,
-            f,
-            write_line_string as *mut ::std::ffi::c_void,
-        );
-        let f = *self.builtin_functions.get_mut("memory_alloc").unwrap();
-        llvm::execution_engine::LLVMAddGlobalMapping(
-            ee,
-            f,
-            memory_alloc as *mut ::std::ffi::c_void,
-        );
+        for (name, f) in [
+            ("WriteLine(int)", write_line_int as *mut c_void),
+            ("WriteLine(string)", write_line_string as *mut c_void),
+            ("WriteLine(char)", write_line_char as *mut c_void),
+            ("Write(int)", write_int as *mut c_void),
+            ("Write(string)", write_string as *mut c_void),
+            ("Write(char)", write_char as *mut c_void),
+            ("get_Length()", get_length as *mut c_void),
+            ("get_Chars(int32)", get_chars as *mut c_void),
+            ("memory_alloc", memory_alloc as *mut c_void),
+        ]
+        .iter()
+        {
+            let llvm_f = *self.builtin_functions.get(*name).unwrap();
+            llvm::execution_engine::LLVMAddGlobalMapping(ee, llvm_f, *f);
+        }
 
         llvm::execution_engine::LLVMRunFunction(ee, main, 0, vec![].as_mut_ptr());
     }
@@ -236,11 +317,7 @@ impl<'a> JITCompiler<'a> {
         let bb_last = (*self.basic_blocks.get(&last_block.start).unwrap()).retrieve();
         LLVMPositionBuilderAtEnd(self.builder, bb_last);
         if cur_bb_has_no_terminator(self.builder) {
-            // if ret_ty == VariableType::Void {
             LLVMBuildRetVoid(self.builder);
-            // } else {
-            //     LLVMBuildRet(self.builder, LLVMConstNull(func_ret_ty));
-            // }
         }
 
         let mut iter_bb = LLVMGetFirstBasicBlock(func);
@@ -592,29 +669,31 @@ impl<'a> JITCompiler<'a> {
                 }
                 Instruction::Ldloc_0 => ldloc!(0),
                 Instruction::Ldloc_1 => ldloc!(1),
+                Instruction::Ldloc_2 => ldloc!(2),
                 Instruction::Ldfld { table, entry } => {
                     self.gen_instr_ldfld(&mut stack, *table, *entry)
                 }
                 Instruction::Stloc_0 => stloc!(0),
                 Instruction::Stloc_1 => stloc!(1),
+                Instruction::Stloc_2 => stloc!(2),
                 Instruction::Stfld { table, entry } => {
                     self.gen_instr_stfld(&mut stack, *table, *entry)
                 }
                 Instruction::Ldarg_0 => ldarg!(0),
                 Instruction::Ldarg_1 => ldarg!(1),
+                Instruction::Ldarg_2 => ldarg!(2),
                 Instruction::Add => binop!(Add),
                 Instruction::Sub => binop!(Sub),
                 Instruction::Mul => binop!(Mul),
                 Instruction::Rem => binop!(SRem),
                 Instruction::Ret => {
-                    if LLVMGetTypeKind(LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(
-                        self.generating.unwrap(),
-                    )))) == llvm::LLVMTypeKind::LLVMVoidTypeKind
-                    {
+                    let ret_ty =
+                        LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(self.generating.unwrap())));
+                    if LLVMGetTypeKind(ret_ty) == llvm::LLVMTypeKind::LLVMVoidTypeKind {
                         LLVMBuildRetVoid(self.builder);
                     } else {
                         let val = stack.pop().unwrap().val;
-                        LLVMBuildRet(self.builder, val);
+                        LLVMBuildRet(self.builder, self.typecast(val, ret_ty));
                     }
                 }
                 Instruction::Brfalse { .. } | Instruction::Brtrue { .. } => {
@@ -670,8 +749,25 @@ impl<'a> JITCompiler<'a> {
                         LLVMBuildBr(self.builder, bb_br);
                     }
                 }
-                Instruction::Clt => {}
-                Instruction::Ceq => {}
+                Instruction::Clt | Instruction::Ceq => {
+                    let val2 = stack.pop().unwrap();
+                    let val1 = stack.pop().unwrap();
+                    let cond_val = self.typecast(
+                        LLVMBuildICmp(
+                            self.builder,
+                            match instr {
+                                Instruction::Clt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
+                                Instruction::Ceq { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
+                                _ => unreachable!(),
+                            },
+                            val1.val,
+                            val2.val,
+                            cstr0!(),
+                        ),
+                        LLVMInt32TypeInContext(self.context),
+                    );
+                    stack.push(TypedValue::new(Type::i4_ty(), cond_val));
+                }
             }
         }
 
@@ -706,22 +802,44 @@ impl<'a> JITCompiler<'a> {
                             .parse_method_ref_sig(self.image)
                             .unwrap();
 
-                        if ar_name == "mscorlib"
-                            && ty_namespace == "System"
-                            && ty_name == "Console"
-                            && name == "WriteLine"
+                        if ar_name == "mscorlib" && ty_namespace == "System" && ty_name == "Console"
                         {
-                            let val = stack.pop().unwrap();
-                            if ty.equal_method(ElementType::Void, &[ElementType::String]) {
-                                self.call_function(
-                                    *self.builtin_functions.get("WriteLine(string)").unwrap(),
-                                    vec![val.val],
-                                );
-                            } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
-                                self.call_function(
-                                    *self.builtin_functions.get("WriteLine(int)").unwrap(),
-                                    vec![val.val],
-                                );
+                            if name == "WriteLine" {
+                                let val = stack.pop().unwrap();
+                                if ty.equal_method(ElementType::Void, &[ElementType::String]) {
+                                    self.call_function(
+                                        *self.builtin_functions.get("WriteLine(string)").unwrap(),
+                                        vec![val.val],
+                                    );
+                                } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
+                                    self.call_function(
+                                        *self.builtin_functions.get("WriteLine(int)").unwrap(),
+                                        vec![val.val],
+                                    );
+                                } else if ty.equal_method(ElementType::Void, &[ElementType::Char]) {
+                                    self.call_function(
+                                        *self.builtin_functions.get("WriteLine(char)").unwrap(),
+                                        vec![val.val],
+                                    );
+                                }
+                            } else if name == "Write" {
+                                let val = stack.pop().unwrap();
+                                if ty.equal_method(ElementType::Void, &[ElementType::String]) {
+                                    self.call_function(
+                                        *self.builtin_functions.get("Write(string)").unwrap(),
+                                        vec![val.val],
+                                    );
+                                } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
+                                    self.call_function(
+                                        *self.builtin_functions.get("Write(int)").unwrap(),
+                                        vec![val.val],
+                                    );
+                                } else if ty.equal_method(ElementType::Void, &[ElementType::Char]) {
+                                    self.call_function(
+                                        *self.builtin_functions.get("Write(char)").unwrap(),
+                                        vec![val.val],
+                                    );
+                                }
                             }
                         }
                     }
@@ -731,8 +849,9 @@ impl<'a> JITCompiler<'a> {
             Table::MethodDef(mdt) => {
                 let method = self.image.get_method(mdt.rva);
                 let method_sig = method.ty.as_fnptr().unwrap();
+                let has_this = if method_sig.has_this() { 1 } else { 0 };
                 let params = stack
-                    .drain(stack.len() - method_sig.params.len()..)
+                    .drain(stack.len() - method_sig.params.len() - has_this..)
                     .map(|tv| tv.val)
                     .collect();
                 let func = if let Some(llvm_func) = self.generated.get(&mdt.rva) {
@@ -740,11 +859,18 @@ impl<'a> JITCompiler<'a> {
                 } else {
                     let method = self.image.get_method(mdt.rva);
                     let ret_ty = method_sig.ret.to_llvmty(self);
-                    let mut params_ty = method_sig
-                        .params
-                        .iter()
-                        .map(|ty| ty.to_llvmty(self))
-                        .collect::<Vec<LLVMTypeRef>>();
+                    let mut params_ty = if method_sig.has_this() {
+                        vec![self.get_class_type(&method.class.borrow())]
+                    } else {
+                        vec![]
+                    };
+                    params_ty.append(
+                        &mut method_sig
+                            .params
+                            .iter()
+                            .map(|ty| ty.to_llvmty(self))
+                            .collect::<Vec<LLVMTypeRef>>(),
+                    );
                     let func_ty =
                         LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
                     let func = LLVMAddFunction(
@@ -773,7 +899,56 @@ impl<'a> JITCompiler<'a> {
     ) {
         let table = self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
-            Table::MemberRef(_mrt) => {} // TODO
+            Table::MemberRef(mrt) => {
+                let (table, entry) = mrt.class_table_and_entry();
+                let class = &self.image.metadata.metadata_stream.tables[table][entry - 1];
+                match class {
+                    Table::TypeRef(trt) => {
+                        let (table, entry) = trt.resolution_scope_table_and_entry();
+                        let art = match self.image.metadata.metadata_stream.tables[table][entry - 1]
+                        {
+                            Table::AssemblyRef(art) => art,
+                            _ => unimplemented!(),
+                        };
+                        let ar_name = self.image.get_string(art.name);
+                        let ty_namespace = self.image.get_string(trt.type_namespace);
+                        let ty_name = self.image.get_string(trt.type_name);
+                        let name = self.image.get_string(mrt.name);
+
+                        if ar_name == "mscorlib" && ty_namespace == "System" && ty_name == "String"
+                        {
+                            match name.as_str() {
+                                "get_Length" => {
+                                    let val = stack.pop().unwrap();
+                                    stack.push(TypedValue::new(
+                                        Type::i4_ty(),
+                                        self.call_function(
+                                            *self.builtin_functions.get("get_Length()").unwrap(),
+                                            vec![val.val],
+                                        ),
+                                    ));
+                                }
+                                "get_Chars" => {
+                                    let idx = stack.pop().unwrap();
+                                    let val = stack.pop().unwrap();
+                                    stack.push(TypedValue::new(
+                                        Type::i4_ty(),
+                                        self.call_function(
+                                            *self
+                                                .builtin_functions
+                                                .get("get_Chars(int32)")
+                                                .unwrap(),
+                                            vec![val.val, idx.val],
+                                        ),
+                                    ));
+                                }
+                                _ => unimplemented!(),
+                            }
+                        }
+                    }
+                    _ => unimplemented!(),
+                }
+            } // TODO
             Table::MethodDef(mdt) => {
                 let method = self.image.get_method(mdt.rva);
                 let method_sig = method.ty.as_fnptr().unwrap();
@@ -983,6 +1158,42 @@ impl<'a> JITCompiler<'a> {
             LLVMInt32TypeInContext(self.context),
         )
     }
+
+    unsafe fn typecast(&self, val: LLVMValueRef, to: LLVMTypeRef) -> LLVMValueRef {
+        let v_ty = LLVMTypeOf(val);
+
+        if matches!(LLVMGetTypeKind(to), llvm::LLVMTypeKind::LLVMVoidTypeKind) {
+            return val;
+        }
+
+        match LLVMGetTypeKind(v_ty) {
+            llvm::LLVMTypeKind::LLVMIntegerTypeKind => match LLVMGetTypeKind(to) {
+                llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+                    let val_bw = LLVMGetIntTypeWidth(v_ty);
+                    let to_bw = LLVMGetIntTypeWidth(to);
+                    if val_bw < to_bw {
+                        return LLVMBuildZExtOrBitCast(self.builder, val, to, cstr0!());
+                    }
+                }
+                llvm::LLVMTypeKind::LLVMDoubleTypeKind => {
+                    return LLVMBuildSIToFP(self.builder, val, to, cstr0!());
+                }
+                _ => {}
+            },
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+                return LLVMBuildFPToSI(self.builder, val, to, cstr0!());
+            }
+            llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
+            llvm::LLVMTypeKind::LLVMPointerTypeKind => match LLVMGetTypeKind(to) {
+                llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+                    return LLVMBuildPtrToInt(self.builder, val, to, cstr0!());
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        LLVMBuildTruncOrBitCast(self.builder, val, to, cstr0!())
+    }
 }
 
 unsafe fn cur_bb_has_no_terminator(builder: LLVMBuilderRef) -> bool {
@@ -999,6 +1210,7 @@ impl CastIntoLLVMType for Type {
         match self.base {
             ElementType::Void => LLVMVoidTypeInContext(ctx),
             ElementType::Boolean => LLVMInt8TypeInContext(ctx),
+            ElementType::Char => LLVMInt32TypeInContext(ctx),
             ElementType::I4 => LLVMInt32TypeInContext(ctx),
             ElementType::String => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
             ElementType::Class(ref class) => {
@@ -1095,8 +1307,38 @@ fn write_line_int(n: i32) {
 }
 
 #[no_mangle]
+fn write_line_char(c: i32) {
+    println!("{}", c as u8 as char);
+}
+
+#[no_mangle]
 fn write_line_string(s: *mut String) {
     println!("{}", unsafe { &*s });
+}
+
+#[no_mangle]
+fn write_int(n: i32) {
+    print!("{}", n);
+}
+
+#[no_mangle]
+fn write_char(c: i32) {
+    print!("{}", c as u8 as char);
+}
+
+#[no_mangle]
+fn write_string(s: *mut String) {
+    print!("{}", unsafe { &*s });
+}
+
+#[no_mangle]
+fn get_length(s: *mut String) -> i32 {
+    unsafe { &*s }.len() as i32
+}
+
+#[no_mangle]
+fn get_chars(s: *mut String, i: i32) -> i32 {
+    unsafe { &*s }.as_str().as_bytes()[i as usize] as i32
 }
 
 #[no_mangle]

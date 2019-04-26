@@ -10,8 +10,14 @@ pub struct ClassInfo {
     pub fields: Vec<ClassField>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ClassField {
     pub name: String,
     pub ty: Type,
+}
+
+impl ::std::fmt::Debug for ClassField {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        write!(f, "ClassField",)
+    }
 }

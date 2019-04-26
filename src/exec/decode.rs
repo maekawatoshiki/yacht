@@ -62,8 +62,10 @@ impl<'a> BytesToInstructions<'a> {
                 }
                 il_instr::LDARG_0 => iseq.push(Instruction::Ldarg_0),
                 il_instr::LDARG_1 => iseq.push(Instruction::Ldarg_1),
+                il_instr::LDARG_2 => iseq.push(Instruction::Ldarg_2),
                 il_instr::LDLOC_0 => iseq.push(Instruction::Ldloc_0),
                 il_instr::LDLOC_1 => iseq.push(Instruction::Ldloc_1),
+                il_instr::LDLOC_2 => iseq.push(Instruction::Ldloc_2),
                 il_instr::LDFLD => {
                     let token = self.read_u32()?;
                     let table = token as usize >> (32 - 8);
@@ -72,6 +74,7 @@ impl<'a> BytesToInstructions<'a> {
                 }
                 il_instr::STLOC_0 => iseq.push(Instruction::Stloc_0),
                 il_instr::STLOC_1 => iseq.push(Instruction::Stloc_1),
+                il_instr::STLOC_2 => iseq.push(Instruction::Stloc_2),
                 il_instr::STFLD => {
                     let token = self.read_u32()?;
                     let table = token as usize >> (32 - 8);
@@ -159,7 +162,7 @@ impl<'a> BytesToInstructions<'a> {
             if *byte == 0xfe {
                 // 2 bytes instruction
                 let byte = iter.next().unwrap().1;
-                for _ in 0..il_instr::get_instr_size(*byte) - 2 {
+                for _ in 0..il_instr::get_instr2_size(*byte) - 2 {
                     iter.next();
                 }
             } else {

@@ -46,12 +46,7 @@ impl Interpreter {
             }};
         }
 
-        let (iseq, mut locals) = {
-            (
-                &method.body,
-                vec![Value::Int32(0); method.header_ty.max_stack()],
-            )
-        };
+        let (iseq, mut locals) = { (&method.body, vec![Value::Int32(0); method.locals_ty.len()]) };
 
         loop {
             let instr = &iseq[self.program_counter];
@@ -65,11 +60,14 @@ impl Interpreter {
                 Instruction::Ldc_I4 { n } => self.stack_push(Value::Int32(*n)),
                 Instruction::Ldarg_0 => self.stack_push(arguments[0].clone()),
                 Instruction::Ldarg_1 => self.stack_push(arguments[1].clone()),
+                Instruction::Ldarg_2 => self.stack_push(arguments[2].clone()),
                 Instruction::Ldloc_0 => self.stack_push(locals[0].clone()),
                 Instruction::Ldloc_1 => self.stack_push(locals[1].clone()),
+                Instruction::Ldloc_2 => self.stack_push(locals[2].clone()),
                 Instruction::Ldfld { table, entry } => self.instr_ldfld(image, *table, *entry),
                 Instruction::Stloc_0 => locals[0] = self.stack_pop(),
                 Instruction::Stloc_1 => locals[1] = self.stack_pop(),
+                Instruction::Stloc_2 => locals[2] = self.stack_pop(),
                 Instruction::Stfld { table, entry } => self.instr_stfld(image, *table, *entry),
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Dup => self.stack_dup(),
@@ -195,26 +193,43 @@ impl Interpreter {
 
                         dprintln!("Method type: {:?}", ty);
 
-                        if ar_name == "mscorlib"
-                            && ty_namespace == "System"
-                            && ty_name == "Console"
-                            && name == "WriteLine"
+                        if ar_name == "mscorlib" && ty_namespace == "System" && ty_name == "Console"
                         {
-                            let val = self.stack_pop();
-                            if ty.equal_method(ElementType::Void, &[ElementType::String]) {
-                                println!(
-                                    "{}",
-                                    String::from_utf16_lossy(
-                                        image.get_user_string(val.as_string().unwrap())
-                                    )
-                                );
-                            } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
-                                println!("{}", val.as_int32().unwrap());
-                            } else if ty.equal_method(ElementType::Void, &[ElementType::Char]) {
-                                println!(
-                                    "{}",
-                                    String::from_utf16_lossy(&[val.as_int32().unwrap() as u16])
-                                );
+                            // TODO
+                            if name == "WriteLine" {
+                                let val = self.stack_pop();
+                                if ty.equal_method(ElementType::Void, &[ElementType::String]) {
+                                    println!(
+                                        "{}",
+                                        String::from_utf16_lossy(
+                                            image.get_user_string(val.as_string().unwrap())
+                                        )
+                                    );
+                                } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
+                                    println!("{}", val.as_int32().unwrap());
+                                } else if ty.equal_method(ElementType::Void, &[ElementType::Char]) {
+                                    println!(
+                                        "{}",
+                                        String::from_utf16_lossy(&[val.as_int32().unwrap() as u16])
+                                    );
+                                }
+                            } else if name == "Write" {
+                                let val = self.stack_pop();
+                                if ty.equal_method(ElementType::Void, &[ElementType::String]) {
+                                    print!(
+                                        "{}",
+                                        String::from_utf16_lossy(
+                                            image.get_user_string(val.as_string().unwrap())
+                                        )
+                                    );
+                                } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
+                                    print!("{}", val.as_int32().unwrap());
+                                } else if ty.equal_method(ElementType::Void, &[ElementType::Char]) {
+                                    print!(
+                                        "{}",
+                                        String::from_utf16_lossy(&[val.as_int32().unwrap() as u16])
+                                    );
+                                }
                             }
                         }
                     }

@@ -122,6 +122,7 @@ impl PEFileReader {
         let fields = &image.metadata.metadata_stream.tables[TableKind::Field.into_num()];
         let methoddefs = &image.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()];
         let mut methods_to_setup = vec![];
+        let mut fields_to_setup = vec![];
 
         for (i, typedef) in typedefs.iter().enumerate() {
             let typedef = retrieve!(typedef, Table::TypeDef);
@@ -133,7 +134,21 @@ impl PEFileReader {
                     let td = retrieve!(table, Table::TypeDef);
                     (td.field_list as usize - 1, td.method_list as usize - 1)
                 });
-            let fields: Vec<ClassField> = fields[field_list_bgn..field_list_end]
+            let class_info = Rc::new(RefCell::new(ClassInfo {
+                fields: vec![],
+                name: image.get_string(typedef.type_name).clone(),
+                namespace: image.get_string(typedef.type_namespace).clone(),
+            }));
+            image.class_cache.insert(
+                encode_typedef_or_ref_token(TableKind::TypeDef, i as u32 + 1),
+                class_info.clone(),
+            );
+            methods_to_setup.push((class_info.clone(), method_list_bgn..method_list_end));
+            fields_to_setup.push((class_info, field_list_bgn..field_list_end));
+        }
+
+        for (class, range) in fields_to_setup {
+            let fields: Vec<ClassField> = fields[range]
                 .iter()
                 .map(|t| {
                     let ft = retrieve!(t, Table::Field);
@@ -144,17 +159,7 @@ impl PEFileReader {
                     ClassField { name, ty }
                 })
                 .collect();
-            let class_info = Rc::new(RefCell::new(ClassInfo {
-                fields,
-                name: image.get_string(typedef.type_name).clone(),
-                namespace: image.get_string(typedef.type_namespace).clone(),
-            }));
-
-            methods_to_setup.push((class_info.clone(), method_list_bgn..method_list_end));
-            image.class_cache.insert(
-                encode_typedef_or_ref_token(TableKind::TypeDef, i as u32 + 1),
-                class_info,
-            );
+            class.borrow_mut().fields = fields;
         }
 
         for (class, range) in methods_to_setup {
