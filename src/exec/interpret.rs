@@ -24,18 +24,19 @@ pub type TypeNamespaceMap = FxHashMap<String, TypeNameMap>;
 pub type TypeNameMap = FxHashMap<String, FunctionMap>;
 pub type FunctionMap = FxHashMap<String, Vec<Function>>;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Function {
     pub ty: Type,
-    pub function: fn(&mut Interpreter, &mut Image),
+    pub function: fn(&mut Interpreter),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BuiltinFunctions {
     map: AssemblyMap,
 }
-#[derive(Clone)]
-pub struct Interpreter {
+
+pub struct Interpreter<'a> {
+    pub image: &'a mut Image,
     builtins: BuiltinFunctions,
     stack: Vec<Value>,
     base_ptr: usize,
@@ -43,9 +44,10 @@ pub struct Interpreter {
     program_counter: usize,
 }
 
-impl Interpreter {
-    pub fn new() -> Self {
+impl<'a> Interpreter<'a> {
+    pub fn new(image: &'a mut Image) -> Self {
         Self {
+            image,
             builtins: BuiltinFunctions::new(),
             stack: repeat_with(|| Value::Int32(0)).take(1024).collect(),
             base_ptr: 0,
@@ -54,7 +56,7 @@ impl Interpreter {
         }
     }
 
-    pub fn interpret(&mut self, image: &mut Image, method: &MethodBody, arguments: &[Value]) {
+    pub fn interpret(&mut self, method: &MethodBody, arguments: &[Value]) {
         macro_rules! numeric_op {
             ($op:ident) => {{
                 let y = self.stack_pop();
@@ -81,21 +83,21 @@ impl Interpreter {
                 Instruction::Ldloc_0 => self.stack_push(locals[0].clone()),
                 Instruction::Ldloc_1 => self.stack_push(locals[1].clone()),
                 Instruction::Ldloc_2 => self.stack_push(locals[2].clone()),
-                Instruction::Ldfld { table, entry } => self.instr_ldfld(image, *table, *entry),
+                Instruction::Ldfld { table, entry } => self.instr_ldfld(*table, *entry),
                 Instruction::Stloc_0 => locals[0] = self.stack_pop(),
                 Instruction::Stloc_1 => locals[1] = self.stack_pop(),
                 Instruction::Stloc_2 => locals[2] = self.stack_pop(),
-                Instruction::Stfld { table, entry } => self.instr_stfld(image, *table, *entry),
+                Instruction::Stfld { table, entry } => self.instr_stfld(*table, *entry),
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Dup => self.stack_dup(),
-                Instruction::Bge { target } => self.instr_bge(image, *target),
-                Instruction::Bgt { target } => self.instr_bgt(image, *target),
-                Instruction::Blt { target } => self.instr_blt(image, *target),
-                Instruction::Ble { target } => self.instr_ble(image, *target),
-                Instruction::Beq { target } => self.instr_beq(image, *target),
-                Instruction::Bne_un { target } => self.instr_bne_un(image, *target),
-                Instruction::Brtrue { target } => self.instr_brtrue(image, *target),
-                Instruction::Brfalse { target } => self.instr_brfalse(image, *target),
+                Instruction::Bge { target } => self.instr_bge(*target),
+                Instruction::Bgt { target } => self.instr_bgt(*target),
+                Instruction::Blt { target } => self.instr_blt(*target),
+                Instruction::Ble { target } => self.instr_ble(*target),
+                Instruction::Beq { target } => self.instr_beq(*target),
+                Instruction::Bne_un { target } => self.instr_bne_un(*target),
+                Instruction::Brtrue { target } => self.instr_brtrue(*target),
+                Instruction::Brfalse { target } => self.instr_brfalse(*target),
                 Instruction::Br { target } => self.program_counter = target - 1,
                 Instruction::Clt => self.instr_clt(),
                 Instruction::Ceq => self.instr_ceq(),
@@ -103,11 +105,9 @@ impl Interpreter {
                 Instruction::Sub => numeric_op!(sub),
                 Instruction::Mul => numeric_op!(mul),
                 Instruction::Rem => numeric_op!(rem),
-                Instruction::Call { table, entry } => self.instr_call(image, *table, *entry),
-                Instruction::CallVirt { table, entry } => {
-                    self.instr_callvirt(image, *table, *entry)
-                }
-                Instruction::Newobj { table, entry } => self.instr_newobj(image, *table, *entry),
+                Instruction::Call { table, entry } => self.instr_call(*table, *entry),
+                Instruction::CallVirt { table, entry } => self.instr_callvirt(*table, *entry),
+                Instruction::Newobj { table, entry } => self.instr_newobj(*table, *entry),
                 Instruction::Ret => break,
             }
             self.program_counter += 1;
@@ -142,15 +142,13 @@ impl Interpreter {
         self.stack_ptr -= n;
         self.stack[(self.base_ptr + self.stack_ptr)..].to_vec()
     }
-}
 
-impl Interpreter {
-    fn instr_ldfld(&mut self, image: &mut Image, table: usize, entry: usize) {
+    fn instr_ldfld(&mut self, table: usize, entry: usize) {
         let obj = self.stack_pop();
-        let table = &image.metadata.metadata_stream.tables[table][entry - 1];
+        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
             Table::Field(f) => {
-                let name = image.get_string(f.name);
+                let name = self.image.get_string(f.name);
                 self.stack_push(
                     obj.as_object()
                         .unwrap()
@@ -165,13 +163,13 @@ impl Interpreter {
         }
     }
 
-    fn instr_stfld(&mut self, image: &mut Image, table: usize, entry: usize) {
+    fn instr_stfld(&mut self, table: usize, entry: usize) {
         let value = self.stack_pop();
         let obj = self.stack_pop();
-        let table = &image.metadata.metadata_stream.tables[table][entry - 1];
+        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
             Table::Field(f) => {
-                let name = image.get_string(f.name);
+                let name = self.image.get_string(f.name);
                 *obj.as_object()
                     .unwrap()
                     .borrow_mut()
@@ -183,30 +181,35 @@ impl Interpreter {
         }
     }
 
-    fn instr_call(&mut self, image: &mut Image, table: usize, entry: usize) {
+    fn instr_call(&mut self, table: usize, entry: usize) {
         // TODO: Refacotr
-        let table = &image.metadata.metadata_stream.tables[table][entry - 1];
+        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
             Table::MemberRef(mrt) => {
                 let (table, entry) = mrt.class_table_and_entry();
-                let class = &image.metadata.metadata_stream.tables[table][entry - 1];
+                let class = &self.image.metadata.metadata_stream.tables[table][entry - 1];
                 match class {
                     Table::TypeRef(trt) => {
                         let (table, entry) = trt.resolution_scope_table_and_entry();
                         let art = retrieve!(
-                            image.metadata.metadata_stream.tables[table][entry - 1],
+                            self.image.metadata.metadata_stream.tables[table][entry - 1],
                             Table::AssemblyRef
                         );
-                        let ar_name = image.get_string(art.name);
-                        let ty_namespace = image.get_string(trt.type_namespace);
-                        let ty_name = image.get_string(trt.type_name);
-                        let name = image.get_string(mrt.name);
-                        let sig = image.metadata.blob.get(&(mrt.signature as u32)).unwrap();
+                        let ar_name = self.image.get_string(art.name);
+                        let ty_namespace = self.image.get_string(trt.type_namespace);
+                        let ty_name = self.image.get_string(trt.type_name);
+                        let name = self.image.get_string(mrt.name);
+                        let sig = self
+                            .image
+                            .metadata
+                            .blob
+                            .get(&(mrt.signature as u32))
+                            .unwrap();
                         let ty = SignatureParser::new(sig)
-                            .parse_method_ref_sig(image)
+                            .parse_method_ref_sig(self.image)
                             .unwrap();
 
-                        dprintln!(" [{}]{}.{}::{}", ar_name, ty_namespace, ty_name, name);
+                        dprintln!("[{}]{}.{}::{}", ar_name, ty_namespace, ty_name, name);
 
                         dprintln!("Method type: {:?}", ty);
 
@@ -217,7 +220,7 @@ impl Interpreter {
                             name.as_str(),
                             &ty,
                         ) {
-                            (func.function)(self, image);
+                            (func.function)(self);
                         }
                     }
                     _ => unimplemented!(),
@@ -227,14 +230,14 @@ impl Interpreter {
                 let saved_program_counter = self.program_counter;
                 self.program_counter = 0;
 
-                let method = image.get_method(mdt.rva);
+                let method = self.image.get_method(mdt.rva);
                 let params = {
                     let method_sig = method.ty.as_fnptr().unwrap();
                     let has_this = if method_sig.has_this() { 1 } else { 0 };
                     self.stack_pop_last_elements(method_sig.params.len() as usize + has_this)
                 };
 
-                self.interpret(image, &method, &params);
+                self.interpret(&method, &params);
 
                 self.program_counter = saved_program_counter;
             }
@@ -242,27 +245,27 @@ impl Interpreter {
         }
     }
 
-    fn instr_callvirt(&mut self, image: &mut Image, table: usize, entry: usize) {
+    fn instr_callvirt(&mut self, table: usize, entry: usize) {
         // TODO: Refacotr
-        let table = &image.metadata.metadata_stream.tables[table][entry - 1];
+        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
             Table::MemberRef(mrt) => {
                 let (table, entry) = mrt.class_table_and_entry();
-                let class = &image.metadata.metadata_stream.tables[table][entry - 1];
+                let class = &self.image.metadata.metadata_stream.tables[table][entry - 1];
                 match class {
                     Table::TypeRef(trt) => {
                         let (table, entry) = trt.resolution_scope_table_and_entry();
                         let art = retrieve!(
-                            image.metadata.metadata_stream.tables[table][entry - 1],
+                            self.image.metadata.metadata_stream.tables[table][entry - 1],
                             Table::AssemblyRef
                         );
-                        let ar_name = image.get_string(art.name);
-                        let ty_namespace = image.get_string(trt.type_namespace);
-                        let ty_name = image.get_string(trt.type_name);
-                        let name = image.get_string(mrt.name);
-                        // let sig = image.metadata.blob.get(&(mrt.signature as u32)).unwrap();
+                        let ar_name = self.image.get_string(art.name);
+                        let ty_namespace = self.image.get_string(trt.type_namespace);
+                        let ty_name = self.image.get_string(trt.type_name);
+                        let name = self.image.get_string(mrt.name);
+                        // let sig = self.image.metadata.blob.get(&(mrt.signature as u32)).unwrap();
                         // let ty = SignatureParser::new(sig)
-                        //     .parse_method_ref_sig(image)
+                        //     .parse_method_ref_sig(self.image)
                         //     .unwrap();
 
                         dprintln!("{}-{}-{}-{}", ar_name, ty_namespace, ty_name, name);
@@ -273,7 +276,7 @@ impl Interpreter {
                                 "get_Length" => {
                                     let val = self.stack_pop();
                                     self.stack_push(Value::Int32(
-                                        image.get_user_string(val.as_string().unwrap()).len()
+                                        self.image.get_user_string(val.as_string().unwrap()).len()
                                             as i32,
                                     ));
                                 }
@@ -281,7 +284,8 @@ impl Interpreter {
                                     let idx = self.stack_pop().as_int32().unwrap() as usize;
                                     let val = self.stack_pop();
                                     self.stack_push(Value::Int32(
-                                        image.get_user_string(val.as_string().unwrap())[idx] as i32,
+                                        self.image.get_user_string(val.as_string().unwrap())[idx]
+                                            as i32,
                                     ));
                                 }
                                 _ => unimplemented!(),
@@ -295,14 +299,14 @@ impl Interpreter {
                 let saved_program_counter = self.program_counter;
                 self.program_counter = 0;
 
-                let method = image.get_method(mdt.rva);
+                let method = self.image.get_method(mdt.rva);
                 let params = {
                     let method_sig = method.ty.as_fnptr().unwrap();
                     let has_this = if method_sig.has_this() { 1 } else { 0 };
                     self.stack_pop_last_elements(method_sig.params.len() as usize + has_this)
                 };
 
-                self.interpret(image, &method, &params);
+                self.interpret(&method, &params);
 
                 self.program_counter = saved_program_counter;
             }
@@ -310,16 +314,16 @@ impl Interpreter {
         }
     }
 
-    fn instr_newobj(&mut self, image: &mut Image, table: usize, entry: usize) {
+    fn instr_newobj(&mut self, table: usize, entry: usize) {
         // TODO: Refacotr
-        let table = &image.metadata.metadata_stream.tables[table][entry - 1];
+        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
             Table::MemberRef(_mrt) => {} // TODO
             Table::MethodDef(mdt) => {
                 let saved_program_counter = self.program_counter;
                 self.program_counter = 0;
 
-                let method = image.get_method(mdt.rva);
+                let method = self.image.get_method(mdt.rva);
                 let new_obj = Value::Object(Rc::new(RefCell::new({
                     let class = &method.class.borrow();
                     let mut fields = FxHashMap::default();
@@ -335,7 +339,7 @@ impl Interpreter {
                 let mut actual_params = vec![new_obj.clone()];
                 actual_params.append(&mut params);
 
-                self.interpret(image, &method, &actual_params);
+                self.interpret(&method, &actual_params);
                 self.stack_push(new_obj);
 
                 self.program_counter = saved_program_counter;
@@ -344,7 +348,7 @@ impl Interpreter {
         }
     }
 
-    fn instr_bge(&mut self, _image: &mut Image, target: usize) {
+    fn instr_bge(&mut self, target: usize) {
         let val2 = self.stack_pop();
         let val1 = self.stack_pop();
         if val1.ge(val2) {
@@ -352,7 +356,7 @@ impl Interpreter {
         }
     }
 
-    fn instr_bgt(&mut self, _image: &mut Image, target: usize) {
+    fn instr_bgt(&mut self, target: usize) {
         let val2 = self.stack_pop();
         let val1 = self.stack_pop();
         if val1.gt(val2) {
@@ -360,7 +364,7 @@ impl Interpreter {
         }
     }
 
-    fn instr_ble(&mut self, _image: &mut Image, target: usize) {
+    fn instr_ble(&mut self, target: usize) {
         let val2 = self.stack_pop();
         let val1 = self.stack_pop();
         if val1.le(val2) {
@@ -368,7 +372,7 @@ impl Interpreter {
         }
     }
 
-    fn instr_blt(&mut self, _image: &mut Image, target: usize) {
+    fn instr_blt(&mut self, target: usize) {
         let val2 = self.stack_pop();
         let val1 = self.stack_pop();
         if val1.lt(val2) {
@@ -376,7 +380,7 @@ impl Interpreter {
         }
     }
 
-    fn instr_beq(&mut self, _image: &mut Image, target: usize) {
+    fn instr_beq(&mut self, target: usize) {
         let val2 = self.stack_pop();
         let val1 = self.stack_pop();
         if val1.eq(val2) {
@@ -384,7 +388,7 @@ impl Interpreter {
         }
     }
 
-    fn instr_bne_un(&mut self, _image: &mut Image, target: usize) {
+    fn instr_bne_un(&mut self, target: usize) {
         let val2 = self.stack_pop();
         let val1 = self.stack_pop();
         if val1.ne(val2) {
@@ -392,14 +396,14 @@ impl Interpreter {
         }
     }
 
-    fn instr_brtrue(&mut self, _image: &mut Image, target: usize) {
+    fn instr_brtrue(&mut self, target: usize) {
         let val1 = self.stack_pop();
         if val1.is_true() {
             self.program_counter = target /* interpret() everytime increments pc */- 1
         }
     }
 
-    fn instr_brfalse(&mut self, _image: &mut Image, target: usize) {
+    fn instr_brfalse(&mut self, target: usize) {
         let val1 = self.stack_pop();
         if val1.is_false() {
             self.program_counter = target /* interpret() everytime increments pc */- 1
@@ -524,43 +528,22 @@ impl Value {
 }
 
 impl BuiltinFunctions {
+    #[rustfmt::skip]
     pub fn new() -> Self {
         Self {
             map: {
                 let write_line = vec![
-                    (
-                        Type::simple_method_ty(Type::void_ty(), &[Type::string_ty()]),
-                        write_line_string as fn(&mut Interpreter, &mut Image),
-                    ),
-                    (
-                        Type::simple_method_ty(Type::void_ty(), &[Type::i4_ty()]),
-                        write_line_i4,
-                    ),
-                    (
-                        Type::simple_method_ty(Type::void_ty(), &[Type::char_ty()]),
-                        write_line_char,
-                    ),
-                ]
-                .into_iter()
-                .map(|(ty, function)| Function { ty, function })
-                .collect();
+                    (Type::simple_method_ty(Type::void_ty(), &[Type::string_ty()]),
+                     write_line_string as fn(&mut Interpreter)),
+                    (Type::simple_method_ty(Type::void_ty(), &[Type::i4_ty()]), write_line_i4),
+                    (Type::simple_method_ty(Type::void_ty(), &[Type::char_ty()]), write_line_char)
+                ] .into_iter() .map(|(ty, function)| Function { ty, function }).collect();
                 let write = vec![
-                    (
-                        Type::simple_method_ty(Type::void_ty(), &[Type::string_ty()]),
-                        write_string as fn(&mut Interpreter, &mut Image),
-                    ),
-                    (
-                        Type::simple_method_ty(Type::void_ty(), &[Type::i4_ty()]),
-                        write_i4,
-                    ),
-                    (
-                        Type::simple_method_ty(Type::void_ty(), &[Type::char_ty()]),
-                        write_char,
-                    ),
-                ]
-                .into_iter()
-                .map(|(ty, function)| Function { ty, function })
-                .collect();
+                    (Type::simple_method_ty(Type::void_ty(), &[Type::string_ty()]),
+                     write_string as fn(&mut Interpreter)),
+                    (Type::simple_method_ty(Type::void_ty(), &[Type::i4_ty()]), write_i4),
+                    (Type::simple_method_ty(Type::void_ty(), &[Type::char_ty()]), write_char),
+                ] .into_iter() .map(|(ty, function)| Function { ty, function }).collect();
 
                 macro_rules! hashmap {
                     ($e:expr) => {{
@@ -594,35 +577,37 @@ impl BuiltinFunctions {
     }
 }
 
-fn write_line_string(interp: &mut Interpreter, image: &mut Image) {
+fn write_line_string(interp: &mut Interpreter) {
+    let val = interp.stack_pop();
     println!(
         "{}",
-        String::from_utf16_lossy(image.get_user_string(interp.stack_pop().as_string().unwrap()))
+        String::from_utf16_lossy(interp.image.get_user_string(val.as_string().unwrap()))
     );
 }
 
-fn write_line_i4(interp: &mut Interpreter, image: &mut Image) {
+fn write_line_i4(interp: &mut Interpreter) {
     println!("{}", interp.stack_pop().as_int32().unwrap());
 }
 
-fn write_line_char(interp: &mut Interpreter, image: &mut Image) {
+fn write_line_char(interp: &mut Interpreter) {
     println!(
         "{}",
         String::from_utf16_lossy(&[interp.stack_pop().as_int32().unwrap() as u16])
     );
 }
-fn write_string(interp: &mut Interpreter, image: &mut Image) {
+fn write_string(interp: &mut Interpreter) {
+    let val = interp.stack_pop();
     print!(
         "{}",
-        String::from_utf16_lossy(image.get_user_string(interp.stack_pop().as_string().unwrap()))
+        String::from_utf16_lossy(interp.image.get_user_string(val.as_string().unwrap()))
     );
 }
 
-fn write_i4(interp: &mut Interpreter, image: &mut Image) {
+fn write_i4(interp: &mut Interpreter) {
     print!("{}", interp.stack_pop().as_int32().unwrap());
 }
 
-fn write_char(interp: &mut Interpreter, image: &mut Image) {
+fn write_char(interp: &mut Interpreter) {
     print!(
         "{}",
         String::from_utf16_lossy(&[interp.stack_pop().as_int32().unwrap() as u16])
