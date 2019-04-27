@@ -39,6 +39,10 @@ impl Type {
         Self { base }
     }
 
+    pub fn void_ty() -> Self {
+        Self::new(ElementType::Void)
+    }
+
     pub fn string_ty() -> Self {
         Self::new(ElementType::String)
     }
@@ -53,6 +57,14 @@ impl Type {
 
     pub fn i4_ty() -> Self {
         Self::new(ElementType::I4)
+    }
+
+    pub fn simple_method_ty(ret: Type, params: &[Type]) -> Self {
+        Self::new(ElementType::FnPtr(Box::new(MethodSignature {
+            info: 0,
+            ret,
+            params: params.to_vec(),
+        })))
     }
 
     pub fn into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {

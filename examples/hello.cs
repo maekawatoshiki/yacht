@@ -1,57 +1,49 @@
 using System;
 
 public class Vec {
-  public int x;
-  public int y;
-  public Vec() {
-    x = 0;
-    y = 0;
-  }
+  public int x = 0;
+  public int y = 0;
   public int norm2() {
     return x * x + y * y;
   }
 }
 
 public class Node {
-  public bool is_num;
+  public bool isNum;
   public char num;
   public char op;
   public Node lhs;
   public Node rhs;
-  public static Node make_num(char num) {
+  public static Node MakeNum(char num) {
     Node node = new Node();
-    node.is_num = true;
+    node.isNum = true;
     node.num = num;
     return node;
   }
-  public static Node make_op(char op, Node lhs, Node rhs) {
+  public static Node MakeOp(char op, Node lhs, Node rhs) {
     Node node = new Node();
-    node.is_num = false;
+    node.isNum = false;
     node.op = op;
     node.lhs = lhs;
     node.rhs = rhs;
     return node;
   }
-  public void dump() {
-    dump_sub();
+  public void Dump() {
+    DumpSub();
     Console.WriteLine("");
   }
-  public void dump_sub() {
-    if (is_num) {
-      dump_num();
-    } else {
-      dump_op();
-    }
+  public void DumpSub() {
+    if (isNum) DumpNum(); else DumpOp();
   }
-  public void dump_num() {
+  public void DumpNum() {
     Console.Write(" ");
     Console.Write(num);
   }
-  public void dump_op() {
+  public void DumpOp() {
     Console.Write(" (");
     Console.Write(op);
-    lhs.dump_sub();
-    rhs.dump_sub();
+    lhs.DumpSub();
+    rhs.DumpSub();
     Console.Write(")");
   }
 }
@@ -64,38 +56,39 @@ public class Calc {
     pos = 0;
     len = expr.Length;
   }
-  public void eval() {
-    Node node = expr_add();
-    node.dump();
+  public void Eval() {
+    Node node = ExprAdd();
+    node.Dump();
   }
-  public Node expr_add() {
-    Node left = expr_digit();
-    while (!end() && get() == '+') {
-      char op = next();
-      Node right = expr_digit();
-      left = Node.make_op(op, left, right);
+  Node ExprAdd() {
+    Node left = ExprMul();
+    while (!End() && GetChar() == '+') {
+      char op = NextChar();
+      Node right = ExprMul();
+      left = Node.MakeOp(op, left, right);
     }
     return left;
   }
-  public Node expr_digit() {
-    return Node.make_num(next());
+  Node ExprMul() {
+    Node left = ExprDigit();
+    while (!End() && GetChar() == '*') {
+      char op = NextChar();
+      Node right = ExprDigit();
+      left = Node.MakeOp(op, left, right);
+    }
+    return left;
   }
-  bool end() {
+  Node ExprDigit() {
+    return Node.MakeNum(NextChar());
+  }
+  bool End() {
     return pos >= len;
   }
-  char next() {
+  char NextChar() {
     return expr[pos++];
   }
-  char get() {
+  char GetChar() {
     return expr[pos];
-  }
-  bool cur_char_is_digit() {
-    char c = expr[pos];
-    if (c == '0' || c == '1' || c == '2' || 
-        c == '3' || c == '4' || c == '5' || 
-        c == '6' || c == '7' || c == '8' || 
-        c == '9') return true;
-    return false;
   }
 }
 
@@ -115,7 +108,10 @@ public class Hello {
   }
 
   public static void Main() {
+    Console.WriteLine("hello world");
+
     Console.WriteLine(fibo(10));
+
     for (int i = 2; i < 10; i++) {
       if (is_prime(i)) Console.WriteLine(i);
     }
@@ -124,7 +120,8 @@ public class Hello {
     Console.WriteLine(v.norm2());
     v.x = 2; v.y = 3;
     Console.WriteLine(v.norm2());
-    Calc calc = new Calc("1+2+3");
-    calc.eval();
+
+    Calc calc = new Calc("1*2+3+4*5");
+    calc.Eval();
   }
 }

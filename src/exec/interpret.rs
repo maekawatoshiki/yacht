@@ -19,8 +19,24 @@ pub struct ObjectValue {
     fields: FxHashMap<String, Value>,
 }
 
+pub type AssemblyMap = FxHashMap<String, TypeNamespaceMap>;
+pub type TypeNamespaceMap = FxHashMap<String, TypeNameMap>;
+pub type TypeNameMap = FxHashMap<String, FunctionMap>;
+pub type FunctionMap = FxHashMap<String, Vec<Function>>;
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub ty: Type,
+    pub function: fn(&mut Interpreter, &mut Image),
+}
+
+#[derive(Debug, Clone)]
+pub struct BuiltinFunctions {
+    map: AssemblyMap,
+}
 #[derive(Clone)]
 pub struct Interpreter {
+    builtins: BuiltinFunctions,
     stack: Vec<Value>,
     base_ptr: usize,
     stack_ptr: usize,
@@ -30,6 +46,7 @@ pub struct Interpreter {
 impl Interpreter {
     pub fn new() -> Self {
         Self {
+            builtins: BuiltinFunctions::new(),
             stack: repeat_with(|| Value::Int32(0)).take(1024).collect(),
             base_ptr: 0,
             stack_ptr: 0,
@@ -193,44 +210,14 @@ impl Interpreter {
 
                         dprintln!("Method type: {:?}", ty);
 
-                        if ar_name == "mscorlib" && ty_namespace == "System" && ty_name == "Console"
-                        {
-                            // TODO
-                            if name == "WriteLine" {
-                                let val = self.stack_pop();
-                                if ty.equal_method(ElementType::Void, &[ElementType::String]) {
-                                    println!(
-                                        "{}",
-                                        String::from_utf16_lossy(
-                                            image.get_user_string(val.as_string().unwrap())
-                                        )
-                                    );
-                                } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
-                                    println!("{}", val.as_int32().unwrap());
-                                } else if ty.equal_method(ElementType::Void, &[ElementType::Char]) {
-                                    println!(
-                                        "{}",
-                                        String::from_utf16_lossy(&[val.as_int32().unwrap() as u16])
-                                    );
-                                }
-                            } else if name == "Write" {
-                                let val = self.stack_pop();
-                                if ty.equal_method(ElementType::Void, &[ElementType::String]) {
-                                    print!(
-                                        "{}",
-                                        String::from_utf16_lossy(
-                                            image.get_user_string(val.as_string().unwrap())
-                                        )
-                                    );
-                                } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
-                                    print!("{}", val.as_int32().unwrap());
-                                } else if ty.equal_method(ElementType::Void, &[ElementType::Char]) {
-                                    print!(
-                                        "{}",
-                                        String::from_utf16_lossy(&[val.as_int32().unwrap() as u16])
-                                    );
-                                }
-                            }
+                        if let Some(func) = self.builtins.get_function(
+                            ar_name.as_str(),
+                            ty_namespace.as_str(),
+                            ty_name.as_str(),
+                            name.as_str(),
+                            &ty,
+                        ) {
+                            (func.function)(self, image);
                         }
                     }
                     _ => unimplemented!(),
@@ -534,4 +521,110 @@ impl Value {
             _ => panic!(),
         }
     }
+}
+
+impl BuiltinFunctions {
+    pub fn new() -> Self {
+        Self {
+            map: {
+                let write_line = vec![
+                    (
+                        Type::simple_method_ty(Type::void_ty(), &[Type::string_ty()]),
+                        write_line_string as fn(&mut Interpreter, &mut Image),
+                    ),
+                    (
+                        Type::simple_method_ty(Type::void_ty(), &[Type::i4_ty()]),
+                        write_line_i4,
+                    ),
+                    (
+                        Type::simple_method_ty(Type::void_ty(), &[Type::char_ty()]),
+                        write_line_char,
+                    ),
+                ]
+                .into_iter()
+                .map(|(ty, function)| Function { ty, function })
+                .collect();
+                let write = vec![
+                    (
+                        Type::simple_method_ty(Type::void_ty(), &[Type::string_ty()]),
+                        write_string as fn(&mut Interpreter, &mut Image),
+                    ),
+                    (
+                        Type::simple_method_ty(Type::void_ty(), &[Type::i4_ty()]),
+                        write_i4,
+                    ),
+                    (
+                        Type::simple_method_ty(Type::void_ty(), &[Type::char_ty()]),
+                        write_char,
+                    ),
+                ]
+                .into_iter()
+                .map(|(ty, function)| Function { ty, function })
+                .collect();
+
+                macro_rules! hashmap {
+                    ($e:expr) => {{
+                        $e.into_iter()
+                            .map(|(x, y)| (x.to_string(), y))
+                            .collect::<FxHashMap<_, _>>()
+                    }};
+                }
+
+                let function_map: FunctionMap =
+                    hashmap!(vec![("WriteLine", write_line), ("Write", write)]);
+                let type_name_map: TypeNameMap = hashmap!(vec![("Console", function_map)]);
+                let type_namespace_map: TypeNamespaceMap =
+                    hashmap!(vec![("System", type_name_map)]);
+                let assembly_map: AssemblyMap = hashmap!(vec![("mscorlib", type_namespace_map)]);
+                assembly_map
+            },
+        }
+    }
+
+    pub fn get_function(
+        &mut self,
+        aname: &str,
+        tsname: &str,
+        tname: &str,
+        name: &str,
+        ty: &Type,
+    ) -> Option<&Function> {
+        let funcs = self.map.get(aname)?.get(tsname)?.get(tname)?.get(name)?;
+        funcs.iter().find(|f| &f.ty == ty)
+    }
+}
+
+fn write_line_string(interp: &mut Interpreter, image: &mut Image) {
+    println!(
+        "{}",
+        String::from_utf16_lossy(image.get_user_string(interp.stack_pop().as_string().unwrap()))
+    );
+}
+
+fn write_line_i4(interp: &mut Interpreter, image: &mut Image) {
+    println!("{}", interp.stack_pop().as_int32().unwrap());
+}
+
+fn write_line_char(interp: &mut Interpreter, image: &mut Image) {
+    println!(
+        "{}",
+        String::from_utf16_lossy(&[interp.stack_pop().as_int32().unwrap() as u16])
+    );
+}
+fn write_string(interp: &mut Interpreter, image: &mut Image) {
+    print!(
+        "{}",
+        String::from_utf16_lossy(image.get_user_string(interp.stack_pop().as_string().unwrap()))
+    );
+}
+
+fn write_i4(interp: &mut Interpreter, image: &mut Image) {
+    print!("{}", interp.stack_pop().as_int32().unwrap());
+}
+
+fn write_char(interp: &mut Interpreter, image: &mut Image) {
+    print!(
+        "{}",
+        String::from_utf16_lossy(&[interp.stack_pop().as_int32().unwrap() as u16])
+    );
 }
