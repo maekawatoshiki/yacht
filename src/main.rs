@@ -67,8 +67,8 @@ mod tests {
             pe_file_reader.setup_all_class(&mut image);
             let method = image.get_entry_method();
             image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
-            let mut interpreter = interpret::Interpreter::new();
-            interpreter.interpret(&mut image, &method, &[]);
+            let mut interpreter = interpret::Interpreter::new(&mut image);
+            interpreter.interpret(&method, &[]);
             unsafe {
                 let mut jit = jit::JITCompiler::new(&mut image);
                 let main = jit.generate_main(&method);
