@@ -57,7 +57,11 @@ public class Calc {
     len = expr.Length;
   }
   public void Eval() {
+    Console.Write("Expression: ");
+    Console.WriteLine(expr);
+
     Node node = ExprAdd();
+    Console.Write("RPN:");
     node.Dump();
   }
   Node ExprAdd() {
@@ -109,9 +113,9 @@ public class Hello {
 
   public static void Main() {
     Console.WriteLine("hello world");
-
+    
     Console.WriteLine(fibo(10));
-
+    
     for (int i = 2; i < 10; i++) {
       if (is_prime(i)) Console.WriteLine(i);
     }
@@ -120,7 +124,7 @@ public class Hello {
     Console.WriteLine(v.norm2());
     v.x = 2; v.y = 3;
     Console.WriteLine(v.norm2());
-
+    
     Calc calc = new Calc("1*2+3+4*5");
     calc.Eval();
   }

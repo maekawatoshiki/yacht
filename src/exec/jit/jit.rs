@@ -639,97 +639,7 @@ impl<'a> JITCompiler<'a> {
     }
 
     unsafe fn gen_instr_call(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
-        let table = self.image.metadata.metadata_stream.tables[table][entry - 1];
-        match table {
-            Table::MemberRef(mrt) => {
-                let (table, entry) = mrt.class_table_and_entry();
-                let class = &self.image.metadata.metadata_stream.tables[table][entry - 1];
-                match class {
-                    Table::TypeRef(trt) => {
-                        let (table, entry) = trt.resolution_scope_table_and_entry();
-                        let art = match self.image.metadata.metadata_stream.tables[table][entry - 1]
-                        {
-                            Table::AssemblyRef(art) => art,
-                            _ => unimplemented!(),
-                        };
-                        let ar_name = self.image.get_string(art.name);
-                        let ty_namespace = self.image.get_string(trt.type_namespace);
-                        let ty_name = self.image.get_string(trt.type_name);
-                        let name = self.image.get_string(mrt.name);
-                        let sig = self
-                            .image
-                            .metadata
-                            .blob
-                            .get(&(mrt.signature as u32))
-                            .unwrap();
-                        let ty = SignatureParser::new(sig)
-                            .parse_method_ref_sig(self.image)
-                            .unwrap();
-                        if let Some(f) = self.builtin_functions.get_function(
-                            ar_name.as_str(),
-                            ty_namespace.as_str(),
-                            ty_name.as_str(),
-                            name.as_str(),
-                            &ty,
-                        ) {
-                            let method_sig = ty.as_fnptr().unwrap();
-                            let has_this = if method_sig.has_this() { 1 } else { 0 };
-                            let params = stack
-                                .drain(stack.len() - method_sig.params.len() - has_this..)
-                                .map(|tv| tv.val)
-                                .collect();
-                            let ret = self.call_function(f.llvm_function, params);
-                            if method_sig.ret != Type::void_ty() {
-                                stack.push(TypedValue::new(method_sig.ret.clone(), ret));
-                            }
-                        }
-                    }
-                    _ => unimplemented!(),
-                }
-            }
-            Table::MethodDef(mdt) => {
-                let method = self.image.get_method(mdt.rva);
-                let method_sig = method.ty.as_fnptr().unwrap();
-                let has_this = if method_sig.has_this() { 1 } else { 0 };
-                let params = stack
-                    .drain(stack.len() - method_sig.params.len() - has_this..)
-                    .map(|tv| tv.val)
-                    .collect();
-                let func = if let Some(llvm_func) = self.generated.get(&mdt.rva) {
-                    *llvm_func
-                } else {
-                    let method = self.image.get_method(mdt.rva);
-                    let ret_ty = method_sig.ret.to_llvmty(self);
-                    let mut params_ty = if method_sig.has_this() {
-                        vec![self.get_class_type(&method.class.borrow())]
-                    } else {
-                        vec![]
-                    };
-                    params_ty.append(
-                        &mut method_sig
-                            .params
-                            .iter()
-                            .map(|ty| ty.to_llvmty(self))
-                            .collect::<Vec<LLVMTypeRef>>(),
-                    );
-                    let func_ty =
-                        LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
-                    let func = LLVMAddFunction(
-                        self.module,
-                        CString::new(method.name.as_str()).unwrap().as_ptr(),
-                        func_ty,
-                    );
-                    self.generated.insert(mdt.rva, func);
-                    self.compile_queue.push_back((func, method.clone()));
-                    func
-                };
-                let ret = self.call_function(func, params);
-                if !method_sig.ret.is_void() {
-                    stack.push(TypedValue::new(method_sig.ret.clone(), ret))
-                }
-            }
-            e => unimplemented!("call: unimplemented: {:?}", e),
-        }
+        self.gen_instr_general_call(stack, table, entry)
     }
 
     unsafe fn gen_instr_callvirt(
@@ -738,6 +648,66 @@ impl<'a> JITCompiler<'a> {
         table: usize,
         entry: usize,
     ) {
+        self.gen_instr_general_call(stack, table, entry)
+    }
+
+    unsafe fn get_function_by_rva(
+        &mut self,
+        rva: u32,
+        method_sig: &MethodSignature,
+    ) -> LLVMValueRef {
+        if let Some(f) = self.generated.get(&rva) {
+            return *f;
+        }
+
+        let method = self.image.get_method(rva);
+        let ret_ty = method_sig.ret.to_llvmty(self);
+        let mut params_ty = method_sig
+            .params
+            .iter()
+            .map(|ty| ty.to_llvmty(self))
+            .collect::<Vec<LLVMTypeRef>>();
+
+        if method_sig.has_this() {
+            params_ty.insert(0, self.get_class_type(&method.class.borrow()))
+        }
+
+        let func_ty = LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
+        let func = LLVMAddFunction(
+            self.module,
+            CString::new(method.name.as_str()).unwrap().as_ptr(),
+            func_ty,
+        );
+
+        self.generated.insert(rva, func);
+        self.compile_queue.push_back((func, method.clone()));
+
+        func
+    }
+
+    unsafe fn gen_instr_general_call(
+        &mut self,
+        stack: &mut Vec<TypedValue>,
+        table: usize,
+        entry: usize,
+    ) {
+        fn call(
+            compiler: &mut JITCompiler,
+            stack: &mut Vec<TypedValue>,
+            func: LLVMValueRef,
+            method_sig: &MethodSignature,
+        ) {
+            let has_this = if method_sig.has_this() { 1 } else { 0 };
+            let params = stack
+                .drain(stack.len() - method_sig.params.len() - has_this..)
+                .map(|tv| tv.val)
+                .collect();
+            let ret = unsafe { compiler.call_function(func, params) };
+            if method_sig.ret != Type::void_ty() {
+                stack.push(TypedValue::new(method_sig.ret.clone(), ret));
+            }
+        };
+
         let table = self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
             Table::MemberRef(mrt) => {
@@ -745,84 +715,30 @@ impl<'a> JITCompiler<'a> {
                 let class = &self.image.metadata.metadata_stream.tables[table][entry - 1];
                 match class {
                     Table::TypeRef(trt) => {
-                        let (table, entry) = trt.resolution_scope_table_and_entry();
-                        let art = match self.image.metadata.metadata_stream.tables[table][entry - 1]
-                        {
-                            Table::AssemblyRef(art) => art,
-                            _ => unimplemented!(),
-                        };
-                        let ar_name = self.image.get_string(art.name);
-                        let ty_namespace = self.image.get_string(trt.type_namespace);
-                        let ty_name = self.image.get_string(trt.type_name);
+                        let (asm_ref_name, ty_namespace, ty_name) =
+                            self.image.get_info_from_type_ref_table(trt);
                         let name = self.image.get_string(mrt.name);
-                        let sig = self
-                            .image
-                            .metadata
-                            .blob
-                            .get(&(mrt.signature as u32))
-                            .unwrap();
-                        let ty = SignatureParser::new(sig)
-                            .parse_method_ref_sig(self.image)
-                            .unwrap();
+                        let ty = self.image.get_method_ref_type_from_signature(mrt.signature);
 
                         if let Some(f) = self.builtin_functions.get_function(
-                            ar_name.as_str(),
+                            asm_ref_name.as_str(),
                             ty_namespace.as_str(),
                             ty_name.as_str(),
                             name.as_str(),
                             &ty,
                         ) {
                             let method_sig = ty.as_fnptr().unwrap();
-                            let has_this = if method_sig.has_this() { 1 } else { 0 };
-                            let params = stack
-                                .drain(stack.len() - method_sig.params.len() - has_this..)
-                                .map(|tv| tv.val)
-                                .collect();
-                            let ret = self.call_function(f.llvm_function, params);
-                            if method_sig.ret != Type::void_ty() {
-                                stack.push(TypedValue::new(method_sig.ret.clone(), ret));
-                            }
+                            call(self, stack, f.llvm_function, method_sig);
                         }
                     }
                     _ => unimplemented!(),
                 }
-            } // TODO
+            }
             Table::MethodDef(mdt) => {
                 let method = self.image.get_method(mdt.rva);
                 let method_sig = method.ty.as_fnptr().unwrap();
-                assert!(method_sig.has_this());
-                let params = stack
-                    .drain(stack.len() - method_sig.params.len() - /*this(obj)=*/1..)
-                    .map(|tv| tv.val)
-                    .collect();
-                let func = if let Some(llvm_func) = self.generated.get(&mdt.rva) {
-                    *llvm_func
-                } else {
-                    let method = self.image.get_method(mdt.rva);
-                    let ret_ty = method_sig.ret.to_llvmty(self);
-                    let mut params_ty = vec![self.get_class_type(&method.class.borrow())];
-                    params_ty.append(
-                        &mut method_sig
-                            .params
-                            .iter()
-                            .map(|ty| ty.to_llvmty(self))
-                            .collect::<Vec<LLVMTypeRef>>(),
-                    );
-                    let func_ty =
-                        LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
-                    let func = LLVMAddFunction(
-                        self.module,
-                        CString::new(method.name.as_str()).unwrap().as_ptr(),
-                        func_ty,
-                    );
-                    self.generated.insert(mdt.rva, func);
-                    self.compile_queue.push_back((func, method.clone()));
-                    func
-                };
-                let ret = self.call_function(func, params);
-                if !method_sig.ret.is_void() {
-                    stack.push(TypedValue::new(method_sig.ret.clone(), ret))
-                }
+                let func = self.get_function_by_rva(mdt.rva, &method_sig);
+                call(self, stack, func, method_sig);
             }
             e => unimplemented!("call: unimplemented: {:?}", e),
         }
@@ -894,7 +810,6 @@ impl<'a> JITCompiler<'a> {
             Table::MethodDef(mdt) => {
                 let method = self.image.get_method(mdt.rva);
                 let method_sig = method.ty.as_fnptr().unwrap();
-                assert!(method_sig.has_this());
                 let llvm_class_ty = self.get_class_type(&method.class.borrow());
                 let mut params_ty = vec![llvm_class_ty];
                 let new_obj = LLVMBuildTruncOrBitCast(

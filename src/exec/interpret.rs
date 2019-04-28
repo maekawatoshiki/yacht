@@ -190,31 +190,16 @@ impl<'a> Interpreter<'a> {
                 let class = &self.image.metadata.metadata_stream.tables[table][entry - 1];
                 match class {
                     Table::TypeRef(trt) => {
-                        let (table, entry) = trt.resolution_scope_table_and_entry();
-                        let art = retrieve!(
-                            self.image.metadata.metadata_stream.tables[table][entry - 1],
-                            Table::AssemblyRef
-                        );
-                        let ar_name = self.image.get_string(art.name);
-                        let ty_namespace = self.image.get_string(trt.type_namespace);
-                        let ty_name = self.image.get_string(trt.type_name);
+                        let (asm_ref_name, ty_namespace, ty_name) =
+                            self.image.get_info_from_type_ref_table(trt);
                         let name = self.image.get_string(mrt.name);
-                        let sig = self
-                            .image
-                            .metadata
-                            .blob
-                            .get(&(mrt.signature as u32))
-                            .unwrap();
-                        let ty = SignatureParser::new(sig)
-                            .parse_method_ref_sig(self.image)
-                            .unwrap();
-
-                        dprintln!("[{}]{}.{}::{}", ar_name, ty_namespace, ty_name, name);
+                        let ty = self.image.get_method_ref_type_from_signature(mrt.signature);
 
                         dprintln!("Method type: {:?}", ty);
+                        dprintln!("[{}]{}.{}::{}", asm_ref_name, ty_namespace, ty_name, name);
 
                         if let Some(func) = self.builtins.get_function(
-                            ar_name.as_str(),
+                            asm_ref_name.as_str(),
                             ty_namespace.as_str(),
                             ty_name.as_str(),
                             name.as_str(),
@@ -254,23 +239,15 @@ impl<'a> Interpreter<'a> {
                 let class = &self.image.metadata.metadata_stream.tables[table][entry - 1];
                 match class {
                     Table::TypeRef(trt) => {
-                        let (table, entry) = trt.resolution_scope_table_and_entry();
-                        let art = retrieve!(
-                            self.image.metadata.metadata_stream.tables[table][entry - 1],
-                            Table::AssemblyRef
-                        );
-                        let ar_name = self.image.get_string(art.name);
-                        let ty_namespace = self.image.get_string(trt.type_namespace);
-                        let ty_name = self.image.get_string(trt.type_name);
+                        let (asm_ref_name, ty_namespace, ty_name) =
+                            self.image.get_info_from_type_ref_table(trt);
                         let name = self.image.get_string(mrt.name);
-                        // let sig = self.image.metadata.blob.get(&(mrt.signature as u32)).unwrap();
-                        // let ty = SignatureParser::new(sig)
-                        //     .parse_method_ref_sig(self.image)
-                        //     .unwrap();
 
-                        dprintln!("{}-{}-{}-{}", ar_name, ty_namespace, ty_name, name);
+                        dprintln!("{}-{}-{}-{}", asm_ref_name, ty_namespace, ty_name, name);
 
-                        if ar_name == "mscorlib" && ty_namespace == "System" && ty_name == "String"
+                        if asm_ref_name == "mscorlib"
+                            && ty_namespace == "System"
+                            && ty_name == "String"
                         {
                             match name.as_str() {
                                 "get_Length" => {

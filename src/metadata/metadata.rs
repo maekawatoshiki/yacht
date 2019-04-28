@@ -3,6 +3,7 @@ use crate::metadata::{
     file_reader::PEFileReader,
     header::{CLIHeader, SectionHeader},
     method::*,
+    signature::*,
 };
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
@@ -434,6 +435,28 @@ impl Image {
 
     pub fn get_blob<T: Into<u32>>(&self, n: T) -> &Vec<u8> {
         self.metadata.blob.get(&n.into()).unwrap()
+    }
+
+    pub fn get_info_from_type_ref_table(
+        &self,
+        type_ref_table: &TypeRefTable,
+    ) -> (&String, &String, &String) {
+        let (table, entry) = type_ref_table.resolution_scope_table_and_entry();
+        let assembly_ref_table = retrieve!(
+            self.metadata.metadata_stream.tables[table][entry - 1],
+            Table::AssemblyRef
+        );
+        let asm_ref_name = self.get_string(assembly_ref_table.name);
+        let ty_namespace = self.get_string(type_ref_table.type_namespace);
+        let ty_name = self.get_string(type_ref_table.type_name);
+        (asm_ref_name, ty_namespace, ty_name)
+    }
+
+    pub fn get_method_ref_type_from_signature(&self, signature: u16) -> Type {
+        let sig = self.get_blob(signature);
+        SignatureParser::new(sig)
+            .parse_method_ref_sig(self)
+            .unwrap()
     }
 }
 
