@@ -1,12 +1,14 @@
 use crate::{
-    exec::{jit::cfg::*, instruction::*},
+    exec::{
+        instruction::*,
+        jit::{builtin::*, cfg::*},
+    },
     metadata::{class::*, metadata::*, method::*, signature::*},
 };
 use llvm;
 use llvm::{core::*, prelude::*};
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
-use std::ffi::c_void;
 use std::ffi::CString;
 use std::ptr;
 
@@ -42,7 +44,6 @@ pub struct PhiStack {
     stack: Vec<TypedValue>,
 }
 
-#[derive(Debug)]
 pub struct JITCompiler<'a> {
     image: &'a mut Image,
     context: LLVMContextRef,
@@ -55,7 +56,7 @@ pub struct JITCompiler<'a> {
     phi_stack: FxHashMap<usize, Vec<PhiStack>>, // destination,
     env: Environment,
     compile_queue: VecDeque<(LLVMValueRef, MethodBody)>,
-    builtin_functions: FxHashMap<String, LLVMValueRef>,
+    builtin_functions: BuiltinFunctions,
     strings: Vec<*mut String>,
     class_types: ClassTypesHolder,
 }
@@ -106,131 +107,7 @@ impl<'a> JITCompiler<'a> {
             compile_queue: VecDeque::new(),
             strings: vec![],
             class_types: ClassTypesHolder::new(),
-            builtin_functions: {
-                let mut fs = FxHashMap::default();
-                fs.insert(
-                    "WriteLine(int)".to_string(),
-                    LLVMAddFunction(
-                        module,
-                        CString::new("WriteLine(int)").unwrap().as_ptr(),
-                        LLVMFunctionType(
-                            LLVMVoidTypeInContext(context),
-                            vec![LLVMInt32TypeInContext(context)].as_mut_ptr(),
-                            1,
-                            0,
-                        ),
-                    ),
-                );
-                fs.insert(
-                    "WriteLine(string)".to_string(),
-                    LLVMAddFunction(
-                        module,
-                        CString::new("WriteLine(string)").unwrap().as_ptr(),
-                        LLVMFunctionType(
-                            LLVMVoidTypeInContext(context),
-                            vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
-                            1,
-                            0,
-                        ),
-                    ),
-                );
-                fs.insert(
-                    "WriteLine(char)".to_string(),
-                    LLVMAddFunction(
-                        module,
-                        CString::new("WriteLine(char)").unwrap().as_ptr(),
-                        LLVMFunctionType(
-                            LLVMVoidTypeInContext(context),
-                            vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
-                            1,
-                            0,
-                        ),
-                    ),
-                );
-                fs.insert(
-                    "Write(int)".to_string(),
-                    LLVMAddFunction(
-                        module,
-                        CString::new("Write(int)").unwrap().as_ptr(),
-                        LLVMFunctionType(
-                            LLVMVoidTypeInContext(context),
-                            vec![LLVMInt32TypeInContext(context)].as_mut_ptr(),
-                            1,
-                            0,
-                        ),
-                    ),
-                );
-                fs.insert(
-                    "Write(string)".to_string(),
-                    LLVMAddFunction(
-                        module,
-                        CString::new("Write(string)").unwrap().as_ptr(),
-                        LLVMFunctionType(
-                            LLVMVoidTypeInContext(context),
-                            vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
-                            1,
-                            0,
-                        ),
-                    ),
-                );
-                fs.insert(
-                    "Write(char)".to_string(),
-                    LLVMAddFunction(
-                        module,
-                        CString::new("Write(char)").unwrap().as_ptr(),
-                        LLVMFunctionType(
-                            LLVMVoidTypeInContext(context),
-                            vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
-                            1,
-                            0,
-                        ),
-                    ),
-                );
-                fs.insert(
-                    "memory_alloc".to_string(),
-                    LLVMAddFunction(
-                        module,
-                        CString::new("memory_alloc").unwrap().as_ptr(),
-                        LLVMFunctionType(
-                            LLVMPointerType(LLVMInt8TypeInContext(context), 0),
-                            vec![LLVMInt32TypeInContext(context)].as_mut_ptr(),
-                            1,
-                            0,
-                        ),
-                    ),
-                );
-                fs.insert(
-                    "get_Length()".to_string(),
-                    LLVMAddFunction(
-                        module,
-                        CString::new("get_Length()").unwrap().as_ptr(),
-                        LLVMFunctionType(
-                            LLVMInt32TypeInContext(context),
-                            vec![LLVMPointerType(LLVMInt8TypeInContext(context), 0)].as_mut_ptr(),
-                            1,
-                            0,
-                        ),
-                    ),
-                );
-                fs.insert(
-                    "get_Chars(int32)".to_string(),
-                    LLVMAddFunction(
-                        module,
-                        CString::new("get_Chars(int32)").unwrap().as_ptr(),
-                        LLVMFunctionType(
-                            LLVMInt32TypeInContext(context),
-                            vec![
-                                LLVMPointerType(LLVMInt8TypeInContext(context), 0),
-                                LLVMInt32TypeInContext(context),
-                            ]
-                            .as_mut_ptr(),
-                            2,
-                            0,
-                        ),
-                    ),
-                );
-                fs
-            },
+            builtin_functions: BuiltinFunctions::new(context, module),
         }
     }
 
@@ -246,21 +123,8 @@ impl<'a> JITCompiler<'a> {
             panic!("llvm error: failed to initialize execute engine")
         }
 
-        for (name, f) in [
-            ("WriteLine(int)", write_line_int as *mut c_void),
-            ("WriteLine(string)", write_line_string as *mut c_void),
-            ("WriteLine(char)", write_line_char as *mut c_void),
-            ("Write(int)", write_int as *mut c_void),
-            ("Write(string)", write_string as *mut c_void),
-            ("Write(char)", write_char as *mut c_void),
-            ("get_Length()", get_length as *mut c_void),
-            ("get_Chars(int32)", get_chars as *mut c_void),
-            ("memory_alloc", memory_alloc as *mut c_void),
-        ]
-        .iter()
-        {
-            let llvm_f = *self.builtin_functions.get(*name).unwrap();
-            llvm::execution_engine::LLVMAddGlobalMapping(ee, llvm_f, *f);
+        for f in self.builtin_functions.list_all_function() {
+            llvm::execution_engine::LLVMAddGlobalMapping(ee, f.llvm_function, f.function);
         }
 
         llvm::execution_engine::LLVMRunFunction(ee, main, 0, vec![].as_mut_ptr());
@@ -801,45 +665,22 @@ impl<'a> JITCompiler<'a> {
                         let ty = SignatureParser::new(sig)
                             .parse_method_ref_sig(self.image)
                             .unwrap();
-
-                        if ar_name == "mscorlib" && ty_namespace == "System" && ty_name == "Console"
-                        {
-                            if name == "WriteLine" {
-                                let val = stack.pop().unwrap();
-                                if ty.equal_method(ElementType::Void, &[ElementType::String]) {
-                                    self.call_function(
-                                        *self.builtin_functions.get("WriteLine(string)").unwrap(),
-                                        vec![val.val],
-                                    );
-                                } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
-                                    self.call_function(
-                                        *self.builtin_functions.get("WriteLine(int)").unwrap(),
-                                        vec![val.val],
-                                    );
-                                } else if ty.equal_method(ElementType::Void, &[ElementType::Char]) {
-                                    self.call_function(
-                                        *self.builtin_functions.get("WriteLine(char)").unwrap(),
-                                        vec![val.val],
-                                    );
-                                }
-                            } else if name == "Write" {
-                                let val = stack.pop().unwrap();
-                                if ty.equal_method(ElementType::Void, &[ElementType::String]) {
-                                    self.call_function(
-                                        *self.builtin_functions.get("Write(string)").unwrap(),
-                                        vec![val.val],
-                                    );
-                                } else if ty.equal_method(ElementType::Void, &[ElementType::I4]) {
-                                    self.call_function(
-                                        *self.builtin_functions.get("Write(int)").unwrap(),
-                                        vec![val.val],
-                                    );
-                                } else if ty.equal_method(ElementType::Void, &[ElementType::Char]) {
-                                    self.call_function(
-                                        *self.builtin_functions.get("Write(char)").unwrap(),
-                                        vec![val.val],
-                                    );
-                                }
+                        if let Some(f) = self.builtin_functions.get_function(
+                            ar_name.as_str(),
+                            ty_namespace.as_str(),
+                            ty_name.as_str(),
+                            name.as_str(),
+                            &ty,
+                        ) {
+                            let method_sig = ty.as_fnptr().unwrap();
+                            let has_this = if method_sig.has_this() { 1 } else { 0 };
+                            let params = stack
+                                .drain(stack.len() - method_sig.params.len() - has_this..)
+                                .map(|tv| tv.val)
+                                .collect();
+                            let ret = self.call_function(f.llvm_function, params);
+                            if method_sig.ret != Type::void_ty() {
+                                stack.push(TypedValue::new(method_sig.ret.clone(), ret));
                             }
                         }
                     }
@@ -914,35 +755,32 @@ impl<'a> JITCompiler<'a> {
                         let ty_namespace = self.image.get_string(trt.type_namespace);
                         let ty_name = self.image.get_string(trt.type_name);
                         let name = self.image.get_string(mrt.name);
+                        let sig = self
+                            .image
+                            .metadata
+                            .blob
+                            .get(&(mrt.signature as u32))
+                            .unwrap();
+                        let ty = SignatureParser::new(sig)
+                            .parse_method_ref_sig(self.image)
+                            .unwrap();
 
-                        if ar_name == "mscorlib" && ty_namespace == "System" && ty_name == "String"
-                        {
-                            match name.as_str() {
-                                "get_Length" => {
-                                    let val = stack.pop().unwrap();
-                                    stack.push(TypedValue::new(
-                                        Type::i4_ty(),
-                                        self.call_function(
-                                            *self.builtin_functions.get("get_Length()").unwrap(),
-                                            vec![val.val],
-                                        ),
-                                    ));
-                                }
-                                "get_Chars" => {
-                                    let idx = stack.pop().unwrap();
-                                    let val = stack.pop().unwrap();
-                                    stack.push(TypedValue::new(
-                                        Type::i4_ty(),
-                                        self.call_function(
-                                            *self
-                                                .builtin_functions
-                                                .get("get_Chars(int32)")
-                                                .unwrap(),
-                                            vec![val.val, idx.val],
-                                        ),
-                                    ));
-                                }
-                                _ => unimplemented!(),
+                        if let Some(f) = self.builtin_functions.get_function(
+                            ar_name.as_str(),
+                            ty_namespace.as_str(),
+                            ty_name.as_str(),
+                            name.as_str(),
+                            &ty,
+                        ) {
+                            let method_sig = ty.as_fnptr().unwrap();
+                            let has_this = if method_sig.has_this() { 1 } else { 0 };
+                            let params = stack
+                                .drain(stack.len() - method_sig.params.len() - has_this..)
+                                .map(|tv| tv.val)
+                                .collect();
+                            let ret = self.call_function(f.llvm_function, params);
+                            if method_sig.ret != Type::void_ty() {
+                                stack.push(TypedValue::new(method_sig.ret.clone(), ret));
                             }
                         }
                     }
@@ -1062,7 +900,10 @@ impl<'a> JITCompiler<'a> {
                 let new_obj = LLVMBuildTruncOrBitCast(
                     self.builder,
                     self.call_function(
-                        *self.builtin_functions.get("memory_alloc").unwrap(),
+                        self.builtin_functions
+                            .get_helper_function("memory_alloc")
+                            .unwrap()
+                            .llvm_function,
                         vec![self.get_size_of_llvm_class_type(llvm_class_ty)],
                     ),
                     llvm_class_ty,
@@ -1297,51 +1138,4 @@ unsafe fn llvm_const_ptr(ctx: LLVMContextRef, p: *mut u64) -> LLVMValueRef {
     let ptr_as_int = LLVMConstInt(LLVMInt64TypeInContext(ctx), p as u64, 0);
     let const_ptr = LLVMConstIntToPtr(ptr_as_int, LLVMPointerType(LLVMInt8TypeInContext(ctx), 0));
     const_ptr
-}
-
-// Builtins
-
-#[no_mangle]
-fn write_line_int(n: i32) {
-    println!("{}", n);
-}
-
-#[no_mangle]
-fn write_line_char(c: i32) {
-    println!("{}", c as u8 as char);
-}
-
-#[no_mangle]
-fn write_line_string(s: *mut String) {
-    println!("{}", unsafe { &*s });
-}
-
-#[no_mangle]
-fn write_int(n: i32) {
-    print!("{}", n);
-}
-
-#[no_mangle]
-fn write_char(c: i32) {
-    print!("{}", c as u8 as char);
-}
-
-#[no_mangle]
-fn write_string(s: *mut String) {
-    print!("{}", unsafe { &*s });
-}
-
-#[no_mangle]
-fn get_length(s: *mut String) -> i32 {
-    unsafe { &*s }.len() as i32
-}
-
-#[no_mangle]
-fn get_chars(s: *mut String, i: i32) -> i32 {
-    unsafe { &*s }.as_str().as_bytes()[i as usize] as i32
-}
-
-#[no_mangle]
-fn memory_alloc(len: u32) -> *mut u8 {
-    Box::into_raw(vec![0u8; len as usize].into_boxed_slice()) as *mut u8
 }

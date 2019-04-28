@@ -67,6 +67,14 @@ impl Type {
         })))
     }
 
+    pub fn full_method_ty(flags: u8, ret: Type, params: &[Type]) -> Self {
+        Self::new(ElementType::FnPtr(Box::new(MethodSignature {
+            info: flags,
+            ret,
+            params: params.to_vec(),
+        })))
+    }
+
     pub fn into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
         match sig.next()? {
             0x01 => Some(Type::new(ElementType::Void)),

@@ -19,10 +19,10 @@ pub struct ObjectValue {
     fields: FxHashMap<String, Value>,
 }
 
-pub type AssemblyMap = FxHashMap<String, TypeNamespaceMap>;
-pub type TypeNamespaceMap = FxHashMap<String, TypeNameMap>;
-pub type TypeNameMap = FxHashMap<String, FunctionMap>;
-pub type FunctionMap = FxHashMap<String, Vec<Function>>;
+type AssemblyMap = FxHashMap<String, TypeNamespaceMap>;
+type TypeNamespaceMap = FxHashMap<String, TypeNameMap>;
+type TypeNameMap = FxHashMap<String, FunctionMap>;
+type FunctionMap = FxHashMap<String, Vec<Function>>;
 
 #[derive(Clone)]
 pub struct Function {
