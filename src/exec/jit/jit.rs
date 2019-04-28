@@ -1,5 +1,5 @@
 use crate::{
-    exec::{cfg::*, instruction::*},
+    exec::{jit::cfg::*, instruction::*},
     metadata::{class::*, metadata::*, method::*, signature::*},
 };
 use llvm;

@@ -45,7 +45,7 @@ fn main() {
     let mut interpreter = interpret::Interpreter::new(&mut image);
     interpreter.interpret(&method, &[]);
     unsafe {
-        let mut jit = jit::JITCompiler::new(&mut image);
+        let mut jit = jit::jit::JITCompiler::new(&mut image);
         let main = jit.generate_main(&method);
         jit.run_main(main);
     }
@@ -70,7 +70,7 @@ mod tests {
             let mut interpreter = interpret::Interpreter::new(&mut image);
             interpreter.interpret(&method, &[]);
             unsafe {
-                let mut jit = jit::JITCompiler::new(&mut image);
+                let mut jit = jit::jit::JITCompiler::new(&mut image);
                 let main = jit.generate_main(&method);
                 jit.run_main(main);
             }
