@@ -531,18 +531,23 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Newobj { table, entry } => {
                     self.gen_instr_newobj(&mut stack, *table, *entry)
                 }
+                Instruction::Newarr { table, entry } => {
+                    self.gen_instr_newarr(&mut stack, *table, *entry)
+                }
                 Instruction::Ldloc_0 => ldloc!(0),
                 Instruction::Ldloc_1 => ldloc!(1),
                 Instruction::Ldloc_2 => ldloc!(2),
                 Instruction::Ldfld { table, entry } => {
                     self.gen_instr_ldfld(&mut stack, *table, *entry)
                 }
+                Instruction::Ldelem_I4 => self.gen_instr_ldelem_i4(&mut stack),
                 Instruction::Stloc_0 => stloc!(0),
                 Instruction::Stloc_1 => stloc!(1),
                 Instruction::Stloc_2 => stloc!(2),
                 Instruction::Stfld { table, entry } => {
                     self.gen_instr_stfld(&mut stack, *table, *entry)
                 }
+                Instruction::Stelem_I4 => self.gen_instr_stelem_i4(&mut stack),
                 Instruction::Ldarg_0 => ldarg!(0),
                 Instruction::Ldarg_1 => ldarg!(1),
                 Instruction::Ldarg_2 => ldarg!(2),
@@ -803,6 +808,81 @@ impl<'a> JITCompiler<'a> {
         }
     }
 
+    unsafe fn gen_instr_ldelem_i4(&mut self, stack: &mut Vec<TypedValue>) {
+        let index = stack.pop().unwrap().val;
+        let array = stack.pop().unwrap().val;
+        let gep = LLVMBuildGEP(
+            self.builder,
+            array,
+            vec![LLVMBuildAdd(
+                self.builder,
+                index,
+                llvm_const_int32(self.context, 4),
+                cstr0!(),
+            )]
+            .as_mut_ptr(),
+            1,
+            cstr0!(),
+        );
+        let val = LLVMBuildLoad(self.builder, gep, cstr0!());
+        stack.push(TypedValue::new(Type::i4_ty(), val))
+    }
+
+    unsafe fn gen_instr_stelem_i4(&mut self, stack: &mut Vec<TypedValue>) {
+        let value = stack.pop().unwrap().val;
+        let index = stack.pop().unwrap().val;
+        let array = stack.pop().unwrap().val;
+        let gep = LLVMBuildGEP(
+            self.builder,
+            array,
+            vec![LLVMBuildAdd(
+                self.builder,
+                index,
+                llvm_const_int32(self.context, 4),
+                cstr0!(),
+            )]
+            .as_mut_ptr(),
+            1,
+            cstr0!(),
+        );
+        LLVMBuildStore(self.builder, value, gep);
+    }
+
+    unsafe fn gen_instr_newarr(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
+        let len = stack.pop().unwrap().val;
+        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::TypeRef(trt) => {
+                // TODO: Refactor
+                let (asm_ref_name, ty_namespace, ty_name) =
+                    self.image.get_info_from_type_ref_table(trt);
+                match (
+                    asm_ref_name.as_str(),
+                    ty_namespace.as_str(),
+                    ty_name.as_str(),
+                ) {
+                    ("mscorlib", "System", "Int32") => {
+                        let i4_szarr_ty = Type::i4_szarr_ty();
+                        let llvm_i4_szarr_ty = i4_szarr_ty.to_llvmty(self);
+                        let new_arr = self.typecast(
+                            self.call_function(
+                                self.builtin_functions
+                                    .get_helper_function("new_szarray")
+                                    .unwrap()
+                                    .llvm_function,
+                                vec![llvm_const_int32(self.context, 4), len],
+                            ),
+                            llvm_i4_szarr_ty,
+                        );
+                        stack.push(TypedValue::new(i4_szarr_ty, new_arr));
+                    }
+                    _ => unimplemented!(),
+                }
+            }
+            e => unimplemented!("newarr: unimplemented: {:?}", e),
+        }
+    }
+
     unsafe fn gen_instr_newobj(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
         let table = self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
@@ -969,6 +1049,9 @@ impl CastIntoLLVMType for Type {
             ElementType::Char => LLVMInt32TypeInContext(ctx),
             ElementType::I4 => LLVMInt32TypeInContext(ctx),
             ElementType::String => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
+            ElementType::SzArray(ref szarr) => {
+                LLVMPointerType(szarr.elem_ty.to_llvmty(compiler), 0)
+            }
             ElementType::Class(ref class) => {
                 let class = &class.borrow();
                 compiler.get_class_type(class)

@@ -11,6 +11,7 @@ use std::rc::Rc;
 pub enum Value {
     Int32(i32),
     String(u32),
+    Array(Rc<RefCell<Vec<Value>>>),
     Object(Rc<RefCell<ObjectValue>>),
 }
 
@@ -84,10 +85,12 @@ impl<'a> Interpreter<'a> {
                 Instruction::Ldloc_1 => self.stack_push(locals[1].clone()),
                 Instruction::Ldloc_2 => self.stack_push(locals[2].clone()),
                 Instruction::Ldfld { table, entry } => self.instr_ldfld(*table, *entry),
+                Instruction::Ldelem_I4 => self.instr_ldelem_i4(),
                 Instruction::Stloc_0 => locals[0] = self.stack_pop(),
                 Instruction::Stloc_1 => locals[1] = self.stack_pop(),
                 Instruction::Stloc_2 => locals[2] = self.stack_pop(),
                 Instruction::Stfld { table, entry } => self.instr_stfld(*table, *entry),
+                Instruction::Stelem_I4 => self.instr_stelem_i4(),
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Dup => self.stack_dup(),
                 Instruction::Bge { target } => self.instr_bge(*target),
@@ -108,6 +111,7 @@ impl<'a> Interpreter<'a> {
                 Instruction::Call { table, entry } => self.instr_call(*table, *entry),
                 Instruction::CallVirt { table, entry } => self.instr_callvirt(*table, *entry),
                 Instruction::Newobj { table, entry } => self.instr_newobj(*table, *entry),
+                Instruction::Newarr { table, entry } => self.instr_newarr(*table, *entry),
                 Instruction::Ret => break,
             }
             self.program_counter += 1;
@@ -179,6 +183,20 @@ impl<'a> Interpreter<'a> {
             }
             e => unimplemented!("{:?}", e),
         }
+    }
+
+    fn instr_ldelem_i4(&mut self) {
+        let index = self.stack_pop();
+        let array = self.stack_pop();
+        let value = array.as_array().unwrap().borrow()[index.as_int32().unwrap() as usize].clone();
+        self.stack_push(value);
+    }
+
+    fn instr_stelem_i4(&mut self) {
+        let value = self.stack_pop();
+        let index = self.stack_pop();
+        let array = self.stack_pop();
+        array.as_array().unwrap().borrow_mut()[index.as_int32().unwrap() as usize] = value;
     }
 
     fn instr_call(&mut self, table: usize, entry: usize) {
@@ -292,7 +310,7 @@ impl<'a> Interpreter<'a> {
     }
 
     fn instr_newobj(&mut self, table: usize, entry: usize) {
-        // TODO: Refacotr
+        // TODO: Refactor
         let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
         match table {
             Table::MemberRef(_mrt) => {} // TODO
@@ -322,6 +340,34 @@ impl<'a> Interpreter<'a> {
                 self.program_counter = saved_program_counter;
             }
             e => unimplemented!("call: unimplemented: {:?}", e),
+        }
+    }
+
+    fn instr_newarr(&mut self, table: usize, entry: usize) {
+        // TODO: Refactor
+        let val = self.stack_pop();
+        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::TypeRef(trt) => {
+                let (asm_ref_name, ty_namespace, ty_name) =
+                    self.image.get_info_from_type_ref_table(trt);
+                dprintln!("ty: [{}]{}.{}", asm_ref_name, ty_namespace, ty_name);
+                match (
+                    asm_ref_name.as_str(),
+                    ty_namespace.as_str(),
+                    ty_name.as_str(),
+                ) {
+                    ("mscorlib", "System", "Int32") => {
+                        self.stack_push(Value::Array(Rc::new(RefCell::new(
+                            repeat_with(|| Value::Int32(0))
+                                .take(val.as_int32().unwrap() as usize)
+                                .collect(),
+                        ))))
+                    }
+                    _ => unimplemented!(),
+                }
+            }
+            e => unimplemented!("newarr: unimplemented: {:?}", e),
         }
     }
 
@@ -418,6 +464,13 @@ impl Value {
     pub fn as_object(&self) -> Option<Rc<RefCell<ObjectValue>>> {
         match self {
             Value::Object(obj) => Some(obj.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<Rc<RefCell<Vec<Value>>>> {
+        match self {
+            Value::Array(obj) => Some(obj.clone()),
             _ => None,
         }
     }

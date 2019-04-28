@@ -41,6 +41,22 @@ impl BuiltinFunctions {
                                 1, 0))
                     }
                 );
+                map.insert(
+                    "new_szarray".to_string(),
+                    Function {
+                        ty: Type::void_ty(),
+                        function: new_szarray as *mut c_void,
+                        llvm_function: LLVMAddFunction(
+                            module,
+                            CString::new("new_szarray").unwrap().as_ptr(),
+                            LLVMFunctionType(
+                                LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
+                                vec![LLVMInt32TypeInContext(ctx),
+                                    LLVMInt32TypeInContext(ctx)
+                                    ].as_mut_ptr(),
+                                2, 0))
+                    }
+                );
                 map
             },
             map: {
@@ -202,4 +218,9 @@ pub fn get_chars_i4(s: *mut String, i: i32) -> i32 {
 #[no_mangle]
 pub fn memory_alloc(len: u32) -> *mut u8 {
     Box::into_raw(vec![0u8; len as usize].into_boxed_slice()) as *mut u8
+}
+
+#[no_mangle]
+pub fn new_szarray(elem_sz: u32, len: u32) -> *mut u8 {
+    Box::into_raw(vec![0u8; elem_sz as usize * len as usize + 4].into_boxed_slice()) as *mut u8
 }

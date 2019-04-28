@@ -14,6 +14,7 @@ pub enum ElementType {
     I4,
     String,
     Class(ClassInfoRef),
+    SzArray(Box<SzArrayInfo>),
     FnPtr(Box<MethodSignature>),
 }
 
@@ -27,6 +28,12 @@ pub struct MethodSignature {
 
     /// Parameters' types
     pub params: Vec<Type>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SzArrayInfo {
+    /// Array's element type
+    pub elem_ty: Type,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +82,12 @@ impl Type {
         })))
     }
 
+    pub fn i4_szarr_ty() -> Self {
+        Self::new(ElementType::SzArray(Box::new(SzArrayInfo {
+            elem_ty: Type::i4_ty(),
+        })))
+    }
+
     pub fn into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
         match sig.next()? {
             0x01 => Some(Type::new(ElementType::Void)),
@@ -83,8 +96,10 @@ impl Type {
             0x08 => Some(Type::new(ElementType::I4)),
             0x0e => Some(Type::new(ElementType::String)),
             0x12 => Type::class_into_type(image, sig),
+            0x1d => Some(Type::new(ElementType::SzArray(Box::new(SzArrayInfo {
+                elem_ty: Type::into_type(image, sig)?,
+            })))),
             // TODO
-            // 0x1b => Some(ElementType::FnPtr
             _ => None,
         }
     }

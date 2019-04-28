@@ -48,6 +48,12 @@ impl<'a> BytesToInstructions<'a> {
                     let entry = token as usize & 0x00ff_ffff;
                     iseq.push(Instruction::Newobj { table, entry })
                 }
+                il_instr::NEWARR => {
+                    let token = self.read_u32()?;
+                    let table = token as usize >> (32 - 8);
+                    let entry = token as usize & 0x00ff_ffff;
+                    iseq.push(Instruction::Newarr { table, entry })
+                }
                 il_instr::LDC_I4_0 => iseq.push(Instruction::Ldc_I4_0),
                 il_instr::LDC_I4_1 => iseq.push(Instruction::Ldc_I4_1),
                 il_instr::LDC_I4_2 => iseq.push(Instruction::Ldc_I4_2),
@@ -72,6 +78,7 @@ impl<'a> BytesToInstructions<'a> {
                     let entry = token as usize & 0x00ff_ffff;
                     iseq.push(Instruction::Ldfld { table, entry })
                 }
+                il_instr::LDELEM_I4 => iseq.push(Instruction::Ldelem_I4),
                 il_instr::STLOC_0 => iseq.push(Instruction::Stloc_0),
                 il_instr::STLOC_1 => iseq.push(Instruction::Stloc_1),
                 il_instr::STLOC_2 => iseq.push(Instruction::Stloc_2),
@@ -81,6 +88,7 @@ impl<'a> BytesToInstructions<'a> {
                     let entry = token as usize & 0x00ff_ffff;
                     iseq.push(Instruction::Stfld { table, entry })
                 }
+                il_instr::STELEM_I4 => iseq.push(Instruction::Stelem_I4),
                 il_instr::POP => iseq.push(Instruction::Pop),
                 il_instr::DUP => iseq.push(Instruction::Dup),
                 il_instr::BGE => {

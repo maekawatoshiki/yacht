@@ -15,10 +15,12 @@ pub enum Instruction {
     Ldloc_1,
     Ldloc_2,
     Ldfld { table: usize, entry: usize },
+    Ldelem_I4,
     Stloc_0,
     Stloc_1,
     Stloc_2,
     Stfld { table: usize, entry: usize },
+    Stelem_I4,
     Dup,
     Pop,
     Beq { target: usize },
@@ -39,6 +41,7 @@ pub enum Instruction {
     Call { table: usize, entry: usize },
     CallVirt { table: usize, entry: usize },
     Newobj { table: usize, entry: usize },
+    Newarr { table: usize, entry: usize },
     Ret,
 }
 
@@ -60,10 +63,12 @@ pub mod il_instr {
     pub const LDLOC_1  : u8 = 0x07;
     pub const LDLOC_2  : u8 = 0x08;
     pub const LDFLD    : u8 = 0x7b;
+    pub const LDELEM_I4: u8 = 0x94;
     pub const STLOC_0  : u8 = 0x0a;
     pub const STLOC_1  : u8 = 0x0b;
     pub const STLOC_2  : u8 = 0x0c;
     pub const STFLD    : u8 = 0x7d;
+    pub const STELEM_I4: u8 = 0x9e;
     pub const DUP      : u8 = 0x25;
     pub const POP      : u8 = 0x26;
     pub const BR       : u8 = 0x38;
@@ -82,11 +87,14 @@ pub mod il_instr {
     pub const MUL      : u8 = 0x5a;
     pub const REM      : u8 = 0x5d;
     pub const NEWOBJ   : u8 = 0x73;
+    pub const NEWARR   : u8 = 0x8d;
     pub const RET      : u8 = 0x2a;
 
     pub fn get_instr_size<'a>(instr: u8) -> usize {
         match instr {
-            LDSTR | CALL | NEWOBJ | CALLVIRT |
+            LDSTR | 
+            CALL | CALLVIRT |
+            NEWOBJ | NEWARR | 
             STFLD | LDFLD |
             BGE | BR | BLT | BNE_UN | BRFALSE | BGT
              | BRTRUE | BLE | BEQ |
@@ -94,7 +102,9 @@ pub mod il_instr {
             LDC_I4_0 | LDC_I4_1 | LDC_I4_2 | LDC_I4_3 |
             LDARG_0 | LDARG_1 | LDARG_2 | 
             LDLOC_0 | LDLOC_1 | LDLOC_2 |
+            LDELEM_I4 | 
             STLOC_0 | STLOC_1 | STLOC_2 |
+            STELEM_I4 |
             ADD | SUB | MUL | REM |
             RET | POP | DUP => 1,
             LDC_I4_S => 2,
