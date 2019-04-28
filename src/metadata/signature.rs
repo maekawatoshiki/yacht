@@ -88,6 +88,12 @@ impl Type {
         })))
     }
 
+    pub fn boolean_szarr_ty() -> Self {
+        Self::new(ElementType::SzArray(Box::new(SzArrayInfo {
+            elem_ty: Type::boolean_ty(),
+        })))
+    }
+
     pub fn into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
         match sig.next()? {
             0x01 => Some(Type::new(ElementType::Void)),

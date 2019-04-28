@@ -14,13 +14,22 @@ pub enum Instruction {
     Ldloc_0,
     Ldloc_1,
     Ldloc_2,
+    Ldloc_3,
+    Ldloc_S { n: u8 },
     Ldfld { table: usize, entry: usize },
+    Ldelem_I1,
+    Ldelem_U1,
     Ldelem_I4,
     Stloc_0,
     Stloc_1,
     Stloc_2,
+    Stloc_3,
+    Stloc_S { n: u8 },
     Stfld { table: usize, entry: usize },
+    Stelem_I1,
     Stelem_I4,
+    Ldlen,
+    Conv_I4,
     Dup,
     Pop,
     Beq { target: usize },
@@ -62,13 +71,22 @@ pub mod il_instr {
     pub const LDLOC_0  : u8 = 0x06;
     pub const LDLOC_1  : u8 = 0x07;
     pub const LDLOC_2  : u8 = 0x08;
+    pub const LDLOC_3  : u8 = 0x09;
+    pub const LDLOC_S  : u8 = 0x11;
     pub const LDFLD    : u8 = 0x7b;
+    pub const LDELEM_I1: u8 = 0x90;
+    pub const LDELEM_U1: u8 = 0x91;
     pub const LDELEM_I4: u8 = 0x94;
     pub const STLOC_0  : u8 = 0x0a;
     pub const STLOC_1  : u8 = 0x0b;
     pub const STLOC_2  : u8 = 0x0c;
+    pub const STLOC_3  : u8 = 0x0d;
+    pub const STLOC_S  : u8 = 0x13;
     pub const STFLD    : u8 = 0x7d;
+    pub const STELEM_I1: u8 = 0x9c;
     pub const STELEM_I4: u8 = 0x9e;
+    pub const LDLEN    : u8 = 0x8e;
+    pub const CONV_I4  : u8 = 0x69;
     pub const DUP      : u8 = 0x25;
     pub const POP      : u8 = 0x26;
     pub const BR       : u8 = 0x38;
@@ -101,12 +119,16 @@ pub mod il_instr {
             LDC_I4 => 5, 
             LDC_I4_0 | LDC_I4_1 | LDC_I4_2 | LDC_I4_3 |
             LDARG_0 | LDARG_1 | LDARG_2 | 
-            LDLOC_0 | LDLOC_1 | LDLOC_2 |
-            LDELEM_I4 | 
-            STLOC_0 | STLOC_1 | STLOC_2 |
-            STELEM_I4 |
+            LDLOC_0 | LDLOC_1 | LDLOC_2 | LDLOC_3 |
+            LDELEM_I4 | LDELEM_I1 | LDELEM_U1 |
+            STLOC_0 | STLOC_1 | STLOC_2 | STLOC_3 |
+            STELEM_I4 | STELEM_I1 |
             ADD | SUB | MUL | REM |
-            RET | POP | DUP => 1,
+            RET | POP | DUP |
+            CONV_I4 |
+            LDLEN => 1,
+            LDLOC_S |
+            STLOC_S |
             LDC_I4_S => 2,
             e => panic!("Not an instruction: {}", e),
         }

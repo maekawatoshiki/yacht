@@ -72,23 +72,38 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::LDLOC_0 => iseq.push(Instruction::Ldloc_0),
                 il_instr::LDLOC_1 => iseq.push(Instruction::Ldloc_1),
                 il_instr::LDLOC_2 => iseq.push(Instruction::Ldloc_2),
+                il_instr::LDLOC_3 => iseq.push(Instruction::Ldloc_3),
+                il_instr::LDLOC_S => {
+                    let n = self.read_u8()?;
+                    iseq.push(Instruction::Ldloc_S { n })
+                }
                 il_instr::LDFLD => {
                     let token = self.read_u32()?;
                     let table = token as usize >> (32 - 8);
                     let entry = token as usize & 0x00ff_ffff;
                     iseq.push(Instruction::Ldfld { table, entry })
                 }
+                il_instr::LDELEM_U1 => iseq.push(Instruction::Ldelem_U1),
+                il_instr::LDELEM_I1 => iseq.push(Instruction::Ldelem_I1),
                 il_instr::LDELEM_I4 => iseq.push(Instruction::Ldelem_I4),
                 il_instr::STLOC_0 => iseq.push(Instruction::Stloc_0),
                 il_instr::STLOC_1 => iseq.push(Instruction::Stloc_1),
                 il_instr::STLOC_2 => iseq.push(Instruction::Stloc_2),
+                il_instr::STLOC_3 => iseq.push(Instruction::Stloc_3),
+                il_instr::STLOC_S => {
+                    let n = self.read_u8()?;
+                    iseq.push(Instruction::Stloc_S { n })
+                }
                 il_instr::STFLD => {
                     let token = self.read_u32()?;
                     let table = token as usize >> (32 - 8);
                     let entry = token as usize & 0x00ff_ffff;
                     iseq.push(Instruction::Stfld { table, entry })
                 }
+                il_instr::STELEM_I1 => iseq.push(Instruction::Stelem_I1),
                 il_instr::STELEM_I4 => iseq.push(Instruction::Stelem_I4),
+                il_instr::LDLEN => iseq.push(Instruction::Ldlen),
+                il_instr::CONV_I4 => iseq.push(Instruction::Conv_I4),
                 il_instr::POP => iseq.push(Instruction::Pop),
                 il_instr::DUP => iseq.push(Instruction::Dup),
                 il_instr::BGE => {

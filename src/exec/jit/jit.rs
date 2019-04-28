@@ -485,8 +485,10 @@ impl<'a> JITCompiler<'a> {
         }}
         #[rustfmt::skip]
         macro_rules! stloc { ($n:expr) => {{
-            LLVMBuildStore(
-                self.builder, stack.pop().unwrap().val, self.get_local($n, None));
+            let val = self.get_local($n, None);
+            LLVMBuildStore(self.builder,
+                self.typecast(stack.pop().unwrap().val,
+                    LLVMGetElementType(LLVMTypeOf(val))), val);
         }}; }
         #[rustfmt::skip]
         macro_rules! ldarg { ($n:expr) => {
@@ -516,6 +518,32 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldc_I4_3 => push_i4!(3),
                 Instruction::Ldc_I4_S { n } => push_i4!(*n),
                 Instruction::Ldc_I4 { n } => push_i4!(*n),
+                Instruction::Ldloc_0 => ldloc!(0),
+                Instruction::Ldloc_1 => ldloc!(1),
+                Instruction::Ldloc_2 => ldloc!(2),
+                Instruction::Ldloc_3 => ldloc!(3),
+                Instruction::Ldloc_S { n } => ldloc!(*n as usize),
+                Instruction::Ldfld { table, entry } => {
+                    self.gen_instr_ldfld(&mut stack, *table, *entry)
+                }
+                Instruction::Ldelem_U1 => self.gen_instr_ldelem_i1(&mut stack),
+                Instruction::Ldelem_I1 => self.gen_instr_ldelem_i1(&mut stack),
+                Instruction::Ldelem_I4 => self.gen_instr_ldelem_i4(&mut stack),
+                Instruction::Stloc_0 => stloc!(0),
+                Instruction::Stloc_1 => stloc!(1),
+                Instruction::Stloc_2 => stloc!(2),
+                Instruction::Stloc_3 => stloc!(3),
+                Instruction::Stloc_S { n } => stloc!(*n as usize),
+                Instruction::Stfld { table, entry } => {
+                    self.gen_instr_stfld(&mut stack, *table, *entry)
+                }
+                Instruction::Stelem_I1 => self.gen_instr_stelem_i1(&mut stack),
+                Instruction::Stelem_I4 => self.gen_instr_stelem_i4(&mut stack),
+                Instruction::Ldarg_0 => ldarg!(0),
+                Instruction::Ldarg_1 => ldarg!(1),
+                Instruction::Ldarg_2 => ldarg!(2),
+                Instruction::Ldlen => self.gen_instr_ldlen(&mut stack),
+                Instruction::Conv_I4 => self.gen_instr_conv_i4(&mut stack),
                 Instruction::Pop => {
                     stack.pop();
                 }
@@ -534,23 +562,6 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Newarr { table, entry } => {
                     self.gen_instr_newarr(&mut stack, *table, *entry)
                 }
-                Instruction::Ldloc_0 => ldloc!(0),
-                Instruction::Ldloc_1 => ldloc!(1),
-                Instruction::Ldloc_2 => ldloc!(2),
-                Instruction::Ldfld { table, entry } => {
-                    self.gen_instr_ldfld(&mut stack, *table, *entry)
-                }
-                Instruction::Ldelem_I4 => self.gen_instr_ldelem_i4(&mut stack),
-                Instruction::Stloc_0 => stloc!(0),
-                Instruction::Stloc_1 => stloc!(1),
-                Instruction::Stloc_2 => stloc!(2),
-                Instruction::Stfld { table, entry } => {
-                    self.gen_instr_stfld(&mut stack, *table, *entry)
-                }
-                Instruction::Stelem_I4 => self.gen_instr_stelem_i4(&mut stack),
-                Instruction::Ldarg_0 => ldarg!(0),
-                Instruction::Ldarg_1 => ldarg!(1),
-                Instruction::Ldarg_2 => ldarg!(2),
                 Instruction::Add => binop!(Add),
                 Instruction::Sub => binop!(Sub),
                 Instruction::Mul => binop!(Mul),
@@ -769,7 +780,11 @@ impl<'a> JITCompiler<'a> {
                     2,
                     cstr0!(),
                 );
-                LLVMBuildStore(self.builder, val.val, gep);
+                LLVMBuildStore(
+                    self.builder,
+                    self.typecast(val.val, LLVMGetElementType(LLVMTypeOf(gep))),
+                    gep,
+                );
             }
             e => unimplemented!("{:?}", e),
         }
@@ -808,7 +823,17 @@ impl<'a> JITCompiler<'a> {
         }
     }
 
+    unsafe fn gen_instr_ldelem_i1(&mut self, stack: &mut Vec<TypedValue>) {
+        let val = self.gen_instr_general_ldelem(stack);
+        stack.push(TypedValue::new(Type::boolean_ty(), val))
+    }
+
     unsafe fn gen_instr_ldelem_i4(&mut self, stack: &mut Vec<TypedValue>) {
+        let val = self.gen_instr_general_ldelem(stack);
+        stack.push(TypedValue::new(Type::i4_ty(), val))
+    }
+
+    unsafe fn gen_instr_general_ldelem(&mut self, stack: &mut Vec<TypedValue>) -> LLVMValueRef {
         let index = stack.pop().unwrap().val;
         let array = stack.pop().unwrap().val;
         let gep = LLVMBuildGEP(
@@ -824,11 +849,18 @@ impl<'a> JITCompiler<'a> {
             1,
             cstr0!(),
         );
-        let val = LLVMBuildLoad(self.builder, gep, cstr0!());
-        stack.push(TypedValue::new(Type::i4_ty(), val))
+        LLVMBuildLoad(self.builder, gep, cstr0!())
+    }
+
+    unsafe fn gen_instr_stelem_i1(&mut self, stack: &mut Vec<TypedValue>) {
+        self.gen_instr_general_stelem(stack)
     }
 
     unsafe fn gen_instr_stelem_i4(&mut self, stack: &mut Vec<TypedValue>) {
+        self.gen_instr_general_stelem(stack)
+    }
+
+    unsafe fn gen_instr_general_stelem(&mut self, stack: &mut Vec<TypedValue>) {
         let value = stack.pop().unwrap().val;
         let index = stack.pop().unwrap().val;
         let array = stack.pop().unwrap().val;
@@ -845,7 +877,35 @@ impl<'a> JITCompiler<'a> {
             1,
             cstr0!(),
         );
-        LLVMBuildStore(self.builder, value, gep);
+        LLVMBuildStore(
+            self.builder,
+            self.typecast(value, LLVMGetElementType(LLVMTypeOf(gep))),
+            gep,
+        );
+    }
+
+    unsafe fn gen_instr_ldlen(&mut self, stack: &mut Vec<TypedValue>) {
+        let array = self.typecast(
+            stack.pop().unwrap().val,
+            LLVMPointerType(LLVMInt32TypeInContext(self.context), 0),
+        );
+        let gep = LLVMBuildGEP(
+            self.builder,
+            array,
+            vec![llvm_const_int32(self.context, 0)].as_mut_ptr(),
+            1,
+            cstr0!(),
+        );
+        let index = LLVMBuildLoad(self.builder, gep, cstr0!());
+        stack.push(TypedValue::new(Type::i4_ty(), index));
+    }
+
+    unsafe fn gen_instr_conv_i4(&mut self, stack: &mut Vec<TypedValue>) {
+        let value = stack.pop().unwrap().val;
+        stack.push(TypedValue::new(
+            Type::i4_ty(),
+            self.typecast(value, LLVMInt32TypeInContext(self.context)),
+        ))
     }
 
     unsafe fn gen_instr_newarr(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
@@ -861,20 +921,24 @@ impl<'a> JITCompiler<'a> {
                     ty_namespace.as_str(),
                     ty_name.as_str(),
                 ) {
-                    ("mscorlib", "System", "Int32") => {
-                        let i4_szarr_ty = Type::i4_szarr_ty();
-                        let llvm_i4_szarr_ty = i4_szarr_ty.to_llvmty(self);
+                    ("mscorlib", "System", ty) => {
+                        let (szarr_ty, sz) = match ty {
+                            "Int32" => (Type::i4_szarr_ty(), 4),
+                            "Boolean" => (Type::boolean_szarr_ty(), 1),
+                            _ => unimplemented!(),
+                        };
+                        let llvm_szarr_ty = szarr_ty.to_llvmty(self);
                         let new_arr = self.typecast(
                             self.call_function(
                                 self.builtin_functions
                                     .get_helper_function("new_szarray")
                                     .unwrap()
                                     .llvm_function,
-                                vec![llvm_const_int32(self.context, 4), len],
+                                vec![llvm_const_int32(self.context, sz), len],
                             ),
-                            llvm_i4_szarr_ty,
+                            llvm_szarr_ty,
                         );
-                        stack.push(TypedValue::new(i4_szarr_ty, new_arr));
+                        stack.push(TypedValue::new(szarr_ty, new_arr));
                     }
                     _ => unimplemented!(),
                 }

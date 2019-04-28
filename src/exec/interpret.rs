@@ -84,13 +84,22 @@ impl<'a> Interpreter<'a> {
                 Instruction::Ldloc_0 => self.stack_push(locals[0].clone()),
                 Instruction::Ldloc_1 => self.stack_push(locals[1].clone()),
                 Instruction::Ldloc_2 => self.stack_push(locals[2].clone()),
+                Instruction::Ldloc_3 => self.stack_push(locals[3].clone()),
+                Instruction::Ldloc_S { n } => self.stack_push(locals[*n as usize].clone()),
                 Instruction::Ldfld { table, entry } => self.instr_ldfld(*table, *entry),
-                Instruction::Ldelem_I4 => self.instr_ldelem_i4(),
+                Instruction::Ldelem_U1 => self.instr_ldelem_in(),
+                Instruction::Ldelem_I1 => self.instr_ldelem_in(),
+                Instruction::Ldelem_I4 => self.instr_ldelem_in(),
                 Instruction::Stloc_0 => locals[0] = self.stack_pop(),
                 Instruction::Stloc_1 => locals[1] = self.stack_pop(),
                 Instruction::Stloc_2 => locals[2] = self.stack_pop(),
+                Instruction::Stloc_3 => locals[3] = self.stack_pop(),
+                Instruction::Stloc_S { n } => locals[*n as usize] = self.stack_pop(),
                 Instruction::Stfld { table, entry } => self.instr_stfld(*table, *entry),
-                Instruction::Stelem_I4 => self.instr_stelem_i4(),
+                Instruction::Stelem_I1 => self.instr_stelem_in(),
+                Instruction::Stelem_I4 => self.instr_stelem_in(),
+                Instruction::Ldlen => self.instr_ldlen(),
+                Instruction::Conv_I4 => {} // TODO
                 Instruction::Pop => self.stack_ptr -= 1,
                 Instruction::Dup => self.stack_dup(),
                 Instruction::Bge { target } => self.instr_bge(*target),
@@ -185,18 +194,25 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn instr_ldelem_i4(&mut self) {
+    fn instr_ldelem_in(&mut self) {
         let index = self.stack_pop();
         let array = self.stack_pop();
         let value = array.as_array().unwrap().borrow()[index.as_int32().unwrap() as usize].clone();
         self.stack_push(value);
     }
 
-    fn instr_stelem_i4(&mut self) {
+    fn instr_stelem_in(&mut self) {
         let value = self.stack_pop();
         let index = self.stack_pop();
         let array = self.stack_pop();
         array.as_array().unwrap().borrow_mut()[index.as_int32().unwrap() as usize] = value;
+    }
+
+    fn instr_ldlen(&mut self) {
+        let array = self.stack_pop();
+        self.stack_push(Value::Int32(
+            array.as_array().unwrap().borrow_mut().len() as i32
+        ))
     }
 
     fn instr_call(&mut self, table: usize, entry: usize) {
@@ -358,6 +374,13 @@ impl<'a> Interpreter<'a> {
                     ty_name.as_str(),
                 ) {
                     ("mscorlib", "System", "Int32") => {
+                        self.stack_push(Value::Array(Rc::new(RefCell::new(
+                            repeat_with(|| Value::Int32(0))
+                                .take(val.as_int32().unwrap() as usize)
+                                .collect(),
+                        ))))
+                    }
+                    ("mscorlib", "System", "Boolean") => {
                         self.stack_push(Value::Array(Rc::new(RefCell::new(
                             repeat_with(|| Value::Int32(0))
                                 .take(val.as_int32().unwrap() as usize)

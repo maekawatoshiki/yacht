@@ -111,6 +111,19 @@ public class Hello {
     return true;
   }
 
+  static void eratosthenes_sieve(int max) {
+    bool[] a = new bool[max];
+    a[0] = false;
+    for (int i = 1; i < max; i++)
+      a[i] = true;
+    for (int i = 0; i * i < max; i++) 
+      if (a[i])
+        for (int k = i + 1; (i + 1) * k <= max; k++)
+          a[(i + 1) * k - 1] = false;
+    for (int i = 0; i < max; i++) 
+      if (a[i]) Console.WriteLine(i + 1);
+  }
+
   public static void Main() {
     Console.WriteLine("hello world");
     
@@ -127,5 +140,7 @@ public class Hello {
     
     Calc calc = new Calc("1*2+3+4*5");
     calc.Eval();
+
+    eratosthenes_sieve(100);
   }
 }
