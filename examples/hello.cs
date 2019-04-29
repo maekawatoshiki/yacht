@@ -129,7 +129,7 @@ public class Hello {
     
     Console.WriteLine(fibo(10));
     
-    for (int i = 2; i < 10; i++) {
+    for (int i = 2; i < 100; i++) {
       if (is_prime(i)) Console.WriteLine(i);
     }
     
@@ -140,7 +140,7 @@ public class Hello {
     
     Calc calc = new Calc("1*2+3+4*5");
     calc.Eval();
-
+    
     eratosthenes_sieve(100);
   }
 }

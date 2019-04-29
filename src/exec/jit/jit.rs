@@ -189,7 +189,7 @@ impl<'a> JITCompiler<'a> {
             if LLVMIsATerminatorInst(LLVMGetLastInstruction(iter_bb)) == ptr::null_mut() {
                 let terminator_builder = LLVMCreateBuilderInContext(self.context);
                 LLVMPositionBuilderAtEnd(terminator_builder, iter_bb);
-                LLVMBuildRetVoid(self.builder);
+                LLVMBuildRetVoid(terminator_builder);
             }
             iter_bb = LLVMGetNextBasicBlock(iter_bb);
         }
@@ -284,7 +284,7 @@ impl<'a> JITCompiler<'a> {
                 let terminator_builder = LLVMCreateBuilderInContext(self.context);
                 LLVMPositionBuilderAtEnd(terminator_builder, iter_bb);
                 if LLVMGetTypeKind(ret_ty) == llvm::LLVMTypeKind::LLVMVoidTypeKind {
-                    LLVMBuildRetVoid(self.builder);
+                    LLVMBuildRetVoid(terminator_builder);
                 } else {
                     LLVMBuildRet(terminator_builder, LLVMConstNull(ret_ty));
                 }
@@ -516,6 +516,8 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldc_I4_1 => push_i4!(1),
                 Instruction::Ldc_I4_2 => push_i4!(2),
                 Instruction::Ldc_I4_3 => push_i4!(3),
+                Instruction::Ldc_I4_4 => push_i4!(4),
+                Instruction::Ldc_I4_8 => push_i4!(8),
                 Instruction::Ldc_I4_S { n } => push_i4!(*n),
                 Instruction::Ldc_I4 { n } => push_i4!(*n),
                 Instruction::Ldloc_0 => ldloc!(0),
@@ -542,6 +544,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldarg_0 => ldarg!(0),
                 Instruction::Ldarg_1 => ldarg!(1),
                 Instruction::Ldarg_2 => ldarg!(2),
+                Instruction::Ldarg_3 => ldarg!(3),
                 Instruction::Ldlen => self.gen_instr_ldlen(&mut stack),
                 Instruction::Conv_I4 => self.gen_instr_conv_i4(&mut stack),
                 Instruction::Pop => {

@@ -42,8 +42,13 @@ fn main() {
     pe_file_reader.setup_all_class(&mut image);
     let method = image.get_entry_method();
     image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
-    let mut interpreter = interpret::Interpreter::new(&mut image);
-    interpreter.interpret(&method, &[]);
+
+    #[cfg(debug_assertions)]
+    {
+        let mut interpreter = interpret::Interpreter::new(&mut image);
+        interpreter.interpret(&method, &[]);
+    }
+
     unsafe {
         let mut jit = jit::jit::JITCompiler::new(&mut image);
         let main = jit.generate_main(&method);

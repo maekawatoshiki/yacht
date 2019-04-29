@@ -40,23 +40,27 @@ impl CFGMaker {
                 | Instruction::Bne_un { target }
                 | Instruction::Brfalse { target }
                 | Instruction::Brtrue { target } => {
-                    map.insert(
-                        pc,
-                        BrKind::ConditionalJmp {
+                    map.entry(pc)
+                        .or_insert_with(|| vec![])
+                        .push(BrKind::ConditionalJmp {
                             destinations: vec![*target, pc + 1],
-                        },
-                    );
-                    map.insert(*target, BrKind::BlockStart);
-                    map.insert(pc + 1, BrKind::BlockStart);
+                        });
+                    map.entry(*target)
+                        .or_insert_with(|| vec![])
+                        .push(BrKind::BlockStart);
+                    map.entry(pc + 1)
+                        .or_insert_with(|| vec![])
+                        .push(BrKind::BlockStart);
                 }
                 Instruction::Br { target } => {
-                    map.insert(
-                        pc,
-                        BrKind::UnconditionalJmp {
+                    map.entry(pc)
+                        .or_insert_with(|| vec![])
+                        .push(BrKind::UnconditionalJmp {
                             destination: *target,
-                        },
-                    );
-                    map.insert(*target, BrKind::BlockStart);
+                        });
+                    map.entry(*target)
+                        .or_insert_with(|| vec![])
+                        .push(BrKind::BlockStart);
                 }
                 _ => {}
             }
@@ -65,31 +69,33 @@ impl CFGMaker {
         let mut start = Some(0);
         let mut blocks = vec![];
 
-        for (key, kind) in map {
-            match kind {
-                BrKind::BlockStart => {
-                    if start.is_some() && start.unwrap() < code.len() && start.unwrap() < key {
+        for (key, kind_list) in map {
+            for kind in kind_list {
+                match kind {
+                    BrKind::BlockStart => {
+                        if start.is_some() && start.unwrap() < key {
+                            blocks.push(BasicBlock {
+                                code: code[start.unwrap()..key].to_vec(),
+                                start: start.unwrap(),
+                                kind: BrKind::JmpRequired { destination: key },
+                                generated: false,
+                            });
+                        }
+                        start = Some(key);
+                    }
+                    BrKind::ConditionalJmp { .. } | BrKind::UnconditionalJmp { .. }
+                        if start.is_some() && start.unwrap() <= key =>
+                    {
                         blocks.push(BasicBlock {
-                            code: code[start.unwrap()..key].to_vec(),
+                            code: code[start.unwrap()..key + 1].to_vec(),
                             start: start.unwrap(),
-                            kind: BrKind::JmpRequired { destination: key },
+                            kind,
                             generated: false,
                         });
+                        start = None;
                     }
-                    start = Some(key);
+                    _ => {}
                 }
-                BrKind::ConditionalJmp { .. } | BrKind::UnconditionalJmp { .. }
-                    if start.is_some() && start.unwrap() < code.len() && start.unwrap() < key =>
-                {
-                    blocks.push(BasicBlock {
-                        code: code[start.unwrap()..key + 1].to_vec(),
-                        start: start.unwrap(),
-                        kind,
-                        generated: false,
-                    });
-                    start = None;
-                }
-                _ => {}
             }
         }
 
