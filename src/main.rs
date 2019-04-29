@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn pe_file_reader() {
-        for filename in &["./examples/hello.exe"] {
+        for filename in &["./examples/hello.exe", "./examples/game_of_life.exe"] {
             let mut pe_file_reader = file_reader::PEFileReader::new(filename).unwrap();
             let mut image = pe_file_reader.create_image().unwrap();
             pe_file_reader.setup_all_class(&mut image);
