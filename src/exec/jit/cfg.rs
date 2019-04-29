@@ -30,6 +30,12 @@ impl CFGMaker {
     pub fn make_basic_blocks(&mut self, code: &[Instruction]) -> Vec<BasicBlock> {
         let mut map = BTreeMap::new();
 
+        macro_rules! add_entry {
+            ($k:expr, $v:expr) => {{
+                map.entry($k).or_insert_with(|| vec![]).push($v)
+            }};
+        }
+
         for (pc, instr) in code.iter().enumerate() {
             match instr {
                 Instruction::Bge { target }
@@ -40,27 +46,23 @@ impl CFGMaker {
                 | Instruction::Bne_un { target }
                 | Instruction::Brfalse { target }
                 | Instruction::Brtrue { target } => {
-                    map.entry(pc)
-                        .or_insert_with(|| vec![])
-                        .push(BrKind::ConditionalJmp {
-                            destinations: vec![*target, pc + 1],
-                        });
-                    map.entry(*target)
-                        .or_insert_with(|| vec![])
-                        .push(BrKind::BlockStart);
-                    map.entry(pc + 1)
-                        .or_insert_with(|| vec![])
-                        .push(BrKind::BlockStart);
+                    add_entry!(
+                        pc,
+                        BrKind::ConditionalJmp {
+                            destinations: vec![*target, pc + 1]
+                        }
+                    );
+                    add_entry!(*target, BrKind::BlockStart);
+                    add_entry!(pc + 1, BrKind::BlockStart);
                 }
                 Instruction::Br { target } => {
-                    map.entry(pc)
-                        .or_insert_with(|| vec![])
-                        .push(BrKind::UnconditionalJmp {
+                    add_entry!(
+                        pc,
+                        BrKind::UnconditionalJmp {
                             destination: *target,
-                        });
-                    map.entry(*target)
-                        .or_insert_with(|| vec![])
-                        .push(BrKind::BlockStart);
+                        }
+                    );
+                    add_entry!(*target, BrKind::BlockStart);
                 }
                 _ => {}
             }

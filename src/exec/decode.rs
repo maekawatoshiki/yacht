@@ -59,6 +59,9 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::LDC_I4_2 => iseq.push(Instruction::Ldc_I4_2),
                 il_instr::LDC_I4_3 => iseq.push(Instruction::Ldc_I4_3),
                 il_instr::LDC_I4_4 => iseq.push(Instruction::Ldc_I4_4),
+                il_instr::LDC_I4_5 => iseq.push(Instruction::Ldc_I4_5),
+                il_instr::LDC_I4_6 => iseq.push(Instruction::Ldc_I4_6),
+                il_instr::LDC_I4_7 => iseq.push(Instruction::Ldc_I4_7),
                 il_instr::LDC_I4_8 => iseq.push(Instruction::Ldc_I4_8),
                 il_instr::LDC_I4_S => {
                     let n = self.read_u8()?;

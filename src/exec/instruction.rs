@@ -7,6 +7,9 @@ pub enum Instruction {
     Ldc_I4_2,
     Ldc_I4_3,
     Ldc_I4_4,
+    Ldc_I4_5,
+    Ldc_I4_6,
+    Ldc_I4_7,
     Ldc_I4_8,
     Ldc_I4_S { n: i32 },
     Ldc_I4 { n: i32 },
@@ -67,6 +70,9 @@ pub mod il_instr {
     pub const LDC_I4_2 : u8 = 0x18;
     pub const LDC_I4_3 : u8 = 0x19;
     pub const LDC_I4_4 : u8 = 0x1a;
+    pub const LDC_I4_5 : u8 = 0x1b;
+    pub const LDC_I4_6 : u8 = 0x1c;
+    pub const LDC_I4_7 : u8 = 0x1d;
     pub const LDC_I4_8 : u8 = 0x1e;
     pub const LDC_I4_S : u8 = 0x1f;
     pub const LDC_I4   : u8 = 0x20;
@@ -124,7 +130,8 @@ pub mod il_instr {
              | BRTRUE | BLE | BEQ |
             LDC_I4 => 5, 
             LDC_I4_0 | LDC_I4_1 | LDC_I4_2 | LDC_I4_3 
-             | LDC_I4_4 | LDC_I4_8 |
+             | LDC_I4_4 | LDC_I4_5 | LDC_I4_6 
+             | LDC_I4_7 | LDC_I4_8 |
             LDARG_0 | LDARG_1 | LDARG_2 | LDARG_3 | 
             LDLOC_0 | LDLOC_1 | LDLOC_2 | LDLOC_3 |
             LDELEM_I4 | LDELEM_I1 | LDELEM_U1 |

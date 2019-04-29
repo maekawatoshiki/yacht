@@ -365,15 +365,11 @@ impl<'a> JITCompiler<'a> {
         macro_rules! cur_block_mut { () => {{ &mut blocks[idx] }}; };
 
         fn find_block(start: usize, blocks: &[BasicBlock]) -> Option<usize> {
-            blocks.iter().enumerate().find_map(
-                |(i, block)| {
-                    if block.start == start {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                },
-            )
+            blocks
+                .iter()
+                .enumerate()
+                .find(|(_, block)| block.start == start)
+                .map_or(None, |(i, _)| Some(i))
         }
 
         if cur_block!().generated {
@@ -392,11 +388,8 @@ impl<'a> JITCompiler<'a> {
             BrKind::ConditionalJmp { destinations } => {
                 let mut d = 0;
                 for dst in destinations.clone() {
-                    if let Some(i) = find_block(dst, blocks) {
-                        d = self.compile_block(blocks, i, stack.clone())?;
-                    } else {
-                        continue;
-                    };
+                    let i = find_block(dst, blocks).unwrap();
+                    d = self.compile_block(blocks, i, stack.clone())?;
                     // TODO: All ``d`` must be the same
                 }
                 Ok(d)
@@ -412,10 +405,7 @@ impl<'a> JITCompiler<'a> {
             BrKind::JmpRequired { destination } => {
                 let src_bb = self.get_basic_block(cur_block!().start).retrieve();
                 if cur_bb_has_no_terminator(self.builder) {
-                    let bb = self
-                        .get_basic_block(*destination)
-                        .set_positioned()
-                        .retrieve();
+                    let bb = self.get_basic_block(*destination).retrieve();
                     LLVMBuildBr(self.builder, bb);
                 }
                 self.phi_stack
@@ -517,6 +507,9 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldc_I4_2 => push_i4!(2),
                 Instruction::Ldc_I4_3 => push_i4!(3),
                 Instruction::Ldc_I4_4 => push_i4!(4),
+                Instruction::Ldc_I4_5 => push_i4!(5),
+                Instruction::Ldc_I4_6 => push_i4!(6),
+                Instruction::Ldc_I4_7 => push_i4!(7),
                 Instruction::Ldc_I4_8 => push_i4!(8),
                 Instruction::Ldc_I4_S { n } => push_i4!(*n),
                 Instruction::Ldc_I4 { n } => push_i4!(*n),
