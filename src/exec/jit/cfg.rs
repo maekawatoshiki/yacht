@@ -30,9 +30,17 @@ impl CFGMaker {
     pub fn make_basic_blocks(&mut self, code: &[Instruction]) -> Vec<BasicBlock> {
         let mut map = BTreeMap::new();
 
-        macro_rules! add_entry {
+        macro_rules! jmp_at {
             ($k:expr, $v:expr) => {{
                 map.entry($k).or_insert_with(|| vec![]).push($v)
+            }};
+        }
+
+        macro_rules! new_block_starts_at {
+            ($k:expr) => {{
+                map.entry($k)
+                    .or_insert_with(|| vec![])
+                    .push(BrKind::BlockStart)
             }};
         }
 
@@ -46,23 +54,23 @@ impl CFGMaker {
                 | Instruction::Bne_un { target }
                 | Instruction::Brfalse { target }
                 | Instruction::Brtrue { target } => {
-                    add_entry!(
+                    jmp_at!(
                         pc,
                         BrKind::ConditionalJmp {
                             destinations: vec![*target, pc + 1]
                         }
                     );
-                    add_entry!(*target, BrKind::BlockStart);
-                    add_entry!(pc + 1, BrKind::BlockStart);
+                    new_block_starts_at!(*target);
+                    new_block_starts_at!(pc + 1);
                 }
                 Instruction::Br { target } => {
-                    add_entry!(
+                    jmp_at!(
                         pc,
                         BrKind::UnconditionalJmp {
                             destination: *target,
                         }
                     );
-                    add_entry!(*target, BrKind::BlockStart);
+                    new_block_starts_at!(*target);
                 }
                 _ => {}
             }
@@ -71,29 +79,34 @@ impl CFGMaker {
         let mut start = Some(0);
         let mut blocks = vec![];
 
+        macro_rules! create_block {
+            ($range:expr, $kind:expr) => {{
+                blocks.push(BasicBlock {
+                    code: code[$range].to_vec(),
+                    start: $range.start,
+                    kind: $kind,
+                    generated: false,
+                });
+            }};
+        }
+
         for (key, kind_list) in map {
             for kind in kind_list {
                 match kind {
                     BrKind::BlockStart => {
-                        if start.is_some() && start.unwrap() < key {
-                            blocks.push(BasicBlock {
-                                code: code[start.unwrap()..key].to_vec(),
-                                start: start.unwrap(),
-                                kind: BrKind::JmpRequired { destination: key },
-                                generated: false,
-                            });
+                        match start {
+                            Some(start) if start < key => {
+                                create_block!(start..key, BrKind::JmpRequired { destination: key })
+                            }
+                            _ => {}
                         }
-                        start = Some(key);
+                        start = Some(key)
                     }
-                    BrKind::ConditionalJmp { .. } | BrKind::UnconditionalJmp { .. }
-                        if start.is_some() && start.unwrap() <= key =>
-                    {
-                        blocks.push(BasicBlock {
-                            code: code[start.unwrap()..key + 1].to_vec(),
-                            start: start.unwrap(),
-                            kind,
-                            generated: false,
-                        });
+                    BrKind::ConditionalJmp { .. } | BrKind::UnconditionalJmp { .. } => {
+                        match start {
+                            Some(start) if start < key + 1 => create_block!(start..key + 1, kind),
+                            _ => {}
+                        }
                         start = None;
                     }
                     _ => {}
@@ -101,13 +114,8 @@ impl CFGMaker {
             }
         }
 
-        if start.is_some() && start.unwrap() < code.len() {
-            blocks.push(BasicBlock {
-                code: code[start.unwrap()..code.len()].to_vec(),
-                start: start.unwrap(),
-                kind: BrKind::BlockStart,
-                generated: false,
-            });
+        if let Some(start) = start {
+            create_block!(start..code.len(), BrKind::BlockStart);
         }
 
         blocks

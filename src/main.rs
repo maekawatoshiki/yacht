@@ -45,8 +45,8 @@ fn main() {
 
     #[cfg(debug_assertions)]
     {
-        let mut interpreter = interpret::Interpreter::new(&mut image);
-        interpreter.interpret(&method, &[]);
+        // let mut interpreter = interpret::Interpreter::new(&mut image);
+        // interpreter.interpret(&method, &[]);
     }
 
     unsafe {
