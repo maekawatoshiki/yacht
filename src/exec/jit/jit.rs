@@ -59,7 +59,7 @@ pub struct JITCompiler<'a> {
     pub builtin_functions: BuiltinFunctions,
     pub strings: Vec<*mut String>,
     pub class_types: ClassTypesHolder,
-    pub vtable_map: FxHashMap<VTablePtr, Vec<LLVMValueRef>>,
+    pub vtable_map: FxHashMap<String, FxHashMap<String, (LLVMValueRef, Vec<LLVMValueRef>)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -187,41 +187,44 @@ impl<'a> JITCompiler<'a> {
             self.compile_block(&mut basic_blocks, i, vec![]).unwrap();
         }
 
-        LLVMPositionBuilderAtEnd(self.builder, bb_before_entry);
-        for (vtable_ptr, vmethods) in &self.vtable_map {
-            if vmethods.len() == 0 {
-                continue;
-            }
+        // Set all the virtual functions to the appropriate vtable
 
-            let llvm_vtable = self.typecast(
-                llvm_const_ptr(self.context, *vtable_ptr as *mut u64),
-                LLVMPointerType(LLVMTypeOf(vmethods[0]), 0),
-            );
-            for (i, vmethod) in vmethods.iter().enumerate() {
-                let gep = LLVMBuildGEP(
-                    self.builder,
-                    llvm_vtable,
-                    vec![
-                        // llvm_const_int32(self.context, 0),
-                        llvm_const_int32(self.context, i as u64),
-                    ]
-                    .as_mut_ptr(),
-                    1,
-                    cstr0!(),
-                );
-                LLVMBuildStore(self.builder, *vmethod, gep);
+        LLVMPositionBuilderAtEnd(self.builder, bb_before_entry);
+
+        for (_, names) in &self.vtable_map {
+            for (_, (vtable, vmethods)) in names {
+                if vmethods.len() == 0 {
+                    continue;
+                }
+
+                let vtable = self.typecast(*vtable, LLVMPointerType(LLVMTypeOf(vmethods[0]), 0));
+                for (i, vmethod) in vmethods.iter().enumerate() {
+                    self.store2element(
+                        vtable,
+                        vec![llvm_const_int32(self.context, i as u64)],
+                        *vmethod,
+                    );
+                }
             }
         }
+
         LLVMBuildBr(self.builder, bb_entry);
+
+        // Append ``ret void`` if the last basic block is incomplete (have no ``ret``)
 
         let last_block = basic_blocks.last().unwrap();
         let bb_last = (*self.basic_blocks.get(&last_block.start).unwrap()).retrieve();
+
         LLVMPositionBuilderAtEnd(self.builder, bb_last);
+
         if cur_bb_has_no_terminator(self.builder) {
             LLVMBuildRetVoid(self.builder);
         }
 
+        // Append ``ret void`` to the incomplete basic blocks
+
         let mut iter_bb = LLVMGetFirstBasicBlock(func);
+
         while iter_bb != ptr::null_mut() {
             if LLVMIsATerminatorInst(LLVMGetLastInstruction(iter_bb)) == ptr::null_mut() {
                 let terminator_builder = LLVMCreateBuilderInContext(self.context);
@@ -230,6 +233,8 @@ impl<'a> JITCompiler<'a> {
             }
             iter_bb = LLVMGetNextBasicBlock(iter_bb);
         }
+
+        // Compile the functions in the queue
 
         while let Some((func, method)) = self.compile_queue.pop_front() {
             self.generate_func(func, &method);
@@ -276,6 +281,7 @@ impl<'a> JITCompiler<'a> {
         } else {
             0
         };
+
         for (i, ty) in method_ty.params.iter().enumerate() {
             LLVMBuildStore(
                 self.builder,
@@ -865,22 +871,14 @@ impl<'a> JITCompiler<'a> {
                 let name = self.image.get_string(f.name);
                 let class = &obj.ty.as_class().unwrap().borrow();
                 let idx = class.fields.iter().position(|f| &f.name == name).unwrap() + /*vtable=*/1;
-                let gep = LLVMBuildGEP(
-                    self.builder,
+                self.store2element(
                     obj.val,
                     vec![
                         llvm_const_int32(self.context, 0),
                         llvm_const_int32(self.context, idx as u64),
-                    ]
-                    .as_mut_ptr(),
-                    2,
-                    cstr0!(),
-                );
-                LLVMBuildStore(
-                    self.builder,
-                    self.typecast(val.val, LLVMGetElementType(LLVMTypeOf(gep))),
-                    gep,
-                );
+                    ],
+                    val.val,
+                )
             }
             e => unimplemented!("{:?}", e),
         }
@@ -960,23 +958,15 @@ impl<'a> JITCompiler<'a> {
         let value = stack.pop().unwrap().val;
         let index = stack.pop().unwrap().val;
         let array = stack.pop().unwrap().val;
-        let gep = LLVMBuildGEP(
-            self.builder,
+        self.store2element(
             array,
             vec![LLVMBuildAdd(
                 self.builder,
                 index,
                 llvm_const_int32(self.context, 4),
                 cstr0!(),
-            )]
-            .as_mut_ptr(),
-            1,
-            cstr0!(),
-        );
-        LLVMBuildStore(
-            self.builder,
-            self.typecast(value, LLVMGetElementType(LLVMTypeOf(gep))),
-            gep,
+            )],
+            value,
         );
     }
 
@@ -1074,34 +1064,21 @@ impl<'a> JITCompiler<'a> {
                 let func = self.get_function_by_rva(mdt.rva);
                 self.call_function(func, params);
 
-                let gep = LLVMBuildGEP(
-                    self.builder,
+                let class = method.class.borrow();
+                let vtable = self.ensure_all_virtual_methods_compiled(
+                    &class.name,
+                    &class.namespace,
+                    &class.vtable,
+                );
+
+                self.store2element(
                     new_obj,
                     vec![
                         llvm_const_int32(self.context, 0),
                         llvm_const_int32(self.context, 0),
-                    ]
-                    .as_mut_ptr(),
-                    2,
-                    cstr0!(),
+                    ],
+                    vtable,
                 );
-                let vtable_ptr = method.class.borrow().vtable_ptr;
-                LLVMBuildStore(
-                    self.builder,
-                    self.typecast(
-                        llvm_const_ptr(self.context, vtable_ptr as *mut u64),
-                        LLVMGetElementType(LLVMTypeOf(gep)),
-                    ),
-                    gep,
-                );
-
-                if !self.vtable_map.contains_key(&vtable_ptr) {
-                    let mut vmethods = vec![];
-                    for vmethod in &method.class.borrow().vtable {
-                        vmethods.push(self.get_function_by_rva(vmethod.borrow().rva));
-                    }
-                    self.vtable_map.insert(vtable_ptr, vmethods);
-                }
 
                 stack.push(TypedValue::new(
                     Type::new(ElementType::Class(method.class.clone())),
@@ -1209,6 +1186,54 @@ impl<'a> JITCompiler<'a> {
         }
         LLVMBuildTruncOrBitCast(self.builder, val, to, cstr0!())
     }
+
+    unsafe fn ensure_all_virtual_methods_compiled(
+        &mut self,
+        type_name: &String,
+        type_namespace: &String,
+        vtable: &Vec<MethodInfoRef>,
+    ) -> LLVMValueRef {
+        if let Some(name) = self.vtable_map.get(type_namespace) {
+            if let Some((vtable, _)) = name.get(type_name) {
+                return *vtable;
+            }
+        }
+
+        let vtable_ptr = Box::into_raw(vec![0u64; vtable.len()].into_boxed_slice()) as VTablePtr;
+        let llvm_vtable = llvm_const_ptr(self.context, vtable_ptr as *mut u64);
+        let mut vmethods = vec![];
+
+        for vmethod in vtable {
+            vmethods.push(self.get_function_by_rva(vmethod.borrow().rva));
+        }
+
+        self.vtable_map
+            .entry(type_namespace.clone())
+            .or_insert_with(|| FxHashMap::default())
+            .insert(type_name.clone(), (llvm_vtable, vmethods));
+
+        llvm_vtable
+    }
+
+    unsafe fn store2element(
+        &self,
+        obj: LLVMValueRef,
+        mut idx: Vec<LLVMValueRef>,
+        val: LLVMValueRef,
+    ) {
+        let gep = LLVMBuildGEP(
+            self.builder,
+            obj,
+            idx.as_mut_ptr(),
+            idx.len() as u32,
+            cstr0!(),
+        );
+        LLVMBuildStore(
+            self.builder,
+            self.typecast(val, LLVMGetElementType(LLVMTypeOf(gep))),
+            gep,
+        );
+    }
 }
 
 unsafe fn cur_bb_has_no_terminator(builder: LLVMBuilderRef) -> bool {
@@ -1236,11 +1261,6 @@ impl CastIntoLLVMType for Type {
                 compiler.get_class_type(class)
             }
             _ => unimplemented!(),
-            // &VariableType::Int => LLVMInt32TypeInContext(ctx),
-            // &VariableType::Double => LLVMDoubleTypeInContext(ctx),
-            // &VariableType::Void => LLVMVoidTypeInContext(ctx),
-            // &VariableType::Pointer => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
-            // &VariableType::Long => unimplemented!(),
         }
     }
 }

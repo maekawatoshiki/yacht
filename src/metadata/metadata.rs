@@ -470,14 +470,14 @@ impl Image {
                 Table::TypeDef(t) => {
                     class.borrow_mut().parent =
                         Some(self.class_cache.get(&(extends as u32)).unwrap().clone());
-                    println!(
+                    dprintln!(
                         "DEF: {} {}",
                         self.get_string(t.type_name),
                         self.get_string(t.type_namespace)
                     );
                 }
                 Table::TypeRef(t) => {
-                    println!(
+                    dprintln!(
                         "REF: {} {}",
                         self.get_string(t.type_name),
                         self.get_string(t.type_namespace)
