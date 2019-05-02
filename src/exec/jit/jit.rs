@@ -45,20 +45,21 @@ pub struct PhiStack {
 }
 
 pub struct JITCompiler<'a> {
-    image: &'a mut Image,
-    context: LLVMContextRef,
-    module: LLVMModuleRef,
-    builder: LLVMBuilderRef,
-    pass_mgr: LLVMPassManagerRef,
-    generating: Option<LLVMValueRef>,
-    generated: FxHashMap<u32, LLVMValueRef>, // RVA, Value
-    basic_blocks: FxHashMap<usize, BasicBlockInfo>,
-    phi_stack: FxHashMap<usize, Vec<PhiStack>>, // destination,
-    env: Environment,
-    compile_queue: VecDeque<(LLVMValueRef, MethodBody)>,
-    builtin_functions: BuiltinFunctions,
-    strings: Vec<*mut String>,
-    class_types: ClassTypesHolder,
+    pub image: &'a mut Image,
+    pub context: LLVMContextRef,
+    pub module: LLVMModuleRef,
+    pub builder: LLVMBuilderRef,
+    pub pass_mgr: LLVMPassManagerRef,
+    pub generating: Option<LLVMValueRef>,
+    pub generated: FxHashMap<u32, LLVMValueRef>, // RVA, Value
+    pub basic_blocks: FxHashMap<usize, BasicBlockInfo>,
+    pub phi_stack: FxHashMap<usize, Vec<PhiStack>>, // destination,
+    pub env: Environment,
+    pub compile_queue: VecDeque<(LLVMValueRef, MethodInfoRef)>,
+    pub builtin_functions: BuiltinFunctions,
+    pub strings: Vec<*mut String>,
+    pub class_types: ClassTypesHolder,
+    pub vtable_map: FxHashMap<VTablePtr, Vec<LLVMValueRef>>,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +109,7 @@ impl<'a> JITCompiler<'a> {
             strings: vec![],
             class_types: ClassTypesHolder::new(),
             builtin_functions: BuiltinFunctions::new(context, module),
+            vtable_map: FxHashMap::default(),
         }
     }
 
@@ -130,10 +132,12 @@ impl<'a> JITCompiler<'a> {
         llvm::execution_engine::LLVMRunFunction(ee, main, 0, vec![].as_mut_ptr());
     }
 
-    pub unsafe fn generate_main(&mut self, method: &MethodBody) -> LLVMValueRef {
+    pub unsafe fn generate_main(&mut self, method_ref: &MethodInfoRef) -> LLVMValueRef {
         self.basic_blocks.clear();
         self.phi_stack.clear();
         self.env = Environment::new();
+
+        let method = method_ref.borrow();
 
         let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let (ret_ty, mut params_ty): (LLVMTypeRef, Vec<LLVMTypeRef>) =
@@ -147,6 +151,12 @@ impl<'a> JITCompiler<'a> {
         );
 
         self.generating = Some(func);
+
+        let bb_before_entry = LLVMAppendBasicBlockInContext(
+            self.context,
+            func,
+            CString::new("initialize").unwrap().as_ptr(),
+        );
 
         let bb_entry = LLVMAppendBasicBlockInContext(
             self.context,
@@ -176,6 +186,33 @@ impl<'a> JITCompiler<'a> {
         for i in 0..basic_blocks.len() {
             self.compile_block(&mut basic_blocks, i, vec![]).unwrap();
         }
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_before_entry);
+        for (vtable_ptr, vmethods) in &self.vtable_map {
+            if vmethods.len() == 0 {
+                continue;
+            }
+
+            let llvm_vtable = self.typecast(
+                llvm_const_ptr(self.context, *vtable_ptr as *mut u64),
+                LLVMPointerType(LLVMTypeOf(vmethods[0]), 0),
+            );
+            for (i, vmethod) in vmethods.iter().enumerate() {
+                let gep = LLVMBuildGEP(
+                    self.builder,
+                    llvm_vtable,
+                    vec![
+                        // llvm_const_int32(self.context, 0),
+                        llvm_const_int32(self.context, i as u64),
+                    ]
+                    .as_mut_ptr(),
+                    1,
+                    cstr0!(),
+                );
+                LLVMBuildStore(self.builder, *vmethod, gep);
+            }
+        }
+        LLVMBuildBr(self.builder, bb_entry);
 
         let last_block = basic_blocks.last().unwrap();
         let bb_last = (*self.basic_blocks.get(&last_block.start).unwrap()).retrieve();
@@ -210,10 +247,11 @@ impl<'a> JITCompiler<'a> {
         func
     }
 
-    unsafe fn generate_func(&mut self, func: LLVMValueRef, method: &MethodBody) {
+    unsafe fn generate_func(&mut self, func: LLVMValueRef, method_ref: &MethodInfoRef) {
         self.generating = Some(func);
         self.env = Environment::new();
 
+        let method = method_ref.borrow();
         let method_ty = method.ty.as_fnptr().unwrap();
         let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let ret_ty = LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(func)));
@@ -666,13 +704,18 @@ impl<'a> JITCompiler<'a> {
     unsafe fn get_function_by_rva(
         &mut self,
         rva: u32,
-        method_sig: &MethodSignature,
+        // method_sig: &MethodSignature,
     ) -> LLVMValueRef {
         if let Some(f) = self.generated.get(&rva) {
             return *f;
         }
+        // let method = self.image.get_method(mdt.rva).borrow();
+        // let method_sig = method.ty.as_fnptr().unwrap();
 
-        let method = self.image.get_method(rva);
+        let method_ref = self.image.get_method(rva);
+        let method = method_ref.borrow();
+        let method_sig = method.ty.as_fnptr().unwrap();
+
         let ret_ty = method_sig.ret.to_llvmty(self);
         let mut params_ty = method_sig
             .params
@@ -692,7 +735,7 @@ impl<'a> JITCompiler<'a> {
         );
 
         self.generated.insert(rva, func);
-        self.compile_queue.push_back((func, method.clone()));
+        self.compile_queue.push_back((func, method_ref.clone()));
 
         func
     }
@@ -715,6 +758,58 @@ impl<'a> JITCompiler<'a> {
                 .map(|tv| tv.val)
                 .collect();
             let ret = unsafe { compiler.call_function(func, params) };
+            if method_sig.ret != Type::void_ty() {
+                stack.push(TypedValue::new(method_sig.ret.clone(), ret));
+            }
+        };
+
+        unsafe fn callvirt(
+            compiler: &mut JITCompiler,
+            stack: &mut Vec<TypedValue>,
+            method: &MethodBody,
+            method_sig: &MethodSignature,
+            ty: LLVMTypeRef,
+        ) {
+            // let has_this = if method_sig.has_this() { 1 } else { 0 };
+            let params: Vec<LLVMValueRef> = stack
+                .drain(stack.len() - method_sig.params.len() - /*obj*/1..)
+                .map(|tv| tv.val)
+                .collect();
+            let obj = params[0];
+
+            let gep = LLVMBuildGEP(
+                compiler.builder,
+                obj,
+                vec![
+                    llvm_const_int32(compiler.context, 0),
+                    llvm_const_int32(compiler.context, 0),
+                ]
+                .as_mut_ptr(),
+                2,
+                cstr0!(),
+            );
+            let vtable = LLVMBuildLoad(compiler.builder, gep, cstr0!());
+            let i = method
+                .class
+                .borrow()
+                .vtable
+                .iter()
+                .position(|m| m.borrow().name == method.name)
+                .unwrap();
+            let gep = LLVMBuildGEP(
+                compiler.builder,
+                vtable,
+                vec![
+                    // llvm_const_int32(self.context, 0),
+                    llvm_const_int32(compiler.context, i as u64),
+                ]
+                .as_mut_ptr(),
+                1,
+                cstr0!(),
+            );
+            let func = compiler.typecast(LLVMBuildLoad(compiler.builder, gep, cstr0!()), ty);
+
+            let ret = compiler.call_function(func, params);
             if method_sig.ret != Type::void_ty() {
                 stack.push(TypedValue::new(method_sig.ret.clone(), ret));
             }
@@ -747,10 +842,15 @@ impl<'a> JITCompiler<'a> {
                 }
             }
             Table::MethodDef(mdt) => {
-                let method = self.image.get_method(mdt.rva);
+                let func = self.get_function_by_rva(mdt.rva);
+                let method_ref = self.image.get_method(mdt.rva);
+                let method = method_ref.borrow();
                 let method_sig = method.ty.as_fnptr().unwrap();
-                let func = self.get_function_by_rva(mdt.rva, &method_sig);
-                call(self, stack, func, method_sig);
+                if method.is_virtual() {
+                    callvirt(self, stack, &method, method_sig, LLVMTypeOf(func));
+                } else {
+                    call(self, stack, func, method_sig);
+                }
             }
             e => unimplemented!("call: unimplemented: {:?}", e),
         }
@@ -764,7 +864,7 @@ impl<'a> JITCompiler<'a> {
             Table::Field(f) => {
                 let name = self.image.get_string(f.name);
                 let class = &obj.ty.as_class().unwrap().borrow();
-                let idx = class.fields.iter().position(|f| &f.name == name).unwrap();
+                let idx = class.fields.iter().position(|f| &f.name == name).unwrap() + /*vtable=*/1;
                 let gep = LLVMBuildGEP(
                     self.builder,
                     obj.val,
@@ -806,7 +906,7 @@ impl<'a> JITCompiler<'a> {
                         obj.val,
                         vec![
                             llvm_const_int32(self.context, 0),
-                            llvm_const_int32(self.context, idx as u64),
+                            llvm_const_int32(self.context, idx as u64 + /*vtable=*/1),
                         ]
                         .as_mut_ptr(),
                         2,
@@ -948,10 +1048,10 @@ impl<'a> JITCompiler<'a> {
         match table {
             Table::MemberRef(_mrt) => {} // TODO
             Table::MethodDef(mdt) => {
-                let method = self.image.get_method(mdt.rva);
+                let method_ref = self.image.get_method(mdt.rva);
+                let method = method_ref.borrow();
                 let method_sig = method.ty.as_fnptr().unwrap();
                 let llvm_class_ty = self.get_class_type(&method.class.borrow());
-                let mut params_ty = vec![llvm_class_ty];
                 let new_obj = LLVMBuildTruncOrBitCast(
                     self.builder,
                     self.call_function(
@@ -971,32 +1071,40 @@ impl<'a> JITCompiler<'a> {
                         .map(|tv| tv.val)
                         .collect(),
                 );
-                let func = if let Some(llvm_func) = self.generated.get(&mdt.rva) {
-                    *llvm_func
-                } else {
-                    let method = self.image.get_method(mdt.rva);
-                    let ret_ty = method_sig.ret.to_llvmty(self);
-                    params_ty.append(
-                        &mut method_sig
-                            .params
-                            .iter()
-                            .map(|ty| ty.to_llvmty(self))
-                            .collect::<Vec<LLVMTypeRef>>(),
-                    );
-                    let func_ty =
-                        LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
-                    let func = LLVMAddFunction(
-                        self.module,
-                        CString::new(method.name.as_str()).unwrap().as_ptr(),
-                        func_ty,
-                    );
-                    self.generated.insert(mdt.rva, func);
-                    self.compile_queue.push_back((func, method.clone()));
-                    func
-                };
+                let func = self.get_function_by_rva(mdt.rva);
                 self.call_function(func, params);
+
+                let gep = LLVMBuildGEP(
+                    self.builder,
+                    new_obj,
+                    vec![
+                        llvm_const_int32(self.context, 0),
+                        llvm_const_int32(self.context, 0),
+                    ]
+                    .as_mut_ptr(),
+                    2,
+                    cstr0!(),
+                );
+                let vtable_ptr = method.class.borrow().vtable_ptr;
+                LLVMBuildStore(
+                    self.builder,
+                    self.typecast(
+                        llvm_const_ptr(self.context, vtable_ptr as *mut u64),
+                        LLVMGetElementType(LLVMTypeOf(gep)),
+                    ),
+                    gep,
+                );
+
+                if !self.vtable_map.contains_key(&vtable_ptr) {
+                    let mut vmethods = vec![];
+                    for vmethod in &method.class.borrow().vtable {
+                        vmethods.push(self.get_function_by_rva(vmethod.borrow().rva));
+                    }
+                    self.vtable_map.insert(vtable_ptr, vmethods);
+                }
+
                 stack.push(TypedValue::new(
-                    Type::new(ElementType::Class(method.class)),
+                    Type::new(ElementType::Class(method.class.clone())),
                     new_obj,
                 ))
             }
@@ -1029,18 +1137,29 @@ impl<'a> JITCompiler<'a> {
         if let Some(ty) = self.class_types.get(class) {
             return ty;
         }
+
         let class_ty = LLVMStructCreateNamed(
             self.context,
             CString::new(class.name.as_str()).unwrap().as_ptr(),
         );
         let class_ptr_ty = LLVMPointerType(class_ty, 0);
+
         self.class_types.add(class, class_ptr_ty);
+
         let mut fields_ty = class
             .fields
             .iter()
             .map(|ClassField { ty, .. }| ty.to_llvmty(self))
             .collect::<Vec<LLVMTypeRef>>();
+
+        // vtable always occupies the first field
+        fields_ty.insert(
+            0,
+            LLVMPointerType(LLVMPointerType(LLVMInt8TypeInContext(self.context), 0), 0),
+        );
+
         LLVMStructSetBody(class_ty, fields_ty.as_mut_ptr(), fields_ty.len() as u32, 0);
+
         class_ptr_ty
     }
 

@@ -6,7 +6,7 @@ pub struct Type {
     pub base: ElementType,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum ElementType {
     Void,
     Boolean,
@@ -203,6 +203,25 @@ impl<'a> SignatureParser<'a> {
 impl MethodSignature {
     pub fn has_this(&self) -> bool {
         self.info & 0x20 > 0
+    }
+}
+
+impl ::std::fmt::Debug for ElementType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        write!(
+            f,
+            "ElementType::{}",
+            match self {
+                ElementType::Class(c) => format!("Class({})", c.borrow().name),
+                ElementType::Void => "Void".to_string(),
+                ElementType::Boolean => "Boolean".to_string(),
+                ElementType::Char => "Char".to_string(),
+                ElementType::I4 => "I4".to_string(),
+                ElementType::String => "String".to_string(),
+                ElementType::SzArray(s) => format!("SzArray({:?})", s),
+                ElementType::FnPtr(f) => format!("FnPtr({:?})", f),
+            }
+        )
     }
 }
 

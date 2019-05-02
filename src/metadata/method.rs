@@ -2,6 +2,7 @@ use crate::{
     exec::instruction::Instruction,
     metadata::{class::*, signature::Type},
 };
+use std::{cell::RefCell, rc::Rc};
 
 pub const TINY_FORMAT: u8 = 0x2;
 pub const FAT_FORMAT: u8 = 0x3;
@@ -29,14 +30,40 @@ pub enum MethodHeaderType {
 //     }
 // }
 
-#[derive(Debug, Clone)]
+pub type MethodInfoRef = Rc<RefCell<MethodBody>>;
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MethodBody {
+    pub rva: u32,
+    pub impl_flags: u16,
+    pub flags: u16,
     pub name: String,
     pub header_ty: MethodHeaderType,
     pub ty: Type,
     pub locals_ty: Vec<Type>,
     pub body: Vec<Instruction>,
     pub class: ClassInfoRef,
+}
+
+impl MethodBody {
+    pub fn is_virtual(&self) -> bool {
+        self.flags & method_attributes_flags::VIRTUAL > 0
+    }
+
+    pub fn is_new_slot(&self) -> bool {
+        self.flags & method_attributes_flags::NEW_SLOT > 0
+    }
+
+    pub fn is_reuse_slot(&self) -> bool {
+        self.flags & method_attributes_flags::NEW_SLOT == 0
+    }
+}
+
+#[rustfmt::skip]
+pub mod method_attributes_flags {
+    // TODO: Implement all the flags
+    pub const VIRTUAL : u16 = 0x0040;
+    pub const NEW_SLOT: u16 = 0x0100;
 }
 
 // #[derive(Debug, Clone)]

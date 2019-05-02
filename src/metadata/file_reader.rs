@@ -117,68 +117,12 @@ impl PEFileReader {
         })
     }
 
-    pub fn setup_all_class(&mut self, image: &mut Image) {
-        let typedefs = &image.metadata.metadata_stream.tables[TableKind::TypeDef.into_num()];
-        let fields = &image.metadata.metadata_stream.tables[TableKind::Field.into_num()];
-        let methoddefs = &image.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()];
-        let mut methods_to_setup = vec![];
-        let mut fields_to_setup = vec![];
-
-        for (i, typedef) in typedefs.iter().enumerate() {
-            let typedef = retrieve!(typedef, Table::TypeDef);
-            let next_typedef = typedefs.get(i + 1);
-            let field_list_bgn = typedef.field_list as usize - 1;
-            let method_list_bgn = typedef.method_list as usize - 1;
-            let (field_list_end, method_list_end) =
-                next_typedef.map_or((fields.len(), methoddefs.len()), |table| {
-                    let td = retrieve!(table, Table::TypeDef);
-                    (td.field_list as usize - 1, td.method_list as usize - 1)
-                });
-            let class_info = Rc::new(RefCell::new(ClassInfo {
-                fields: vec![],
-                name: image.get_string(typedef.type_name).clone(),
-                namespace: image.get_string(typedef.type_namespace).clone(),
-            }));
-            image.class_cache.insert(
-                encode_typedef_or_ref_token(TableKind::TypeDef, i as u32 + 1),
-                class_info.clone(),
-            );
-            methods_to_setup.push((class_info.clone(), method_list_bgn..method_list_end));
-            fields_to_setup.push((class_info, field_list_bgn..field_list_end));
-        }
-
-        for (class, range) in fields_to_setup {
-            let fields: Vec<ClassField> = fields[range]
-                .iter()
-                .map(|t| {
-                    let ft = retrieve!(t, Table::Field);
-                    let name = image.get_string(ft.name).clone();
-                    let mut sig = image.get_blob(ft.signature).iter();
-                    assert_eq!(sig.next().unwrap(), &0x06);
-                    let ty = Type::into_type(image, &mut sig).unwrap();
-                    ClassField { name, ty }
-                })
-                .collect();
-            class.borrow_mut().fields = fields;
-        }
-
-        for (class, range) in methods_to_setup {
-            for methoddef in &methoddefs[range] {
-                let methoddef = retrieve!(methoddef, Table::MethodDef);
-                let method = self
-                    .read_method(image, class.clone(), methoddef.rva)
-                    .unwrap();
-                image.method_cache.insert(methoddef.rva, method.clone());
-            }
-        }
-    }
-
     pub fn read_method(
         &mut self,
         image: &Image,
         class: ClassInfoRef,
         rva: u32,
-    ) -> Option<MethodBody> {
+    ) -> Option<MethodInfoRef> {
         let text_section = image
             .cli_info
             .sections
@@ -198,15 +142,21 @@ impl PEFileReader {
         class: ClassInfoRef,
         rva: u32,
         start: u64,
-    ) -> Option<MethodBody> {
+    ) -> Option<MethodInfoRef> {
         self.reader.seek(SeekFrom::Start(start)).ok()?;
 
-        let (name, ty) = unsafe {
+        let (impl_flags, flags, name, ty) = unsafe {
             let MethodDefTable {
-                name, signature, ..
+                name,
+                signature,
+                impl_flags,
+                flags,
+                ..
             } = image.get_method_def_table_by_rva(rva).unwrap();
             let sig = image.metadata.blob.get(&(*signature as u32)).unwrap();
             (
+                *impl_flags,
+                *flags,
                 image.metadata.strings.get(&(*name as u32)).unwrap().clone(),
                 SignatureParser::new(sig)
                     .parse_method_def_sig(image)
@@ -221,14 +171,17 @@ impl PEFileReader {
                 let mut raw_body = vec![0u8; bytes];
                 self.read_bytes(raw_body.as_mut_slice())?;
                 let body = BytesToInstructions::new(&raw_body).convert()?;
-                Some(MethodBody {
+                Some(Rc::new(RefCell::new(MethodBody {
+                    rva,
+                    impl_flags,
+                    flags,
                     name,
                     header_ty,
                     body,
                     locals_ty: vec![],
                     ty,
                     class,
-                })
+                })))
             }
             MethodHeaderType::FatFormat {
                 code_size,
@@ -263,14 +216,17 @@ impl PEFileReader {
                 self.read_bytes(raw_body.as_mut_slice())?;
                 let body = BytesToInstructions::new(&raw_body).convert()?;
 
-                Some(MethodBody {
+                Some(Rc::new(RefCell::new(MethodBody {
+                    rva,
+                    impl_flags,
+                    flags,
                     name,
                     header_ty,
                     body,
                     locals_ty,
                     ty,
                     class,
-                })
+                })))
             }
         }
     }

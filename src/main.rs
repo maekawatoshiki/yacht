@@ -1,8 +1,5 @@
 extern crate yacht;
-use yacht::{
-    exec::{interpret, jit},
-    metadata::file_reader,
-};
+use yacht::{exec::jit, metadata::file_reader};
 
 extern crate clap;
 use clap::{App, Arg};
@@ -39,15 +36,9 @@ fn main() {
     );
 
     let mut image = expect!(pe_file_reader.create_image(), "Broken file");
-    pe_file_reader.setup_all_class(&mut image);
-    let method = image.get_entry_method();
     image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
-
-    #[cfg(debug_assertions)]
-    {
-        // let mut interpreter = interpret::Interpreter::new(&mut image);
-        // interpreter.interpret(&method, &[]);
-    }
+    image.setup_all_class();
+    let method = image.get_entry_method();
 
     unsafe {
         let mut jit = jit::jit::JITCompiler::new(&mut image);
@@ -59,21 +50,20 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
-    use yacht::{
-        exec::{interpret, jit},
-        metadata::file_reader,
-    };
+    use yacht::{exec::jit, metadata::file_reader};
 
     #[test]
     fn pe_file_reader() {
-        for filename in &["./examples/hello.exe", "./examples/game_of_life.exe"] {
+        for filename in &[
+            "./examples/hello.exe",
+            "./examples/game_of_life.exe",
+            "./examples/virtual.exe",
+        ] {
             let mut pe_file_reader = file_reader::PEFileReader::new(filename).unwrap();
             let mut image = pe_file_reader.create_image().unwrap();
-            pe_file_reader.setup_all_class(&mut image);
-            let method = image.get_entry_method();
             image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
-            let mut interpreter = interpret::Interpreter::new(&mut image);
-            interpreter.interpret(&method, &[]);
+            image.setup_all_class();
+            let method = image.get_entry_method();
             unsafe {
                 let mut jit = jit::jit::JITCompiler::new(&mut image);
                 let main = jit.generate_main(&method);
