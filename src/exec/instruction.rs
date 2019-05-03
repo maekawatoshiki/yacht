@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum Instruction {
+    Ldnull,
     Ldstr { us_offset: u32 },
     Ldc_I4_0,
     Ldc_I4_1,
@@ -52,6 +53,7 @@ pub enum Instruction {
     Add,
     Sub,
     Mul,
+    Div,
     Rem,
     Call { table: usize, entry: usize },
     CallVirt { table: usize, entry: usize },
@@ -62,6 +64,7 @@ pub enum Instruction {
 
 #[rustfmt::skip]
 pub mod il_instr {
+    pub const LDNULL   : u8 = 0x14;
     pub const LDSTR    : u8 = 0x72;
     pub const CALL     : u8 = 0x28;
     pub const CALLVIRT : u8 = 0x6f;
@@ -115,6 +118,7 @@ pub mod il_instr {
     pub const ADD      : u8 = 0x58;
     pub const SUB      : u8 = 0x59;
     pub const MUL      : u8 = 0x5a;
+    pub const DIV      : u8 = 0x5b;
     pub const REM      : u8 = 0x5d;
     pub const NEWOBJ   : u8 = 0x73;
     pub const NEWARR   : u8 = 0x8d;
@@ -122,7 +126,7 @@ pub mod il_instr {
 
     pub fn get_instr_size<'a>(instr: u8) -> usize {
         match instr {
-            LDSTR | 
+            LDNULL | LDSTR | 
             CALL | CALLVIRT |
             NEWOBJ | NEWARR | 
             STFLD | LDFLD |
@@ -137,7 +141,7 @@ pub mod il_instr {
             LDELEM_I4 | LDELEM_I1 | LDELEM_U1 |
             STLOC_0 | STLOC_1 | STLOC_2 | STLOC_3 |
             STELEM_I4 | STELEM_I1 |
-            ADD | SUB | MUL | REM |
+            ADD | SUB | MUL | DIV | REM |
             RET | POP | DUP |
             CONV_I4 |
             LDLEN => 1,

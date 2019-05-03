@@ -24,6 +24,7 @@ impl<'a> BytesToInstructions<'a> {
 
         while let Some((i, byte)) = self.iter.next() {
             match *byte {
+                il_instr::LDNULL => iseq.push(Instruction::Ldnull),
                 il_instr::LDSTR => {
                     let token = self.read_u32()?;
                     assert!(token & 0xff000000 == 0x70000000);
@@ -174,6 +175,7 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::ADD => iseq.push(Instruction::Add),
                 il_instr::SUB => iseq.push(Instruction::Sub),
                 il_instr::MUL => iseq.push(Instruction::Mul),
+                il_instr::DIV => iseq.push(Instruction::Div),
                 il_instr::REM => iseq.push(Instruction::Rem),
                 il_instr::RET => iseq.push(Instruction::Ret),
                 e => unimplemented!("{:?}", e),

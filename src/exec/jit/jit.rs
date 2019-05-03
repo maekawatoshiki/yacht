@@ -529,6 +529,7 @@ impl<'a> JITCompiler<'a> {
 
         for instr in code {
             match instr {
+                Instruction::Ldnull => push_i4!(0),
                 Instruction::Ldstr { us_offset } => stack.push(TypedValue::new(
                     Type::string_ty(),
                     llvm_const_ptr(self.context, {
@@ -598,6 +599,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Add => binop!(Add),
                 Instruction::Sub => binop!(Sub),
                 Instruction::Mul => binop!(Mul),
+                Instruction::Div => binop!(SDiv),
                 Instruction::Rem => binop!(SRem),
                 Instruction::Ret => {
                     let ret_ty =
