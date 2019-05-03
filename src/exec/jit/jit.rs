@@ -171,9 +171,11 @@ impl<'a> JITCompiler<'a> {
             self.get_local(i, Some(&ty));
         }
 
+        // Entry block is positioned
         self.basic_blocks
             .insert(0, BasicBlockInfo::Positioned(bb_entry));
 
+        // Other blocks are not positioned
         for block in &basic_blocks {
             if block.start > 0 {
                 self.basic_blocks.insert(
@@ -183,8 +185,16 @@ impl<'a> JITCompiler<'a> {
             }
         }
 
+        // Compile all the basic blocks
+
         for i in 0..basic_blocks.len() {
             self.compile_block(&mut basic_blocks, i, vec![]).unwrap();
+        }
+
+        // Compile the functions in the queue
+
+        while let Some((func, method)) = self.compile_queue.pop_front() {
+            self.generate_func(func, &method);
         }
 
         // Set all the virtual functions to the appropriate vtable
@@ -210,17 +220,6 @@ impl<'a> JITCompiler<'a> {
 
         LLVMBuildBr(self.builder, bb_entry);
 
-        // Append ``ret void`` if the last basic block is incomplete (have no ``ret``)
-
-        let last_block = basic_blocks.last().unwrap();
-        let bb_last = (*self.basic_blocks.get(&last_block.start).unwrap()).retrieve();
-
-        LLVMPositionBuilderAtEnd(self.builder, bb_last);
-
-        if cur_bb_has_no_terminator(self.builder) {
-            LLVMBuildRetVoid(self.builder);
-        }
-
         // Append ``ret void`` to the incomplete basic blocks
 
         let mut iter_bb = LLVMGetFirstBasicBlock(func);
@@ -232,12 +231,6 @@ impl<'a> JITCompiler<'a> {
                 LLVMBuildRetVoid(terminator_builder);
             }
             iter_bb = LLVMGetNextBasicBlock(iter_bb);
-        }
-
-        // Compile the functions in the queue
-
-        while let Some((func, method)) = self.compile_queue.pop_front() {
-            self.generate_func(func, &method);
         }
 
         when_debug!(LLVMDumpModule(self.module));
