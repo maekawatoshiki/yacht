@@ -49,16 +49,18 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, fs, rc::Rc};
     use yacht::{exec::jit, metadata::file_reader};
 
     #[test]
     fn pe_file_reader() {
-        for filename in &[
-            "./examples/hello.exe",
-            "./examples/game_of_life.exe",
-            "./examples/virtual.exe",
-        ] {
+        let paths = fs::read_dir("./examples").unwrap();
+        for entry in paths {
+            let path = entry.unwrap().path();
+            let filename = path.to_str().unwrap();
+            if !filename.ends_with(".exe") {
+                continue;
+            }
             let mut pe_file_reader = file_reader::PEFileReader::new(filename).unwrap();
             let mut image = pe_file_reader.create_image().unwrap();
             image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
