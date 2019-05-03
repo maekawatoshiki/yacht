@@ -10,6 +10,8 @@ jobs:
     steps:
       - checkout
       - run:
+          command: chown -R $USER:$USER /opt/yacht
+      - run:
           command: set -eux
       - run:
           command: apt-get update
