@@ -10,7 +10,7 @@ jobs:
     steps:
       - checkout
       - run:
-          command: chown -R $USER:$USER /opt/yacht
+          command: chown -R $USER:$USER /usr/local/bin
       - run:
           command: set -eux
       - run:
@@ -52,6 +52,6 @@ jobs:
             REPORT=$(find ./target/debug -maxdepth 1 -name 'yacht-*' -a ! -name '*.d')
             for file in $REPORT; do  
               echo $file
-              sudo /usr/local/bin/kcov --include-pattern=yacht/src --exclude-pattern=/.cargo ./target/cov "$file"
+              /usr/local/bin/kcov --include-pattern=yacht/src --exclude-pattern=/.cargo ./target/cov "$file"
             done
             bash <(curl -s https://codecov.io/bash) -s ./target/cov
