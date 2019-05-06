@@ -11,7 +11,7 @@ pub struct ClassInfo {
     pub fields: Vec<ClassField>,
     pub methods: Vec<MethodInfoRef>,
     pub parent: Option<ClassInfoRef>,
-    pub vtable: Vec<MethodInfoRef>,
+    pub virtual_methods: Vec<MethodInfoRef>,
     pub vtable_ptr: VTablePtr,
 }
 

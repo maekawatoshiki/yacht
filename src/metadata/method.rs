@@ -21,19 +21,11 @@ pub enum MethodHeaderType {
     },
 }
 
-// impl MethodHeaderType {
-//     pub fn max_stack(&self) -> usize {
-//         match self {
-//             MethodHeaderType::TinyFormat { .. } => 8,
-//             MethodHeaderType::FatFormat { max_stack, .. } => *max_stack as usize,
-//         }
-//     }
-// }
+pub type MethodInfoRef = Rc<RefCell<MethodInfo>>;
 
-pub type MethodInfoRef = Rc<RefCell<MethodBody>>;
-
+// TODO: Support for MemberRef
 #[derive(Debug, Clone, PartialEq)]
-pub struct MethodBody {
+pub struct MethodInfo {
     pub rva: u32,
     pub impl_flags: u16,
     pub flags: u16,
@@ -45,7 +37,7 @@ pub struct MethodBody {
     pub class: ClassInfoRef,
 }
 
-impl MethodBody {
+impl MethodInfo {
     pub fn is_virtual(&self) -> bool {
         self.flags & method_attributes_flags::VIRTUAL > 0
     }

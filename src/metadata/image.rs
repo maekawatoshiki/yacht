@@ -2,14 +2,25 @@ use crate::metadata::{class::*, file_reader::*, metadata::*, method::*, signatur
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
 
+pub type Token = u32;
+pub type RVA = u32;
+
 #[derive(Debug, Clone)]
 pub struct Image {
+    /// CLI Info
     pub cli_info: CLIInfo,
+
+    /// Metadata streams
     pub metadata: MetaDataStreams,
+
+    /// PE file reader
     pub reader: Option<Rc<RefCell<PEFileReader>>>,
-    // Cache
-    pub method_cache: FxHashMap<u32, MethodInfoRef>,
-    pub class_cache: FxHashMap<u32, ClassInfoRef>,
+
+    /// Cache ``MethodInfoRef`` by RVA
+    pub method_cache: FxHashMap<RVA, MethodInfoRef>,
+
+    /// Cache ``ClassInfoRef`` by token
+    pub class_cache: FxHashMap<Token, ClassInfoRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
 }
 
@@ -38,15 +49,17 @@ impl Image {
                 methods: vec![],
                 name: self.get_string(typedef.type_name).clone(),
                 namespace: self.get_string(typedef.type_namespace).clone(),
-                vtable: vec![],
+                virtual_methods: vec![],
                 vtable_ptr: ::std::ptr::null_mut(),
             }));
+
             self.class_cache.insert(
                 encode_typedef_or_ref_token(TableKind::TypeDef, i as u32 + 1),
                 class_info.clone(),
             );
             methods_to_setup.push((class_info.clone(), method_list_bgn..method_list_end));
             fields_to_setup.push((class_info.clone(), field_list_bgn..field_list_end));
+
             if typedef.extends != 0 {
                 extends.push((class_info, typedef.extends))
             }
@@ -69,22 +82,26 @@ impl Image {
 
         let file_reader_ref = self.reader.as_ref().unwrap().clone();
         let mut file_reader = file_reader_ref.borrow_mut();
+
         for (class, range) in methods_to_setup {
             let mut methods = vec![];
-            for methoddef in &methoddefs[range] {
-                let methoddef = retrieve!(methoddef, Table::MethodDef);
+
+            for mdef in &methoddefs[range] {
+                let mdef = retrieve!(mdef, Table::MethodDef);
                 let method = file_reader
-                    .read_method(self, class.clone(), methoddef.rva)
+                    .read_method(self, class.clone(), mdef.rva)
                     .unwrap();
-                self.method_cache.insert(methoddef.rva, method.clone());
+                self.method_cache.insert(mdef.rva, method.clone());
                 methods.push(method)
             }
+
             class.borrow_mut().methods = methods;
         }
 
         for (class, extends) in extends {
             let (table, entry) = decode_typedef_or_ref_token(extends as u32);
-            let typedef_or_ref = &self.metadata.metadata_stream.tables[table][entry - 1];
+            let typedef_or_ref = self.get_table(table, entry - 1);
+
             match typedef_or_ref {
                 Table::TypeDef(t) => {
                     class.borrow_mut().parent =
@@ -117,31 +134,42 @@ impl Image {
 
     fn construct_class_vtable(&self, class_ref: &ClassInfoRef) {
         let mut class = class_ref.borrow_mut();
-        let mut vtable = if let Some(parent) = &class.parent {
-            self.construct_class_vtable(parent);
-            parent.borrow().vtable.clone()
-        } else {
-            vec![]
+        let mut virtual_methods = match &class.parent {
+            Some(parent) => {
+                self.construct_class_vtable(parent);
+                parent.borrow().virtual_methods.clone()
+            }
+            None => vec![],
         };
-        for method_ref in &class.methods {
-            let method = method_ref.borrow();
-            if method.is_virtual() {
-                if method.is_new_slot() {
-                    vtable.push(method_ref.clone());
-                } else {
-                    for virtual_method_ref in &mut vtable {
-                        if virtual_method_ref.borrow().name == method.name {
-                            *virtual_method_ref = method_ref.clone();
-                        }
-                    }
+
+        for mref in &class.methods {
+            let method = mref.borrow();
+
+            if !method.is_virtual() {
+                continue;
+            }
+
+            if method.is_new_slot() {
+                virtual_methods.push(mref.clone());
+                continue;
+            }
+
+            for vmethod in &mut virtual_methods {
+                if vmethod.borrow().name == method.name {
+                    *vmethod = mref.clone();
                 }
             }
         }
 
-        dprintln!("VTABLE: {:?}", vtable);
+        dprintln!("VTABLE: {:?}", virtual_methods);
 
-        class.vtable_ptr = Box::into_raw(vec![0u64; vtable.len()].into_boxed_slice()) as VTablePtr;
-        class.vtable = vtable;
+        class.vtable_ptr =
+            Box::into_raw(vec![0u64; virtual_methods.len()].into_boxed_slice()) as VTablePtr;
+        class.virtual_methods = virtual_methods;
+    }
+
+    pub fn get_table(&self, table: u32, entry: u32) -> &Table {
+        &self.metadata.metadata_stream.tables[table as usize][entry as usize]
     }
 
     pub fn get_string<T: Into<u32>>(&self, n: T) -> &String {
@@ -153,29 +181,25 @@ impl Image {
     }
 
     pub fn get_entry_method(&mut self) -> MethodInfoRef {
-        let kind = self.cli_info.cli_header.entry_point_token as usize >> (32 - 8);
-        let row = self.cli_info.cli_header.entry_point_token as usize & 0x00ffffff;
-        let method_or_file = self.metadata.metadata_stream.tables[kind][row - 1].clone();
-        let method_table = match method_or_file {
+        let (table, entry) = decode_token(self.cli_info.cli_header.entry_point_token);
+        let method_or_file = self.get_table(table, entry - 1);
+        let mdef = match method_or_file {
             Table::MethodDef(t) => t,
             // TOOD: File
             _ => unimplemented!(),
         };
-        self.get_method(method_table.rva)
+        self.get_method_by_rva(mdef.rva)
     }
 
-    pub fn get_method(&self, rva: u32) -> MethodInfoRef {
+    pub fn get_method_by_rva(&self, rva: u32) -> MethodInfoRef {
         self.method_cache.get(&rva).unwrap().clone()
     }
 
     pub fn get_method_def_table_by_rva(&self, rva: u32) -> Option<&MethodDefTable> {
         for method_def in &self.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()] {
             match method_def {
-                Table::MethodDef(mdt) => {
-                    if mdt.rva == rva {
-                        return Some(mdt);
-                    }
-                }
+                Table::MethodDef(mdt) if mdt.rva == rva => return Some(mdt),
+                Table::MethodDef(_) => continue,
                 _ => return None,
             }
         }
@@ -191,10 +215,7 @@ impl Image {
         type_ref_table: &TypeRefTable,
     ) -> (&String, &String, &String) {
         let (table, entry) = type_ref_table.resolution_scope_table_and_entry();
-        let assembly_ref_table = retrieve!(
-            self.metadata.metadata_stream.tables[table][entry - 1],
-            Table::AssemblyRef
-        );
+        let assembly_ref_table = retrieve!(self.get_table(table, entry - 1), Table::AssemblyRef);
         let asm_ref_name = self.get_string(assembly_ref_table.name);
         let ty_namespace = self.get_string(type_ref_table.type_namespace);
         let ty_name = self.get_string(type_ref_table.type_name);

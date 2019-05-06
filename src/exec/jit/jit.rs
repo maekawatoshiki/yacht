@@ -51,7 +51,7 @@ pub struct JITCompiler<'a> {
     pub builder: LLVMBuilderRef,
     pub pass_mgr: LLVMPassManagerRef,
     pub generating: Option<LLVMValueRef>,
-    pub generated: FxHashMap<u32, LLVMValueRef>, // RVA, Value
+    pub generated: FxHashMap<RVA, LLVMValueRef>,
     pub basic_blocks: FxHashMap<usize, BasicBlockInfo>,
     pub phi_stack: FxHashMap<usize, Vec<PhiStack>>, // destination,
     pub env: Environment,
@@ -59,7 +59,7 @@ pub struct JITCompiler<'a> {
     pub builtin_functions: BuiltinFunctions,
     pub strings: Vec<*mut String>,
     pub class_types: ClassTypesHolder,
-    pub vtable_map: FxHashMap<String, FxHashMap<String, (LLVMValueRef, Vec<LLVMValueRef>)>>,
+    pub vtable_map: FxHashMap<VTablePtr, (LLVMValueRef, Vec<LLVMValueRef>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -201,20 +201,18 @@ impl<'a> JITCompiler<'a> {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_before_entry);
 
-        for (_, names) in &self.vtable_map {
-            for (_, (vtable, vmethods)) in names {
-                if vmethods.len() == 0 {
-                    continue;
-                }
+        for (_vtable_ptr, (llvm_vtable, vmethods)) in &self.vtable_map {
+            if vmethods.len() == 0 {
+                continue;
+            }
 
-                let vtable = self.typecast(*vtable, LLVMPointerType(LLVMTypeOf(vmethods[0]), 0));
-                for (i, vmethod) in vmethods.iter().enumerate() {
-                    self.store2element(
-                        vtable,
-                        vec![llvm_const_int32(self.context, i as u64)],
-                        *vmethod,
-                    );
-                }
+            let vtable = self.typecast(*llvm_vtable, LLVMPointerType(LLVMTypeOf(vmethods[0]), 0));
+            for (i, vmethod) in vmethods.iter().enumerate() {
+                self.store2element(
+                    vtable,
+                    vec![llvm_const_int32(self.context, i as u64)],
+                    *vmethod,
+                );
             }
         }
 
@@ -702,18 +700,12 @@ impl<'a> JITCompiler<'a> {
         self.gen_instr_general_call(stack, table, entry)
     }
 
-    unsafe fn get_function_by_rva(
-        &mut self,
-        rva: u32,
-        // method_sig: &MethodSignature,
-    ) -> LLVMValueRef {
+    unsafe fn get_function_by_rva(&mut self, rva: u32) -> LLVMValueRef {
         if let Some(f) = self.generated.get(&rva) {
             return *f;
         }
-        // let method = self.image.get_method(mdt.rva).borrow();
-        // let method_sig = method.ty.as_fnptr().unwrap();
 
-        let method_ref = self.image.get_method(rva);
+        let method_ref = self.image.get_method_by_rva(rva);
         let method = method_ref.borrow();
         let method_sig = method.ty.as_fnptr().unwrap();
 
@@ -759,7 +751,7 @@ impl<'a> JITCompiler<'a> {
                 .map(|tv| tv.val)
                 .collect();
             let ret = unsafe { compiler.call_function(func, params) };
-            if method_sig.ret != Type::void_ty() {
+            if !method_sig.ret.is_void() {
                 stack.push(TypedValue::new(method_sig.ret.clone(), ret));
             }
         };
@@ -767,51 +759,36 @@ impl<'a> JITCompiler<'a> {
         unsafe fn callvirt(
             compiler: &mut JITCompiler,
             stack: &mut Vec<TypedValue>,
-            method: &MethodBody,
+            method: &MethodInfo,
             method_sig: &MethodSignature,
-            ty: LLVMTypeRef,
+            method_ty: LLVMTypeRef,
         ) {
-            // let has_this = if method_sig.has_this() { 1 } else { 0 };
             let params: Vec<LLVMValueRef> = stack
                 .drain(stack.len() - method_sig.params.len() - /*obj*/1..)
                 .map(|tv| tv.val)
                 .collect();
             let obj = params[0];
 
-            let gep = LLVMBuildGEP(
-                compiler.builder,
+            let vtable = compiler.load_element(
                 obj,
                 vec![
                     llvm_const_int32(compiler.context, 0),
                     llvm_const_int32(compiler.context, 0),
-                ]
-                .as_mut_ptr(),
-                2,
-                cstr0!(),
+                ],
             );
-            let vtable = LLVMBuildLoad(compiler.builder, gep, cstr0!());
-            let i = method
+            let idx = method
                 .class
                 .borrow()
-                .vtable
+                .virtual_methods
                 .iter()
                 .position(|m| m.borrow().name == method.name)
-                .unwrap();
-            let gep = LLVMBuildGEP(
-                compiler.builder,
-                vtable,
-                vec![
-                    // llvm_const_int32(self.context, 0),
-                    llvm_const_int32(compiler.context, i as u64),
-                ]
-                .as_mut_ptr(),
-                1,
-                cstr0!(),
-            );
-            let func = compiler.typecast(LLVMBuildLoad(compiler.builder, gep, cstr0!()), ty);
+                .unwrap() as u64;
+            let raw_vmethod =
+                compiler.load_element(vtable, vec![llvm_const_int32(compiler.context, idx)]);
+            let vmethod = compiler.typecast(raw_vmethod, method_ty);
 
-            let ret = compiler.call_function(func, params);
-            if method_sig.ret != Type::void_ty() {
+            let ret = compiler.call_function(vmethod, params);
+            if !method_sig.ret.is_void() {
                 stack.push(TypedValue::new(method_sig.ret.clone(), ret));
             }
         };
@@ -844,7 +821,7 @@ impl<'a> JITCompiler<'a> {
             }
             Table::MethodDef(mdt) => {
                 let func = self.get_function_by_rva(mdt.rva);
-                let method_ref = self.image.get_method(mdt.rva);
+                let method_ref = self.image.get_method_by_rva(mdt.rva);
                 let method = method_ref.borrow();
                 let method_sig = method.ty.as_fnptr().unwrap();
                 if method.is_virtual() {
@@ -881,8 +858,7 @@ impl<'a> JITCompiler<'a> {
 
     unsafe fn gen_instr_ldfld(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
         let obj = stack.pop().unwrap();
-        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
-        match table {
+        match &self.image.get_table(table as u32, entry as u32 - 1) {
             Table::Field(f) => {
                 let name = self.image.get_string(f.name);
                 let class = &obj.ty.as_class().unwrap().borrow();
@@ -893,20 +869,16 @@ impl<'a> JITCompiler<'a> {
                     .find(|(_, f)| &f.name == name)
                     .map(|(i, f)| (i, f.ty.clone()))
                     .unwrap();
-                stack.push(TypedValue::new(ty, {
-                    let gep = LLVMBuildGEP(
-                        self.builder,
+                stack.push(TypedValue::new(
+                    ty,
+                    self.load_element(
                         obj.val,
                         vec![
                             llvm_const_int32(self.context, 0),
                             llvm_const_int32(self.context, idx as u64 + /*vtable=*/1),
-                        ]
-                        .as_mut_ptr(),
-                        2,
-                        cstr0!(),
-                    );
-                    LLVMBuildLoad(self.builder, gep, cstr0!())
-                }));
+                        ],
+                    ),
+                ));
             }
             e => unimplemented!("{:?}", e),
         }
@@ -925,20 +897,15 @@ impl<'a> JITCompiler<'a> {
     unsafe fn gen_instr_general_ldelem(&mut self, stack: &mut Vec<TypedValue>) -> LLVMValueRef {
         let index = stack.pop().unwrap().val;
         let array = stack.pop().unwrap().val;
-        let gep = LLVMBuildGEP(
-            self.builder,
+        self.load_element(
             array,
             vec![LLVMBuildAdd(
                 self.builder,
                 index,
                 llvm_const_int32(self.context, 4),
                 cstr0!(),
-            )]
-            .as_mut_ptr(),
-            1,
-            cstr0!(),
-        );
-        LLVMBuildLoad(self.builder, gep, cstr0!())
+            )],
+        )
     }
 
     unsafe fn gen_instr_stelem_i1(&mut self, stack: &mut Vec<TypedValue>) {
@@ -970,14 +937,7 @@ impl<'a> JITCompiler<'a> {
             stack.pop().unwrap().val,
             LLVMPointerType(LLVMInt32TypeInContext(self.context), 0),
         );
-        let gep = LLVMBuildGEP(
-            self.builder,
-            array,
-            vec![llvm_const_int32(self.context, 0)].as_mut_ptr(),
-            1,
-            cstr0!(),
-        );
-        let index = LLVMBuildLoad(self.builder, gep, cstr0!());
+        let index = self.load_element(array, vec![llvm_const_int32(self.context, 0)]);
         stack.push(TypedValue::new(Type::i4_ty(), index));
     }
 
@@ -1033,12 +993,11 @@ impl<'a> JITCompiler<'a> {
         match table {
             Table::MemberRef(_mrt) => {} // TODO
             Table::MethodDef(mdt) => {
-                let method_ref = self.image.get_method(mdt.rva);
+                let method_ref = self.image.get_method_by_rva(mdt.rva);
                 let method = method_ref.borrow();
                 let method_sig = method.ty.as_fnptr().unwrap();
                 let llvm_class_ty = self.get_class_type(&method.class.borrow());
-                let new_obj = LLVMBuildTruncOrBitCast(
-                    self.builder,
+                let new_obj = self.typecast(
                     self.call_function(
                         self.builtin_functions
                             .get_helper_function("memory_alloc")
@@ -1047,24 +1006,19 @@ impl<'a> JITCompiler<'a> {
                         vec![self.get_size_of_llvm_class_type(llvm_class_ty)],
                     ),
                     llvm_class_ty,
-                    cstr0!(),
                 );
-                let mut params = vec![new_obj];
-                params.append(
-                    &mut stack
-                        .drain(stack.len() - method_sig.params.len()..)
-                        .map(|tv| tv.val)
-                        .collect(),
-                );
+                let mut params: Vec<LLVMValueRef> = stack
+                    .drain(stack.len() - method_sig.params.len()..)
+                    .map(|tv| tv.val)
+                    .collect();
+                params.insert(0, new_obj);
+
                 let func = self.get_function_by_rva(mdt.rva);
                 self.call_function(func, params);
 
                 let class = method.class.borrow();
-                let vtable = self.ensure_all_virtual_methods_compiled(
-                    &class.name,
-                    &class.namespace,
-                    &class.vtable,
-                );
+                let vtable = self
+                    .ensure_all_virtual_methods_compiled(class.vtable_ptr, &class.virtual_methods);
 
                 self.store2element(
                     new_obj,
@@ -1184,17 +1138,13 @@ impl<'a> JITCompiler<'a> {
 
     unsafe fn ensure_all_virtual_methods_compiled(
         &mut self,
-        type_name: &String,
-        type_namespace: &String,
+        vtable_ptr: VTablePtr,
         vtable: &Vec<MethodInfoRef>,
     ) -> LLVMValueRef {
-        if let Some(name) = self.vtable_map.get(type_namespace) {
-            if let Some((vtable, _)) = name.get(type_name) {
-                return *vtable;
-            }
+        if let Some((llvm_vtable, _)) = self.vtable_map.get(&vtable_ptr) {
+            return *llvm_vtable;
         }
 
-        let vtable_ptr = Box::into_raw(vec![0u64; vtable.len()].into_boxed_slice()) as VTablePtr;
         let llvm_vtable = llvm_const_ptr(self.context, vtable_ptr as *mut u64);
         let mut vmethods = vec![];
 
@@ -1202,12 +1152,20 @@ impl<'a> JITCompiler<'a> {
             vmethods.push(self.get_function_by_rva(vmethod.borrow().rva));
         }
 
-        self.vtable_map
-            .entry(type_namespace.clone())
-            .or_insert_with(|| FxHashMap::default())
-            .insert(type_name.clone(), (llvm_vtable, vmethods));
+        self.vtable_map.insert(vtable_ptr, (llvm_vtable, vmethods));
 
         llvm_vtable
+    }
+
+    unsafe fn load_element(&self, obj: LLVMValueRef, mut idx: Vec<LLVMValueRef>) -> LLVMValueRef {
+        let gep = LLVMBuildGEP(
+            self.builder,
+            obj,
+            idx.as_mut_ptr(),
+            idx.len() as u32,
+            cstr0!(),
+        );
+        LLVMBuildLoad(self.builder, gep, cstr0!())
     }
 
     unsafe fn store2element(

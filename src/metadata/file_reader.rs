@@ -171,7 +171,7 @@ impl PEFileReader {
                 let mut raw_body = vec![0u8; bytes];
                 self.read_bytes(raw_body.as_mut_slice())?;
                 let body = BytesToInstructions::new(&raw_body).convert()?;
-                Some(Rc::new(RefCell::new(MethodBody {
+                Some(Rc::new(RefCell::new(MethodInfo {
                     rva,
                     impl_flags,
                     flags,
@@ -216,7 +216,7 @@ impl PEFileReader {
                 self.read_bytes(raw_body.as_mut_slice())?;
                 let body = BytesToInstructions::new(&raw_body).convert()?;
 
-                Some(Rc::new(RefCell::new(MethodBody {
+                Some(Rc::new(RefCell::new(MethodInfo {
                     rva,
                     impl_flags,
                     flags,
@@ -255,47 +255,6 @@ impl PEFileReader {
             _ => None,
         }
     }
-
-    // fn dump_metadata_tables(&mut self, metadata_streams: &MetaDataStreams) {
-    //     println!("A few tables are supported to dump:");
-    //     for (_i, table) in metadata_streams.metadata_stream.tables.iter().enumerate() {
-    //         for row in table {
-    //             match row {
-    //                 Table::AssemblyRef(at) => unsafe {
-    //                     println!(
-    //                         ".assembly extern {} {{\n  \
-    //                          .ver {}:{}:{}:{}\n  \
-    //                          .publickeytoken = ({})\n}}",
-    //                         metadata_streams.strings.get(&(at.name as u32)).unwrap(),
-    //                         at.major_version,
-    //                         at.minor_version,
-    //                         at.build_number,
-    //                         at.revision_number,
-    //                         metadata_streams
-    //                             .blob
-    //                             .get(&(at.public_key_or_token as u32))
-    //                             .unwrap()
-    //                             .iter()
-    //                             .fold("".to_string(), |acc, x| format!("{}{:02X} ", acc, x))
-    //                     );
-    //                 },
-    //                 Table::Assembly(at) => unsafe {
-    //                     println!(
-    //                         ".assembly '{}' {{\n  \
-    //                          .ver {}:{}:{}:{}\n  \
-    //                          .custom\n}}",
-    //                         metadata_streams.strings.get(&(at.name as u32)).unwrap(),
-    //                         at.major_version,
-    //                         at.minor_version,
-    //                         at.build_number,
-    //                         at.revision_number,
-    //                     );
-    //                 },
-    //                 _ => {}
-    //             }
-    //         }
-    //     }
-    // }
 
     fn read_msdos_header(&mut self) -> Option<()> {
         let mut first = [0u8; 60];
@@ -764,7 +723,7 @@ impl PEFileReader {
         metadata_header: &MetaDataHeader,
         stream_headers: &[StreamHeader],
     ) -> Option<MetaDataStreams> {
-        // Some of followings are not streams, but heaps.
+        // Some of followings are not streams but heaps.
         let mut metadata_stream = None;
         let mut strings = None;
         let mut user_strings = None;
