@@ -10,7 +10,7 @@
 // use super::field::FieldInfo;
 // use super::method::MethodInfo;
 use crate::exec::decode::BytesToInstructions;
-use crate::metadata::{class::*, header::*, metadata::*, method::*, signature::*};
+use crate::metadata::{class::*, header::*, image::*, metadata::*, method::*, signature::*};
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
 use std::{

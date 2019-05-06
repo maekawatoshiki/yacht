@@ -3,7 +3,7 @@ use crate::{
         instruction::*,
         jit::{builtin::*, cfg::*},
     },
-    metadata::{class::*, metadata::*, method::*, signature::*},
+    metadata::{class::*, image::*, metadata::*, method::*, signature::*},
 };
 use llvm;
 use llvm::{core::*, prelude::*};

@@ -4,3 +4,4 @@ pub mod header;
 pub mod metadata;
 pub mod method;
 pub mod signature;
+pub mod image;

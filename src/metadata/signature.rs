@@ -1,4 +1,4 @@
-use crate::metadata::{class::*, metadata::*};
+use crate::metadata::{class::*, image::*, metadata::*};
 use std::{iter::repeat_with, slice::Iter};
 
 #[derive(Debug, Clone, PartialEq)]
