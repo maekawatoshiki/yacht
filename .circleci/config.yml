@@ -10,8 +10,6 @@ jobs:
     steps:
       - checkout
       - run:
-          command: chown -R $USER:$USER /opt/yacht
-      - run:
           command: set -eux
       - run:
           command: apt-get update
@@ -39,7 +37,7 @@ jobs:
           command: |
             git clone https://github.com/SimonKagstrom/kcov
             cd kcov
-            # git checkout 9db5fa58986c2eae39e82580f15ba6fadb2dc906
+            git checkout 9db5fa58986c2eae39e82580f15ba6fadb2dc906
             cmake .
             make -j
             make install
@@ -49,9 +47,9 @@ jobs:
             export PATH=~/.cargo/bin:$PATH
             cargo test --no-run
 
-            REPORT=$(find ./target/debug -maxdepth 1 -name 'yacht-*' -a ! -name '*.d')
-            for file in $REPORT; do  
-              echo $file
-              /usr/local/bin/kcov --include-pattern=yacht/src --exclude-pattern=/.cargo ./target/cov "$file"
-            done
-            bash <(curl -s https://codecov.io/bash) -s ./target/cov
+            # REPORT=$(find ./target/debug -maxdepth 1 -name 'yacht-*' -a ! -name '*.d')
+            # for file in $REPORT; do  
+            #  echo $file
+            #  /usr/local/bin/kcov --include-pattern=yacht/src --exclude-pattern=/.cargo ./target/cov "$file"
+            # done
+            # bash <(curl -s https://codecov.io/bash) -s ./target/cov
