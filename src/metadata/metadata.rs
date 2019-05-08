@@ -248,7 +248,7 @@ pub struct TypeRefTable {
 
 impl MemberRefTable {
     pub fn class_table_and_entry(&self) -> (usize, usize) {
-        let tag = self.class & 0b0000_0000_0000_0111; // MemberRefParent
+        let tag = self.class & 0b111; // MemberRefParent
         let table = match tag {
             0 => TableKind::TypeDef.into_num(),
             1 => TableKind::TypeRef.into_num(),

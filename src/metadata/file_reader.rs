@@ -113,6 +113,7 @@ impl PEFileReader {
             metadata: metadata_streams,
             method_cache: FxHashMap::default(),
             class_cache: FxHashMap::default(),
+            known_virtual_methods: FxHashMap::default(),
             reader: None,
         })
     }
@@ -171,7 +172,7 @@ impl PEFileReader {
                 let mut raw_body = vec![0u8; bytes];
                 self.read_bytes(raw_body.as_mut_slice())?;
                 let body = BytesToInstructions::new(&raw_body).convert()?;
-                Some(Rc::new(RefCell::new(MethodInfo {
+                Some(Rc::new(RefCell::new(MethodInfo::MDef(MethodDefInfo {
                     rva,
                     impl_flags,
                     flags,
@@ -181,7 +182,7 @@ impl PEFileReader {
                     locals_ty: vec![],
                     ty,
                     class,
-                })))
+                }))))
             }
             MethodHeaderType::FatFormat {
                 code_size,
@@ -216,7 +217,7 @@ impl PEFileReader {
                 self.read_bytes(raw_body.as_mut_slice())?;
                 let body = BytesToInstructions::new(&raw_body).convert()?;
 
-                Some(Rc::new(RefCell::new(MethodInfo {
+                Some(Rc::new(RefCell::new(MethodInfo::MDef(MethodDefInfo {
                     rva,
                     impl_flags,
                     flags,
@@ -226,7 +227,7 @@ impl PEFileReader {
                     locals_ty,
                     ty,
                     class,
-                })))
+                }))))
             }
         }
     }

@@ -66,6 +66,7 @@ impl BuiltinFunctions {
                     (char) => { LLVMInt32TypeInContext(ctx) };
                     // (dbl)     => { VariableType::Double. to_llvmty(context) };
                     (str ) => { LLVMPointerType(LLVMInt8TypeInContext(ctx), 0) };
+                    (obj ) => { LLVMPointerType(LLVMInt8TypeInContext(ctx), 0) };
                     (ptr ) => { LLVMPointerType(LLVMInt8TypeInContext(ctx), 0) };
                 }
 
@@ -74,6 +75,7 @@ impl BuiltinFunctions {
                     (i4  ) => { Type::i4_ty() };
                     (char) => { Type::char_ty() };
                     // (dbl)     => { VariableType::Double. to_llvmty(context) };
+                    (obj ) => { Type::object_ty() };
                     (str ) => { Type::string_ty() };
                 }
 
@@ -97,20 +99,27 @@ impl BuiltinFunctions {
                 }
 
                 let write_line = vec![
-                    def_func!(        void, [str ],    write_line_string, "[mscorlib]System::Console.WriteLine(String)"),
-                    def_func!(        void, [i4  ],    write_line_i4,     "[mscorlib]System::Console.WriteLine(int32)"),
-                    def_func!(        void, [char],    write_line_char,   "[mscorlib]System::Console.WriteLine(char)"),
+                    def_func!(        void, [str ],     write_line_string,     "[mscorlib]System::Console.WriteLine(String)"),
+                    def_func!(        void, [i4  ],     write_line_i4,         "[mscorlib]System::Console.WriteLine(int32)"),
+                    def_func!(        void, [char],     write_line_char,       "[mscorlib]System::Console.WriteLine(char)"),
+                    def_func!(        void, [str, obj], write_line_string_obj, "[mscorlib]System::Console.WriteLine(String, Object)"),
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
                 let write = vec![
-                    def_func!(        void, [str ],    write_string,      "[mscorlib]System::Console.Write(String)"),
-                    def_func!(        void, [i4  ],    write_i4,          "[mscorlib]System::Console.Write(int32)"),
-                    def_func!(        void, [char],    write_char,        "[mscorlib]System::Console.Write(char)"),
+                    def_func!(        void, [str ],     write_string,          "[mscorlib]System::Console.Write(String)"),
+                    def_func!(        void, [i4  ],     write_i4,              "[mscorlib]System::Console.Write(int32)"),
+                    def_func!(        void, [char],     write_char,            "[mscorlib]System::Console.Write(char)"),
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
                 let get_length = vec![
-                    def_func!([0x20], i4  ,  [],       get_length,        "[mscorlib]System::String.get_Length()")
+                    def_func!([0x20], i4  ,  [],        get_length,            "[mscorlib]System::String.get_Length()")
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function}).collect();
                 let get_chars = vec![
-                    def_func!([0x20], char, [i4],      get_chars_i4,      "[mscorlib]System::String.get_Chars(int32)")
+                    def_func!([0x20], char, [i4],       get_chars_i4,          "[mscorlib]System::String.get_Chars(int32)")
+                ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
+                let int32_to_string = vec![
+                    def_func!([0x20], str,  [],         int_to_string,         "[mscorlib]System::Int32.ToString()")
+                ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
+                let obj_to_string = vec![
+                    def_func!([0x20], str,  [],         object_to_string,      "[mscorlib]System::Object.ToString()"),
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
 
                 macro_rules! hashmap {
@@ -125,8 +134,14 @@ impl BuiltinFunctions {
                     hashmap!(vec![("WriteLine", write_line), ("Write", write)]);
                 let string_function_map: FunctionMap =
                     hashmap!(vec![("get_Length", get_length), ("get_Chars", get_chars)]);
+                let object_function_map: FunctionMap =
+                    hashmap!(vec![("ToString", obj_to_string)]);
+                let int32_function_map: FunctionMap =
+                    hashmap!(vec![("ToString", int32_to_string)]);
                 let type_name_map: TypeNameMap = hashmap!(vec![("Console", console_function_map),
-                                                               ("String",  string_function_map)]);
+                                                               ("String",  string_function_map),
+                                                               ("Object",  object_function_map),
+                                                               ("Int32",   int32_function_map)]);
                 let type_namespace_map: TypeNamespaceMap =
                     hashmap!(vec![("System", type_name_map)]);
                 let assembly_map: AssemblyMap = hashmap!(vec![("mscorlib", type_namespace_map)]);
@@ -191,6 +206,24 @@ pub fn write_line_string(s: *mut String) {
 }
 
 #[no_mangle]
+pub fn write_line_string_obj(s: *mut String, o: *mut u8) {
+    unsafe {
+        let string = { &*s };
+        let class_int32 = o as *mut u64;
+        let vtable = *class_int32.offset(0) as *mut u64;
+        let to_string = ::std::mem::transmute::<u64, fn(*mut u8) -> *mut String>(*vtable.offset(0));
+        let string2 = &*to_string(class_int32 as *mut u8);
+        for (i, s) in string.split("{0}").enumerate() {
+            if i > 0 {
+                print!("{}", string2)
+            }
+            print!("{}", s);
+        }
+        println!();
+    }
+}
+
+#[no_mangle]
 pub fn write_i4(n: i32) {
     print!("{}", n);
 }
@@ -213,6 +246,20 @@ pub fn get_length(s: *mut String) -> i32 {
 #[no_mangle]
 pub fn get_chars_i4(s: *mut String, i: i32) -> i32 {
     unsafe { &*s }.as_str().as_bytes()[i as usize] as i32
+}
+
+#[no_mangle]
+pub fn object_to_string(_obj: *mut u8) -> *mut String {
+    unimplemented!()
+}
+
+#[no_mangle]
+pub fn int_to_string(int32: *mut u8) -> *mut String {
+    unsafe {
+        let class_int32 = int32 as *mut u64;
+        let value = *class_int32.offset(1) as i32;
+        Box::into_raw(Box::new(format!("{}", value)))
+    }
 }
 
 #[no_mangle]

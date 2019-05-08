@@ -57,6 +57,7 @@ pub enum Instruction {
     Rem,
     Call { table: usize, entry: usize },
     CallVirt { table: usize, entry: usize },
+    Box { table: usize, entry: usize },
     Newobj { table: usize, entry: usize },
     Newarr { table: usize, entry: usize },
     Ret,
@@ -120,6 +121,7 @@ pub mod il_instr {
     pub const MUL      : u8 = 0x5a;
     pub const DIV      : u8 = 0x5b;
     pub const REM      : u8 = 0x5d;
+    pub const BOX      : u8 = 0x8c;
     pub const NEWOBJ   : u8 = 0x73;
     pub const NEWARR   : u8 = 0x8d;
     pub const RET      : u8 = 0x2a;
@@ -128,7 +130,7 @@ pub mod il_instr {
         match instr {
             LDNULL | LDSTR | 
             CALL | CALLVIRT |
-            NEWOBJ | NEWARR | 
+            NEWOBJ | NEWARR | BOX |
             STFLD | LDFLD |
             BGE | BR | BLT | BNE_UN | BRFALSE | BGT
              | BRTRUE | BLE | BEQ |

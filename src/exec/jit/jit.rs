@@ -107,7 +107,7 @@ impl<'a> JITCompiler<'a> {
             env: Environment::new(),
             compile_queue: VecDeque::new(),
             strings: vec![],
-            class_types: ClassTypesHolder::new(),
+            class_types: ClassTypesHolder::new(context),
             builtin_functions: BuiltinFunctions::new(context, module),
             vtable_map: FxHashMap::default(),
         }
@@ -137,7 +137,8 @@ impl<'a> JITCompiler<'a> {
         self.phi_stack.clear();
         self.env = Environment::new();
 
-        let method = method_ref.borrow();
+        let method_info = method_ref.borrow();
+        let method = method_info.as_mdef();
 
         let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let (ret_ty, mut params_ty): (LLVMTypeRef, Vec<LLVMTypeRef>) =
@@ -247,7 +248,8 @@ impl<'a> JITCompiler<'a> {
         self.generating = Some(func);
         self.env = Environment::new();
 
-        let method = method_ref.borrow();
+        let method_info = method_ref.borrow();
+        let method = method_info.as_mdef();
         let method_ty = method.ty.as_fnptr().unwrap();
         let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let ret_ty = LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(func)));
@@ -588,6 +590,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::CallVirt { table, entry } => {
                     self.gen_instr_callvirt(&mut stack, *table, *entry)
                 }
+                Instruction::Box { table, entry } => self.gen_instr_box(&mut stack, *table, *entry),
                 Instruction::Newobj { table, entry } => {
                     self.gen_instr_newobj(&mut stack, *table, *entry)
                 }
@@ -706,7 +709,8 @@ impl<'a> JITCompiler<'a> {
         }
 
         let method_ref = self.image.get_method_by_rva(rva);
-        let method = method_ref.borrow();
+        let method_info = method_ref.borrow();
+        let method = method_info.as_mdef();
         let method_sig = method.ty.as_fnptr().unwrap();
 
         let ret_ty = method_sig.ret.to_llvmty(self);
@@ -739,18 +743,27 @@ impl<'a> JITCompiler<'a> {
         table: usize,
         entry: usize,
     ) {
-        fn call(
+        unsafe fn call(
             compiler: &mut JITCompiler,
             stack: &mut Vec<TypedValue>,
             func: LLVMValueRef,
             method_sig: &MethodSignature,
         ) {
             let has_this = if method_sig.has_this() { 1 } else { 0 };
-            let params = stack
+            let args = stack
                 .drain(stack.len() - method_sig.params.len() - has_this..)
                 .map(|tv| tv.val)
+                .enumerate()
+                .map(|(i, arg)| {
+                    if method_sig.has_this() && i == 0 {
+                        arg
+                    } else {
+                        let llvm_ty = method_sig.params[i - has_this].to_llvmty(compiler);
+                        compiler.typecast(arg, llvm_ty)
+                    }
+                })
                 .collect();
-            let ret = unsafe { compiler.call_function(func, params) };
+            let ret = compiler.call_function(func, args);
             if !method_sig.ret.is_void() {
                 stack.push(TypedValue::new(method_sig.ret.clone(), ret));
             }
@@ -763,11 +776,21 @@ impl<'a> JITCompiler<'a> {
             method_sig: &MethodSignature,
             method_ty: LLVMTypeRef,
         ) {
-            let params: Vec<LLVMValueRef> = stack
-                .drain(stack.len() - method_sig.params.len() - /*obj*/1..)
+            let args: Vec<LLVMValueRef> = stack
+                .drain(stack.len() - method_sig.params.len() -/*obj*/1..)
                 .map(|tv| tv.val)
+                .enumerate()
+                .map(|(i, arg)| {
+                    if i == 0 {
+                        /* this */
+                        arg
+                    } else {
+                        let llvm_ty = method_sig.params[i - 1].to_llvmty(compiler);
+                        compiler.typecast(arg, llvm_ty)
+                    }
+                })
                 .collect();
-            let obj = params[0];
+            let obj = args[0];
 
             let vtable = compiler.load_element(
                 obj,
@@ -777,17 +800,18 @@ impl<'a> JITCompiler<'a> {
                 ],
             );
             let idx = method
+                .as_mdef()
                 .class
                 .borrow()
                 .virtual_methods
                 .iter()
-                .position(|m| m.borrow().name == method.name)
+                .position(|m| m.borrow().get_name() == &method.as_mdef().name)
                 .unwrap() as u64;
             let raw_vmethod =
                 compiler.load_element(vtable, vec![llvm_const_int32(compiler.context, idx)]);
             let vmethod = compiler.typecast(raw_vmethod, method_ty);
 
-            let ret = compiler.call_function(vmethod, params);
+            let ret = compiler.call_function(vmethod, args);
             if !method_sig.ret.is_void() {
                 stack.push(TypedValue::new(method_sig.ret.clone(), ret));
             }
@@ -823,8 +847,8 @@ impl<'a> JITCompiler<'a> {
                 let func = self.get_function_by_rva(mdt.rva);
                 let method_ref = self.image.get_method_by_rva(mdt.rva);
                 let method = method_ref.borrow();
-                let method_sig = method.ty.as_fnptr().unwrap();
-                if method.is_virtual() {
+                let method_sig = method.as_mdef().ty.as_fnptr().unwrap();
+                if method.as_mdef().is_virtual() {
                     callvirt(self, stack, &method, method_sig, LLVMTypeOf(func));
                 } else {
                     call(self, stack, func, method_sig);
@@ -949,6 +973,71 @@ impl<'a> JITCompiler<'a> {
         ))
     }
 
+    unsafe fn gen_instr_box(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
+        let val = stack.pop().unwrap().val;
+        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
+        match table {
+            Table::TypeRef(trt) => {
+                // TODO: Refactor
+                let (asm_ref_name, ty_namespace, ty_name) =
+                    self.image.get_info_from_type_ref_table(trt);
+                match (
+                    asm_ref_name.as_str(),
+                    ty_namespace.as_str(),
+                    ty_name.as_str(),
+                ) {
+                    ("mscorlib", "System", "Int32") => {
+                        let class_system_int32_ref = self
+                            .image
+                            .class_cache
+                            .get(&encode_typedef_or_ref_token(
+                                TableKind::TypeRef,
+                                entry as u32,
+                            ))
+                            .unwrap()
+                            .clone();
+                        let class_system_int32 = class_system_int32_ref.borrow();
+                        println!("{:?}", class_system_int32);
+                        let class_int32 = self.class_types.get_by_name("System", "Int32").unwrap();
+                        let new_obj = self.typecast(
+                            self.call_function(
+                                self.builtin_functions
+                                    .get_helper_function("memory_alloc")
+                                    .unwrap()
+                                    .llvm_function,
+                                vec![self.get_size_of_llvm_class_type(class_int32)],
+                            ),
+                            class_int32,
+                        );
+                        let vtable = self.ensure_all_virtual_methods_compiled(
+                            class_system_int32.vtable_ptr,
+                            &class_system_int32.virtual_methods,
+                        );
+                        self.store2element(
+                            new_obj,
+                            vec![
+                                llvm_const_int32(self.context, 0),
+                                llvm_const_int32(self.context, 0),
+                            ],
+                            vtable,
+                        );
+                        self.store2element(
+                            new_obj,
+                            vec![
+                                llvm_const_int32(self.context, 0),
+                                llvm_const_int32(self.context, 1),
+                            ],
+                            val,
+                        );
+                        stack.push(TypedValue::new(Type::object_ty(), new_obj));
+                    }
+                    _ => unimplemented!(),
+                }
+            }
+            e => unimplemented!("newarr: unimplemented: {:?}", e),
+        }
+    }
+
     unsafe fn gen_instr_newarr(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
         let len = stack.pop().unwrap().val;
         let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
@@ -994,7 +1083,8 @@ impl<'a> JITCompiler<'a> {
             Table::MemberRef(_mrt) => {} // TODO
             Table::MethodDef(mdt) => {
                 let method_ref = self.image.get_method_by_rva(mdt.rva);
-                let method = method_ref.borrow();
+                let method_info = method_ref.borrow();
+                let method = method_info.as_mdef();
                 let method_sig = method.ty.as_fnptr().unwrap();
                 let llvm_class_ty = self.get_class_type(&method.class.borrow());
                 let new_obj = self.typecast(
@@ -1149,7 +1239,27 @@ impl<'a> JITCompiler<'a> {
         let mut vmethods = vec![];
 
         for vmethod in vtable {
-            vmethods.push(self.get_function_by_rva(vmethod.borrow().rva));
+            match &*vmethod.borrow() {
+                MethodInfo::MDef(m) => vmethods.push(self.get_function_by_rva(m.rva)),
+                // TODO
+                MethodInfo::MRef(m) => {
+                    let class = m.class.borrow();
+                    let type_namespace = class.namespace.as_str();
+                    let type_name = class.name.as_str();
+                    vmethods.push(
+                        self.builtin_functions
+                            .get_function(
+                                "mscorlib",
+                                type_namespace,
+                                type_name,
+                                m.name.as_str(),
+                                &m.ty,
+                            )
+                            .unwrap()
+                            .llvm_function,
+                    );
+                }
+            }
         }
 
         self.vtable_map.insert(vtable_ptr, (llvm_vtable, vmethods));
@@ -1213,6 +1323,7 @@ impl CastIntoLLVMType for Type {
                 let class = &class.borrow();
                 compiler.get_class_type(class)
             }
+            ElementType::Object => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
             _ => unimplemented!(),
         }
     }
@@ -1257,15 +1368,44 @@ impl TypedValue {
 }
 
 impl ClassTypesHolder {
-    pub fn new() -> Self {
+    pub unsafe fn new(ctx: LLVMContextRef) -> Self {
+        let system_int32 =
+            LLVMStructCreateNamed(ctx, CString::new("System::Int32").unwrap().as_ptr());
+        let mut fields_ty = vec![
+            LLVMPointerType(LLVMPointerType(LLVMInt8TypeInContext(ctx), 0), 0),
+            LLVMInt32TypeInContext(ctx),
+        ];
+        LLVMStructSetBody(
+            system_int32,
+            fields_ty.as_mut_ptr(),
+            fields_ty.len() as u32,
+            0,
+        );
         Self {
-            map: FxHashMap::default(),
+            map: {
+                let mut namespace = FxHashMap::default();
+                namespace.insert("System".to_string(), {
+                    let mut name = FxHashMap::default();
+                    name.insert("Int32".to_string(), LLVMPointerType(system_int32, 0));
+                    name
+                });
+                namespace
+            },
         }
     }
 
     pub fn get(&mut self, class: &ClassInfo) -> Option<LLVMTypeRef> {
         if let Some(names) = self.map.get(&class.namespace) {
             if let Some(ty) = names.get(&class.name) {
+                return Some(*ty);
+            }
+        }
+        None
+    }
+
+    pub fn get_by_name(&mut self, namespace: &str, name: &str) -> Option<LLVMTypeRef> {
+        if let Some(names) = self.map.get(namespace) {
+            if let Some(ty) = names.get(name) {
                 return Some(*ty);
             }
         }

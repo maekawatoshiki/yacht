@@ -25,7 +25,13 @@ pub type MethodInfoRef = Rc<RefCell<MethodInfo>>;
 
 // TODO: Support for MemberRef
 #[derive(Debug, Clone, PartialEq)]
-pub struct MethodInfo {
+pub enum MethodInfo {
+    MDef(MethodDefInfo),
+    MRef(MemberRefInfo),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodDefInfo {
     pub rva: u32,
     pub impl_flags: u16,
     pub flags: u16,
@@ -37,7 +43,51 @@ pub struct MethodInfo {
     pub class: ClassInfoRef,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberRefInfo {
+    pub name: String,
+    pub ty: Type,
+    pub class: ClassInfoRef,
+}
+
 impl MethodInfo {
+    pub fn into_mdef(self) -> MethodDefInfo {
+        match self {
+            MethodInfo::MDef(m) => m,
+            MethodInfo::MRef(_) => panic!(),
+        }
+    }
+
+    pub fn into_mref(self) -> MemberRefInfo {
+        match self {
+            MethodInfo::MRef(m) => m,
+            MethodInfo::MDef(_) => panic!(),
+        }
+    }
+
+    pub fn as_mdef(&self) -> &MethodDefInfo {
+        match self {
+            MethodInfo::MDef(ref m) => m,
+            MethodInfo::MRef(_) => panic!(),
+        }
+    }
+
+    pub fn as_mref(&self) -> &MemberRefInfo {
+        match self {
+            MethodInfo::MRef(ref m) => m,
+            MethodInfo::MDef(_) => panic!(),
+        }
+    }
+
+    pub fn get_name(&self) -> &String {
+        match self {
+            MethodInfo::MDef(ref m) => &m.name,
+            MethodInfo::MRef(ref m) => &m.name,
+        }
+    }
+}
+
+impl MethodDefInfo {
     pub fn is_virtual(&self) -> bool {
         self.flags & method_attributes_flags::VIRTUAL > 0
     }

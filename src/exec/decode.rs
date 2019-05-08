@@ -43,6 +43,12 @@ impl<'a> BytesToInstructions<'a> {
                     let entry = token as usize & 0x00ff_ffff;
                     iseq.push(Instruction::CallVirt { table, entry })
                 }
+                il_instr::BOX => {
+                    let token = self.read_u32()?;
+                    let table = token as usize >> (32 - 8);
+                    let entry = token as usize & 0x00ff_ffff;
+                    iseq.push(Instruction::Box { table, entry })
+                }
                 il_instr::NEWOBJ => {
                     let token = self.read_u32()?;
                     let table = token as usize >> (32 - 8);

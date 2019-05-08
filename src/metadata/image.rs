@@ -21,17 +21,82 @@ pub struct Image {
 
     /// Cache ``ClassInfoRef`` by token
     pub class_cache: FxHashMap<Token, ClassInfoRef>,
+
+    /// Holds the known virtual methods like ``ToString``. Will be removed in the future.
+    pub known_virtual_methods: FxHashMap<String, MethodInfoRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>,
 }
 
 impl Image {
     pub fn setup_all_class(&mut self) {
         let typedefs = &self.metadata.metadata_stream.tables[TableKind::TypeDef.into_num()];
+        let typerefs = &self.metadata.metadata_stream.tables[TableKind::TypeRef.into_num()];
         let fields = &self.metadata.metadata_stream.tables[TableKind::Field.into_num()];
         let methoddefs = &self.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()];
         let mut methods_to_setup = vec![];
         let mut fields_to_setup = vec![];
         let mut extends = vec![];
+
+        let class_system_object = Rc::new(RefCell::new(ClassInfo {
+            parent: None,
+            fields: vec![],
+            methods: vec![],
+            name: "Object".to_string(),
+            namespace: "System".to_string(),
+            virtual_methods: vec![],
+            vtable_ptr: Box::into_raw(vec![0u64; 1].into_boxed_slice()) as VTablePtr,
+        }));
+        let class_system_int32 = Rc::new(RefCell::new(ClassInfo {
+            parent: None,
+            fields: vec![],
+            methods: vec![],
+            name: "Int32".to_string(),
+            namespace: "System".to_string(),
+            virtual_methods: vec![],
+            vtable_ptr: Box::into_raw(vec![0u64; 1].into_boxed_slice()) as VTablePtr,
+        }));
+        let system_object_to_string = Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
+            name: "ToString".to_string(),
+            ty: Type::full_method_ty(/*this*/ 0x20, Type::string_ty(), &[]),
+            class: class_system_object.clone(),
+        })));
+        let system_int32_to_string = Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
+            name: "ToString".to_string(),
+            ty: Type::full_method_ty(/*this*/ 0x20, Type::string_ty(), &[]),
+            class: class_system_int32.clone(),
+        })));
+
+        self.known_virtual_methods.insert(
+            "System::Object.ToString".to_string(),
+            system_object_to_string.clone(),
+        );
+        self.known_virtual_methods.insert(
+            "System::Int32.ToString".to_string(),
+            system_int32_to_string.clone(),
+        );
+
+        class_system_object
+            .borrow_mut()
+            .virtual_methods
+            .push(system_object_to_string);
+        class_system_int32
+            .borrow_mut()
+            .virtual_methods
+            .push(system_int32_to_string);
+
+        for (i, typeref) in typerefs.iter().enumerate() {
+            let token = encode_typedef_or_ref_token(TableKind::TypeRef, i as u32 + 1);
+            let tref = retrieve!(typeref, Table::TypeRef);
+            match (
+                self.get_string(tref.type_namespace).as_str(),
+                self.get_string(tref.type_name).as_str(),
+            ) {
+                ("System", "Object") => self.class_cache.insert(token, class_system_object.clone()),
+                ("System", "Int32") => self.class_cache.insert(token, class_system_int32.clone()),
+                _ => continue,
+            };
+            //
+        }
 
         for (i, typedef) in typedefs.iter().enumerate() {
             let typedef = retrieve!(typedef, Table::TypeDef);
@@ -134,29 +199,43 @@ impl Image {
 
     fn construct_class_vtable(&self, class_ref: &ClassInfoRef) {
         let mut class = class_ref.borrow_mut();
+
+        // TODO: Special case
+        if class.namespace == "System" && (class.name == "Int32" || class.name == "Object") {
+            return;
+        }
+
         let mut virtual_methods = match &class.parent {
             Some(parent) => {
                 self.construct_class_vtable(parent);
                 parent.borrow().virtual_methods.clone()
             }
-            None => vec![],
+            None => vec![self
+                .known_virtual_methods
+                .get("System::Object.ToString")
+                .unwrap()
+                .clone()], // TODO
         };
 
-        for mref in &class.methods {
-            let method = mref.borrow();
+        for minforef in &class.methods {
+            let minfo = minforef.borrow();
+            let method = match &*minfo {
+                MethodInfo::MDef(ref m) => m,
+                MethodInfo::MRef(_) => continue,
+            };
 
             if !method.is_virtual() {
                 continue;
             }
 
             if method.is_new_slot() {
-                virtual_methods.push(mref.clone());
+                virtual_methods.push(minforef.clone());
                 continue;
             }
 
             for vmethod in &mut virtual_methods {
-                if vmethod.borrow().name == method.name {
-                    *vmethod = mref.clone();
+                if vmethod.borrow().get_name() == &method.name {
+                    *vmethod = minforef.clone();
                 }
             }
         }

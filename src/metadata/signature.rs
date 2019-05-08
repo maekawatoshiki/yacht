@@ -16,6 +16,7 @@ pub enum ElementType {
     Class(ClassInfoRef),
     SzArray(Box<SzArrayInfo>),
     FnPtr(Box<MethodSignature>),
+    Object,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,6 +95,10 @@ impl Type {
         })))
     }
 
+    pub fn object_ty() -> Self {
+        Self::new(ElementType::Object)
+    }
+
     pub fn into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
         match sig.next()? {
             0x01 => Some(Type::new(ElementType::Void)),
@@ -102,6 +107,7 @@ impl Type {
             0x08 => Some(Type::new(ElementType::I4)),
             0x0e => Some(Type::new(ElementType::String)),
             0x12 => Type::class_into_type(image, sig),
+            0x1c => Some(Type::new(ElementType::Object)),
             0x1d => Some(Type::new(ElementType::SzArray(Box::new(SzArrayInfo {
                 elem_ty: Type::into_type(image, sig)?,
             })))),
@@ -220,6 +226,7 @@ impl ::std::fmt::Debug for ElementType {
                 ElementType::String => "String".to_string(),
                 ElementType::SzArray(s) => format!("SzArray({:?})", s),
                 ElementType::FnPtr(f) => format!("FnPtr({:?})", f),
+                ElementType::Object => format!("Object"),
             }
         )
     }
@@ -267,7 +274,7 @@ pub fn decode_typedef_or_ref_token(token: u32) -> (u32, u32) {
 
 pub fn encode_token(table: TableKind, entry: u32) -> u32 {
     let table = (table.into_num() as u32) << (32 - 8);
-    table & entry
+    table | entry
 }
 
 pub fn decode_token(token: u32) -> (u32, u32) {
