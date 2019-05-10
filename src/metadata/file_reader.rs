@@ -105,17 +105,14 @@ impl PEFileReader {
 
         // // self.dump_metadata_tables(&metadata_streams);
 
-        Some(Image {
-            cli_info: CLIInfo {
+        Some(Image::new(
+            CLIInfo {
                 cli_header,
                 sections,
             },
-            metadata: metadata_streams,
-            method_cache: FxHashMap::default(),
-            class_cache: FxHashMap::default(),
-            known_virtual_methods: FxHashMap::default(),
-            reader: None,
-        })
+            metadata_streams,
+            None,
+        ))
     }
 
     pub fn read_method(

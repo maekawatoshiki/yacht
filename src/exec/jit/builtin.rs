@@ -206,21 +206,20 @@ pub fn write_line_string(s: *mut String) {
 }
 
 #[no_mangle]
-pub fn write_line_string_obj(s: *mut String, o: *mut u8) {
-    unsafe {
-        let string = { &*s };
-        let class_int32 = o as *mut u64;
-        let vtable = *class_int32.offset(0) as *mut u64;
-        let to_string = ::std::mem::transmute::<u64, fn(*mut u8) -> *mut String>(*vtable.offset(0));
-        let string2 = &*to_string(class_int32 as *mut u8);
-        for (i, s) in string.split("{0}").enumerate() {
-            if i > 0 {
-                print!("{}", string2)
-            }
-            print!("{}", s);
+pub unsafe fn write_line_string_obj(s: *mut String, o: *mut u8) {
+    let string = { &*s };
+    let class_int32 = o as *mut u64;
+    let method_table = *class_int32.offset(0) as *mut u64;
+    let to_string =
+        ::std::mem::transmute::<u64, fn(*mut u8) -> *mut String>(*method_table.offset(0));
+    let string2 = &*to_string(class_int32 as *mut u8);
+    for (i, s) in string.split("{0}").enumerate() {
+        if i > 0 {
+            print!("{}", string2)
         }
-        println!();
+        print!("{}", s);
     }
+    println!();
 }
 
 #[no_mangle]
@@ -264,7 +263,12 @@ pub fn int_to_string(int32: *mut u8) -> *mut String {
 
 #[no_mangle]
 pub fn memory_alloc(len: u32) -> *mut u8 {
-    Box::into_raw(vec![0u8; len as usize].into_boxed_slice()) as *mut u8
+    unsafe {
+        // TODO: Is this fast?
+        let mut m: Vec<u8> = Vec::with_capacity(len as usize);
+        m.set_len(len as usize);
+        Box::into_raw(m.into_boxed_slice()) as *mut u8
+    }
 }
 
 #[no_mangle]

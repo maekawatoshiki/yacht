@@ -59,7 +59,7 @@ pub struct JITCompiler<'a> {
     pub builtin_functions: BuiltinFunctions,
     pub strings: Vec<*mut String>,
     pub class_types: ClassTypesHolder,
-    pub vtable_map: FxHashMap<VTablePtr, (LLVMValueRef, Vec<LLVMValueRef>)>,
+    pub method_table_map: FxHashMap<VTablePtr, (LLVMValueRef, Vec<LLVMValueRef>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -109,7 +109,7 @@ impl<'a> JITCompiler<'a> {
             strings: vec![],
             class_types: ClassTypesHolder::new(context),
             builtin_functions: BuiltinFunctions::new(context, module),
-            vtable_map: FxHashMap::default(),
+            method_table_map: FxHashMap::default(),
         }
     }
 
@@ -202,7 +202,7 @@ impl<'a> JITCompiler<'a> {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_before_entry);
 
-        for (_vtable_ptr, (llvm_vtable, vmethods)) in &self.vtable_map {
+        for (_vtable_ptr, (llvm_vtable, vmethods)) in &self.method_table_map {
             if vmethods.len() == 0 {
                 continue;
             }
@@ -803,7 +803,7 @@ impl<'a> JITCompiler<'a> {
                 .as_mdef()
                 .class
                 .borrow()
-                .virtual_methods
+                .method_table
                 .iter()
                 .position(|m| m.borrow().get_name() == &method.as_mdef().name)
                 .unwrap() as u64;
@@ -1009,9 +1009,9 @@ impl<'a> JITCompiler<'a> {
                             ),
                             class_int32,
                         );
-                        let vtable = self.ensure_all_virtual_methods_compiled(
-                            class_system_int32.vtable_ptr,
-                            &class_system_int32.virtual_methods,
+                        let vtable = self.ensure_all_class_methods_compiled(
+                            class_system_int32.method_table_ptr,
+                            &class_system_int32.method_table,
                         );
                         self.store2element(
                             new_obj,
@@ -1108,7 +1108,7 @@ impl<'a> JITCompiler<'a> {
 
                 let class = method.class.borrow();
                 let vtable = self
-                    .ensure_all_virtual_methods_compiled(class.vtable_ptr, &class.virtual_methods);
+                    .ensure_all_class_methods_compiled(class.method_table_ptr, &class.method_table);
 
                 self.store2element(
                     new_obj,
@@ -1226,12 +1226,12 @@ impl<'a> JITCompiler<'a> {
         LLVMBuildTruncOrBitCast(self.builder, val, to, cstr0!())
     }
 
-    unsafe fn ensure_all_virtual_methods_compiled(
+    unsafe fn ensure_all_class_methods_compiled(
         &mut self,
         vtable_ptr: VTablePtr,
         vtable: &Vec<MethodInfoRef>,
     ) -> LLVMValueRef {
-        if let Some((llvm_vtable, _)) = self.vtable_map.get(&vtable_ptr) {
+        if let Some((llvm_vtable, _)) = self.method_table_map.get(&vtable_ptr) {
             return *llvm_vtable;
         }
 
@@ -1262,7 +1262,8 @@ impl<'a> JITCompiler<'a> {
             }
         }
 
-        self.vtable_map.insert(vtable_ptr, (llvm_vtable, vmethods));
+        self.method_table_map
+            .insert(vtable_ptr, (llvm_vtable, vmethods));
 
         llvm_vtable
     }
