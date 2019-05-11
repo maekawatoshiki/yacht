@@ -57,7 +57,6 @@ pub struct JITCompiler<'a> {
     pub env: Environment,
     pub compile_queue: VecDeque<(LLVMValueRef, MethodInfoRef)>,
     pub builtin_functions: BuiltinFunctions,
-    pub strings: Vec<*mut String>,
     pub class_types: ClassTypesHolder,
     pub method_table_map: FxHashMap<VTablePtr, (LLVMValueRef, Vec<LLVMValueRef>)>,
 }
@@ -106,7 +105,6 @@ impl<'a> JITCompiler<'a> {
             phi_stack: FxHashMap::default(),
             env: Environment::new(),
             compile_queue: VecDeque::new(),
-            strings: vec![],
             class_types: ClassTypesHolder::new(context),
             builtin_functions: BuiltinFunctions::new(context, module),
             method_table_map: FxHashMap::default(),
@@ -532,13 +530,12 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldnull => push_i4!(0),
                 Instruction::Ldstr { us_offset } => stack.push(TypedValue::new(
                     Type::string_ty(),
-                    llvm_const_ptr(self.context, {
-                        let s = String::from_utf16_lossy(
-                            self.image.metadata.user_strings.get(&us_offset).unwrap(),
-                        );
-                        self.strings.push(Box::into_raw(Box::new(s)));
-                        *self.strings.last().unwrap() as *mut u64
-                    }),
+                    llvm_const_ptr(
+                        self.context,
+                        Box::into_raw(Box::new(String::from_utf16_lossy(
+                            self.image.get_user_string(*us_offset),
+                        ))) as *mut u64,
+                    ),
                 )),
                 Instruction::Ldc_I4_0 => push_i4!(0),
                 Instruction::Ldc_I4_1 => push_i4!(1),

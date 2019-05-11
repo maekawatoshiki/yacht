@@ -261,20 +261,21 @@ pub fn int_to_string(int32: *mut u8) -> *mut String {
     }
 }
 
+// TODO: Currently use boehm-gc. Replace with better way in the future.
+#[link(name = "gc")]
+extern "C" {
+    fn GC_malloc(len: u32) -> *mut u8;
+    // fn GC_register_finalizer(obj: *mut u8, f: *mut u8, cd: *mut u8, ofn: *mut u8, ocd: *mut u8);
+}
+
 #[no_mangle]
 pub fn memory_alloc(len: u32) -> *mut u8 {
-    unsafe {
-        // TODO: Is this fast?
-        let mut m: Vec<u8> = Vec::with_capacity(len as usize);
-        m.set_len(len as usize);
-        Box::into_raw(m.into_boxed_slice()) as *mut u8
-    }
+    unsafe { GC_malloc(len) }
 }
 
 #[no_mangle]
 pub fn new_szarray(elem_sz: u32, len: u32) -> *mut u8 {
-    let ptr =
-        Box::into_raw(vec![0u8; elem_sz as usize * len as usize + 4].into_boxed_slice()) as *mut u8;
+    let ptr = unsafe { GC_malloc(elem_sz * len + 4) };
     unsafe { *(ptr as *mut u32).add(0) = len };
     ptr
 }
