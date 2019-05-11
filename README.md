@@ -43,8 +43,6 @@ cargo test
 
 5. Run
 
-- With ``--debug`` option, IL interpreter runs before JIT compiler.
-
 ```sh
 cargo run --release examples/XXX.exe
 ```
