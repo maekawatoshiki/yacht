@@ -59,7 +59,7 @@ impl Image {
         let mut extends = vec![];
 
         for (i, typeref) in typerefs.iter().enumerate() {
-            let token = encode_typedef_or_ref_token(TableKind::TypeRef, i as u32 + 1);
+            let token = encode_token(TableKind::TypeRef, i as u32 + 1);
             let tref = retrieve!(typeref, Table::TypeRef);
             let namespace = self.get_string(tref.type_namespace).as_str();
             let name = self.get_string(tref.type_name).as_str();
@@ -85,7 +85,6 @@ impl Image {
                 name: self.get_string(typedef.type_name).clone(),
                 namespace: self.get_string(typedef.type_namespace).clone(),
                 method_table: vec![],
-                method_table_ptr: ::std::ptr::null_mut(),
             }));
 
             self.class_cache.insert(
@@ -136,24 +135,12 @@ impl Image {
         for (class, extends) in extends {
             let (table, entry) = decode_typedef_or_ref_token(extends as u32);
             let typedef_or_ref = self.get_table(table, entry - 1);
-
             match typedef_or_ref {
-                Table::TypeDef(t) => {
+                Table::TypeDef(_) => {
                     class.borrow_mut().parent =
                         Some(self.class_cache.get(&(extends as u32)).unwrap().clone());
-                    dprintln!(
-                        "DEF: {} {}",
-                        self.get_string(t.type_name),
-                        self.get_string(t.type_namespace)
-                    );
                 }
-                Table::TypeRef(t) => {
-                    dprintln!(
-                        "REF: {} {}",
-                        self.get_string(t.type_name),
-                        self.get_string(t.type_namespace)
-                    );
-                }
+                Table::TypeRef(_) => {} // TODO
                 _ => unreachable!(),
             }
         }
@@ -169,12 +156,12 @@ impl Image {
 
     fn construct_class_method_table(&self, class_ref: &ClassInfoRef) {
         let mut class = class_ref.borrow_mut();
-
         let mut method_table = match &class.parent {
             Some(parent) => {
                 self.construct_class_method_table(parent);
                 parent.borrow().method_table.clone()
             }
+            // If already borrowed, it means that ``class`` is System::Object.
             None => self
                 .standard_classes
                 .get_by_name("System", "Object")
@@ -186,23 +173,18 @@ impl Image {
 
         for minforef in &class.methods {
             let minfo = minforef.borrow();
-            let mut new_slot = true;
-
-            for m in &mut method_table {
-                if m.borrow().get_name() == minfo.get_name() {
-                    *m = minforef.clone();
-                    new_slot = false;
-                    break;
-                }
-            }
-
-            if new_slot {
+            if let Some(m) = method_table
+                .iter_mut()
+                .find(|m| m.borrow().get_name() == minfo.get_name())
+            {
+                // Override
+                *m = minforef.clone()
+            } else {
+                // New slot
                 method_table.push(minforef.clone());
             }
         }
 
-        class.method_table_ptr =
-            Box::into_raw(vec![0u64; method_table.len()].into_boxed_slice()) as MethodTablePtr;
         class.method_table = method_table;
     }
 
@@ -244,8 +226,13 @@ impl Image {
             .add("System", "Int32", class_system_int32_ref);
     }
 
-    pub fn get_table(&self, table: u32, entry: u32) -> &Table {
-        &self.metadata.metadata_stream.tables[table as usize][entry as usize]
+    pub fn get_table(&self, table: u32, entry: u32) -> Table {
+        self.metadata.metadata_stream.tables[table as usize][entry as usize]
+    }
+
+    pub fn get_table_by_token(&self, token: u32) -> Table {
+        let (table, entry) = decode_token(token);
+        self.metadata.metadata_stream.tables[table as usize][entry as usize - 1]
     }
 
     pub fn get_string<T: Into<u32>>(&self, n: T) -> &String {

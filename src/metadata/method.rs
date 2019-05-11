@@ -23,7 +23,6 @@ pub enum MethodHeaderType {
 
 pub type MethodInfoRef = Rc<RefCell<MethodInfo>>;
 
-// TODO: Support for MemberRef
 #[derive(Debug, Clone, PartialEq)]
 pub enum MethodInfo {
     MDef(MethodDefInfo),

@@ -189,9 +189,8 @@ impl PEFileReader {
                 let locals_ty = if local_var_sig_tok == 0 {
                     vec![]
                 } else {
-                    let kind = local_var_sig_tok as usize >> (32 - 8);
-                    let row = local_var_sig_tok as usize & 0x00ffffff;
-                    match image.metadata.metadata_stream.tables[kind][row - 1] {
+                    let (table, entry) = decode_token(local_var_sig_tok);
+                    match image.get_table(table, entry - 1) {
                         Table::StandAloneSig(sast) => {
                             let mut blob = image
                                 .metadata

@@ -70,7 +70,7 @@ pub struct Environment {
 
 #[derive(Debug, Clone)]
 pub struct ClassTypesHolder {
-    pub map: FxHashMap<String, FxHashMap<String, LLVMTypeRef>>,
+    map: FxHashMap<String, FxHashMap<String, (LLVMTypeRef, MethodTablePtr)>>,
 }
 
 impl<'a> JITCompiler<'a> {
@@ -584,13 +584,9 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Dup => {
                     stack.push(stack.last().unwrap().clone());
                 }
-                Instruction::Call { table, entry } => {
-                    self.gen_instr_call(&mut stack, *table, *entry)
-                }
-                Instruction::CallVirt { table, entry } => {
-                    self.gen_instr_callvirt(&mut stack, *table, *entry)
-                }
-                Instruction::Box { table, entry } => self.gen_instr_box(&mut stack, *table, *entry),
+                Instruction::Call { token } => self.gen_instr_call(&mut stack, *token),
+                Instruction::CallVirt { token } => self.gen_instr_callvirt(&mut stack, *token),
+                Instruction::Box { token } => self.gen_instr_box(&mut stack, *token),
                 Instruction::Newobj { table, entry } => {
                     self.gen_instr_newobj(&mut stack, *table, *entry)
                 }
@@ -690,17 +686,12 @@ impl<'a> JITCompiler<'a> {
         Ok(stack)
     }
 
-    unsafe fn gen_instr_call(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
-        self.gen_instr_general_call(stack, table, entry)
+    unsafe fn gen_instr_call(&mut self, stack: &mut Vec<TypedValue>, token: u32) {
+        self.gen_instr_general_call(stack, token)
     }
 
-    unsafe fn gen_instr_callvirt(
-        &mut self,
-        stack: &mut Vec<TypedValue>,
-        table: usize,
-        entry: usize,
-    ) {
-        self.gen_instr_general_call(stack, table, entry)
+    unsafe fn gen_instr_callvirt(&mut self, stack: &mut Vec<TypedValue>, token: u32) {
+        self.gen_instr_general_call(stack, token)
     }
 
     unsafe fn get_function_by_rva(&mut self, rva: u32) -> LLVMValueRef {
@@ -737,12 +728,7 @@ impl<'a> JITCompiler<'a> {
         func
     }
 
-    unsafe fn gen_instr_general_call(
-        &mut self,
-        stack: &mut Vec<TypedValue>,
-        table: usize,
-        entry: usize,
-    ) {
+    unsafe fn gen_instr_general_call(&mut self, stack: &mut Vec<TypedValue>, token: u32) {
         unsafe fn call(
             compiler: &mut JITCompiler,
             stack: &mut Vec<TypedValue>,
@@ -817,11 +803,10 @@ impl<'a> JITCompiler<'a> {
             }
         };
 
-        let table = self.image.metadata.metadata_stream.tables[table][entry - 1];
-        match table {
+        match self.image.get_table_by_token(token) {
             Table::MemberRef(mrt) => {
                 let (table, entry) = mrt.class_table_and_entry();
-                let class = &self.image.metadata.metadata_stream.tables[table][entry - 1];
+                let class = &self.image.get_table(table as u32, entry as u32 - 1);
                 match class {
                     Table::TypeRef(trt) => {
                         let (asm_ref_name, ty_namespace, ty_name) =
@@ -973,31 +958,23 @@ impl<'a> JITCompiler<'a> {
         ))
     }
 
-    unsafe fn gen_instr_box(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
+    unsafe fn gen_instr_box(&mut self, stack: &mut Vec<TypedValue>, token: u32) {
         let val = stack.pop().unwrap().val;
-        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
+        let table = self.image.get_table_by_token(token);
         match table {
             Table::TypeRef(trt) => {
                 // TODO: Refactor
                 let (asm_ref_name, ty_namespace, ty_name) =
-                    self.image.get_info_from_type_ref_table(trt);
+                    self.image.get_info_from_type_ref_table(&trt);
                 match (
                     asm_ref_name.as_str(),
                     ty_namespace.as_str(),
                     ty_name.as_str(),
                 ) {
                     ("mscorlib", "System", "Int32") => {
-                        let class_system_int32_ref = self
-                            .image
-                            .class_cache
-                            .get(&encode_typedef_or_ref_token(
-                                TableKind::TypeRef,
-                                entry as u32,
-                            ))
-                            .unwrap()
-                            .clone();
+                        let class_system_int32_ref =
+                            self.image.class_cache.get(&token).unwrap().clone();
                         let class_system_int32 = class_system_int32_ref.borrow();
-                        println!("{:?}", class_system_int32);
                         let class_int32 = self.class_types.get_by_name("System", "Int32").unwrap();
                         let new_obj = self.typecast(
                             self.call_function(
@@ -1009,8 +986,10 @@ impl<'a> JITCompiler<'a> {
                             ),
                             class_int32,
                         );
-                        let vtable = self.ensure_all_class_methods_compiled(
-                            class_system_int32.method_table_ptr,
+                        let method_table = self.ensure_all_class_methods_compiled(
+                            self.class_types
+                                .get_method_table_ptr(&class_system_int32)
+                                .unwrap(),
                             &class_system_int32.method_table,
                         );
                         self.store2element(
@@ -1019,7 +998,7 @@ impl<'a> JITCompiler<'a> {
                                 llvm_const_int32(self.context, 0),
                                 llvm_const_int32(self.context, 0),
                             ],
-                            vtable,
+                            method_table,
                         );
                         self.store2element(
                             new_obj,
@@ -1107,8 +1086,10 @@ impl<'a> JITCompiler<'a> {
                 self.call_function(func, params);
 
                 let class = method.class.borrow();
-                let vtable = self
-                    .ensure_all_class_methods_compiled(class.method_table_ptr, &class.method_table);
+                let vtable = self.ensure_all_class_methods_compiled(
+                    self.class_types.get_method_table_ptr(&class).unwrap(),
+                    &class.method_table,
+                );
 
                 self.store2element(
                     new_obj,
@@ -1370,6 +1351,19 @@ impl TypedValue {
 
 impl ClassTypesHolder {
     pub unsafe fn new(ctx: LLVMContextRef) -> Self {
+        let system_object =
+            LLVMStructCreateNamed(ctx, CString::new("System::Object").unwrap().as_ptr());
+        let mut fields_ty = vec![LLVMPointerType(
+            LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
+            0,
+        )];
+        LLVMStructSetBody(
+            system_object,
+            fields_ty.as_mut_ptr(),
+            fields_ty.len() as u32,
+            0,
+        );
+
         let system_int32 =
             LLVMStructCreateNamed(ctx, CString::new("System::Int32").unwrap().as_ptr());
         let mut fields_ty = vec![
@@ -1382,12 +1376,30 @@ impl ClassTypesHolder {
             fields_ty.len() as u32,
             0,
         );
+
+        let method_table_len = 1;
+
         Self {
             map: {
                 let mut namespace = FxHashMap::default();
                 namespace.insert("System".to_string(), {
                     let mut name = FxHashMap::default();
-                    name.insert("Int32".to_string(), LLVMPointerType(system_int32, 0));
+                    name.insert(
+                        "Object".to_string(),
+                        (
+                            LLVMPointerType(system_object, 0),
+                            Box::into_raw(vec![0u64; method_table_len].into_boxed_slice())
+                                as MethodTablePtr,
+                        ),
+                    );
+                    name.insert(
+                        "Int32".to_string(),
+                        (
+                            LLVMPointerType(system_int32, 0),
+                            Box::into_raw(vec![0u64; method_table_len].into_boxed_slice())
+                                as MethodTablePtr,
+                        ),
+                    );
                     name
                 });
                 namespace
@@ -1395,29 +1407,35 @@ impl ClassTypesHolder {
         }
     }
 
-    pub fn get(&mut self, class: &ClassInfo) -> Option<LLVMTypeRef> {
+    pub fn get(&self, class: &ClassInfo) -> Option<LLVMTypeRef> {
         if let Some(names) = self.map.get(&class.namespace) {
             if let Some(ty) = names.get(&class.name) {
-                return Some(*ty);
+                return Some((*ty).0);
             }
         }
         None
     }
 
-    pub fn get_by_name(&mut self, namespace: &str, name: &str) -> Option<LLVMTypeRef> {
-        if let Some(names) = self.map.get(namespace) {
-            if let Some(ty) = names.get(name) {
-                return Some(*ty);
-            }
-        }
-        None
+    pub fn get_by_name(&self, namespace: &str, name: &str) -> Option<LLVMTypeRef> {
+        Some(self.map.get(namespace)?.get(name)?.0)
+    }
+
+    pub fn get_method_table_ptr(&self, class: &ClassInfo) -> Option<MethodTablePtr> {
+        Some(self.map.get(&class.namespace)?.get(&class.name)?.1)
     }
 
     pub fn add(&mut self, class: &ClassInfo, ty: LLVMTypeRef) {
         self.map
             .entry(class.namespace.clone())
             .or_insert(FxHashMap::default())
-            .insert(class.name.clone(), ty);
+            .insert(
+                class.name.clone(),
+                (
+                    ty,
+                    Box::into_raw(vec![0u64; class.method_table.len()].into_boxed_slice())
+                        as MethodTablePtr,
+                ),
+            );
     }
 }
 

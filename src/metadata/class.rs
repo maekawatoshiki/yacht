@@ -1,5 +1,5 @@
 use crate::metadata::{method::*, signature::*};
-use std::{cell::RefCell, fmt::Debug, ptr::null_mut, rc::Rc};
+use std::{cell::RefCell, fmt::Debug, rc::Rc};
 
 pub type ClassInfoRef = Rc<RefCell<ClassInfo>>;
 pub type VTablePtr = *mut *mut ::std::ffi::c_void;
@@ -12,9 +12,7 @@ pub struct ClassInfo {
     pub fields: Vec<ClassField>,
     pub methods: Vec<MethodInfoRef>,
     pub parent: Option<ClassInfoRef>,
-
     pub method_table: Vec<MethodInfoRef>,
-    pub method_table_ptr: MethodTablePtr,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -38,7 +36,6 @@ impl ClassInfo {
             methods,
             parent,
             method_table: vec![],
-            method_table_ptr: null_mut(),
         }
     }
 
@@ -56,7 +53,6 @@ impl ClassInfo {
             methods,
             parent,
             method_table: vec![],
-            method_table_ptr: null_mut(),
         }))
     }
 }
