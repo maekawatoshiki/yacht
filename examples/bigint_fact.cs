@@ -15,6 +15,7 @@ class BigIntList {
     }
 
     Console.Write(n);
+    Console.Write(" ");
   }
 }
 
@@ -34,14 +35,10 @@ class BigInt {
 
     for (;;) {
       cl.n += carry;
-      if (al != null) {
-        cl.n += al.n;
-        al = al.next;
-      }
-      if (bl != null) {
-        cl.n += bl.n;
-        bl = bl.next;
-      }
+
+      if (al != null) { cl.n += al.n; al = al.next; }
+      if (bl != null) { cl.n += bl.n; bl = bl.next; }
+
       carry = cl.n / 1000000000;
       cl.n %=        1000000000;
       
@@ -56,9 +53,7 @@ class BigInt {
 
   public BigInt Mul(BigInt val, int n) {
     var ret = new BigInt(0);
-    for (int i = 0; i < n; i++) {
-      ret = ret.Add(val);
-    }
+    for (int i = 0; i < n; i++) ret = ret.Add(val);
     return ret;
   }
 
