@@ -28,11 +28,12 @@ rustup override set nightly
 
 3. Install dependencies
   - LLVM 6.0
+  - Boehm GC
   - (Other packages as necessary...)
 
 ```sh
 # e.g. Ubuntu or Debian
-apt-get install llvm-6.0
+apt-get install llvm-6.0 libgc-dev
 ```
 
 4. Test 
