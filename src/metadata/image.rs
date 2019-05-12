@@ -271,11 +271,8 @@ impl Image {
         &self,
         type_ref_table: &TypeRefTable,
     ) -> (&String, &String, &String) {
-        let (table, entry) = type_ref_table.resolution_scope_table_and_entry();
-        let assembly_ref_table = retrieve!(
-            self.get_table(DecodedToken(table, entry)),
-            Table::AssemblyRef
-        );
+        let token = type_ref_table.resolution_scope_table_and_entry();
+        let assembly_ref_table = retrieve!(self.get_table(token), Table::AssemblyRef);
         let asm_ref_name = self.get_string(assembly_ref_table.name);
         let ty_namespace = self.get_string(type_ref_table.type_namespace);
         let ty_name = self.get_string(type_ref_table.type_name);

@@ -256,17 +256,8 @@ impl MemberRefTable {
 }
 
 impl TypeRefTable {
-    pub fn resolution_scope_table_and_entry(&self) -> (u32, u32) {
-        let tag = self.resolution_scope & 0b11; // ResolutionScope
-        let table = match tag {
-            0 => TableKind::Module.into_num(),
-            1 => TableKind::ModuleRef.into_num(),
-            2 => TableKind::AssemblyRef.into_num(),
-            3 => TableKind::TypeRef.into_num(),
-            _ => unreachable!(),
-        } as u32;
-        let entry = self.resolution_scope as u32 >> 2;
-        (table, entry)
+    pub fn resolution_scope_table_and_entry(&self) -> DecodedToken {
+        decode_resolution_scope_token(self.resolution_scope)
     }
 }
 

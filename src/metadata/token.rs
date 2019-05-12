@@ -27,18 +27,23 @@ impl Into<Token> for DecodedToken {
     }
 }
 
-pub fn encode_typedef_or_ref_token(table: TableKind, entry: u32) -> u32 {
-    let tag = match table {
-        TableKind::TypeDef => 0,
-        TableKind::TypeRef => 1,
-        TableKind::TypeSpec => 2,
+pub fn decode_resolution_scope_token<T: Into<u32>>(token: T) -> DecodedToken {
+    let token: u32 = token.into();
+    let tag = token & 0b11;
+    let table: u32 = match tag {
+        0 => TableKind::Module,
+        1 => TableKind::ModuleRef,
+        2 => TableKind::AssemblyRef,
+        3 => TableKind::TypeRef,
         _ => unreachable!(),
-    };
-    let idx = entry << 2;
-    tag | idx
+    }
+    .into();
+    let entry = token >> 2;
+    DecodedToken(table, entry)
 }
 
-pub fn decode_typedef_or_ref_token(token: u32) -> DecodedToken {
+pub fn decode_typedef_or_ref_token<T: Into<u32>>(token: T) -> DecodedToken {
+    let token: u32 = token.into();
     let tag = token & 0b11;
     let idx = token >> 2;
     DecodedToken(
