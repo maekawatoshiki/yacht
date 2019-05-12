@@ -1,4 +1,4 @@
-use crate::metadata::{class::*, image::*};
+use crate::metadata::{class::*, image::*, token::*};
 use std::{fmt, iter::repeat_with, slice::Iter};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -145,7 +145,9 @@ impl Type {
 
     fn class_into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
         let token = decompress_uint(sig).unwrap();
-        let class_ref = image.class_cache.get(&token)?;
+        let class_ref = image
+            .class_cache
+            .get(&decode_typedef_or_ref_token(token).into())?;
         Some(Type::new(ElementType::Class(class_ref.clone())))
     }
 }

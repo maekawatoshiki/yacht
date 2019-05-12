@@ -973,7 +973,7 @@ impl<'a> JITCompiler<'a> {
                 ) {
                     ("mscorlib", "System", "Int32") => {
                         let class_system_int32_ref =
-                            self.image.class_cache.get(&token).unwrap().clone();
+                            self.image.class_cache.get(&token.into()).unwrap().clone();
                         let class_system_int32 = class_system_int32_ref.borrow();
                         let class_int32 = self.class_types.get_by_name("System", "Int32").unwrap();
                         let new_obj = self.typecast(

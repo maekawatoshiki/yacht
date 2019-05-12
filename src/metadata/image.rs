@@ -2,7 +2,6 @@ use crate::metadata::{class::*, file_reader::*, metadata::*, method::*, signatur
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
 
-pub type Token = u32;
 pub type RVA = u32;
 
 #[derive(Debug, Clone)]
@@ -59,7 +58,7 @@ impl Image {
         let mut extends = vec![];
 
         for (i, typeref) in typerefs.iter().enumerate() {
-            let token = encode_token(TableKind::TypeRef, i as u32 + 1);
+            let token = encode_token(TableKind::TypeRef.into(), i as u32 + 1);
             let tref = retrieve!(typeref, Table::TypeRef);
             let namespace = self.get_string(tref.type_namespace).as_str();
             let name = self.get_string(tref.type_name).as_str();
@@ -88,7 +87,7 @@ impl Image {
             }));
 
             self.class_cache.insert(
-                encode_typedef_or_ref_token(TableKind::TypeDef, i as u32 + 1),
+                encode_token(TableKind::TypeDef.into(), i as u32 + 1),
                 class_info.clone(),
             );
             methods_to_setup.push((class_info.clone(), method_list_bgn..method_list_end));
@@ -133,12 +132,12 @@ impl Image {
         }
 
         for (class, extends) in extends {
-            let (table, entry) = decode_typedef_or_ref_token(extends as u32);
-            let typedef_or_ref = self.get_table(DecodedToken(table, entry));
+            let token = decode_typedef_or_ref_token(extends as u32);
+            let typedef_or_ref = self.get_table(token);
             match typedef_or_ref {
                 Table::TypeDef(_) => {
                     class.borrow_mut().parent =
-                        Some(self.class_cache.get(&(extends as u32)).unwrap().clone());
+                        Some(self.class_cache.get(&token.into()).unwrap().clone());
                 }
                 Table::TypeRef(_) => {} // TODO
                 _ => unreachable!(),
