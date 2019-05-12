@@ -1,3 +1,5 @@
+use crate::metadata::token::*;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum Instruction {
@@ -23,7 +25,7 @@ pub enum Instruction {
     Ldloc_2,
     Ldloc_3,
     Ldloc_S { n: u8 },
-    Ldfld { table: usize, entry: usize },
+    Ldfld { token: Token },
     Ldelem_I1,
     Ldelem_U1,
     Ldelem_I4,
@@ -32,7 +34,7 @@ pub enum Instruction {
     Stloc_2,
     Stloc_3,
     Stloc_S { n: u8 },
-    Stfld { table: usize, entry: usize },
+    Stfld { token: Token },
     Stelem_I1,
     Stelem_I4,
     Ldlen,
@@ -55,11 +57,11 @@ pub enum Instruction {
     Mul,
     Div,
     Rem,
-    Call { token: u32 },
-    CallVirt { token: u32 },
-    Box { token: u32 },
-    Newobj { table: usize, entry: usize },
-    Newarr { table: usize, entry: usize },
+    Call { token: Token },
+    CallVirt { token: Token },
+    Box { token: Token },
+    Newobj { token: Token },
+    Newarr { token: Token },
     Ret,
 }
 

@@ -1,5 +1,4 @@
-use crate::exec::instruction::*;
-// mdt.rva
+use crate::{exec::instruction::*, metadata::token::*};
 use rustc_hash::FxHashMap;
 use std::{iter::Enumerate, slice::Iter};
 
@@ -32,28 +31,24 @@ impl<'a> BytesToInstructions<'a> {
                     iseq.push(Instruction::Ldstr { us_offset })
                 }
                 il_instr::CALL => {
-                    let token = self.read_u32()?;
+                    let token = Token(self.read_u32()?);
                     iseq.push(Instruction::Call { token })
                 }
                 il_instr::CALLVIRT => {
-                    let token = self.read_u32()?;
+                    let token = Token(self.read_u32()?);
                     iseq.push(Instruction::CallVirt { token })
                 }
                 il_instr::BOX => {
-                    let token = self.read_u32()?;
+                    let token = Token(self.read_u32()?);
                     iseq.push(Instruction::Box { token })
                 }
                 il_instr::NEWOBJ => {
-                    let token = self.read_u32()?;
-                    let table = token as usize >> (32 - 8);
-                    let entry = token as usize & 0x00ff_ffff;
-                    iseq.push(Instruction::Newobj { table, entry })
+                    let token = Token(self.read_u32()?);
+                    iseq.push(Instruction::Newobj { token })
                 }
                 il_instr::NEWARR => {
-                    let token = self.read_u32()?;
-                    let table = token as usize >> (32 - 8);
-                    let entry = token as usize & 0x00ff_ffff;
-                    iseq.push(Instruction::Newarr { table, entry })
+                    let token = Token(self.read_u32()?);
+                    iseq.push(Instruction::Newarr { token })
                 }
                 il_instr::LDC_I4_0 => iseq.push(Instruction::Ldc_I4_0),
                 il_instr::LDC_I4_1 => iseq.push(Instruction::Ldc_I4_1),
@@ -85,10 +80,8 @@ impl<'a> BytesToInstructions<'a> {
                     iseq.push(Instruction::Ldloc_S { n })
                 }
                 il_instr::LDFLD => {
-                    let token = self.read_u32()?;
-                    let table = token as usize >> (32 - 8);
-                    let entry = token as usize & 0x00ff_ffff;
-                    iseq.push(Instruction::Ldfld { table, entry })
+                    let token = Token(self.read_u32()?);
+                    iseq.push(Instruction::Ldfld { token })
                 }
                 il_instr::LDELEM_U1 => iseq.push(Instruction::Ldelem_U1),
                 il_instr::LDELEM_I1 => iseq.push(Instruction::Ldelem_I1),
@@ -102,10 +95,8 @@ impl<'a> BytesToInstructions<'a> {
                     iseq.push(Instruction::Stloc_S { n })
                 }
                 il_instr::STFLD => {
-                    let token = self.read_u32()?;
-                    let table = token as usize >> (32 - 8);
-                    let entry = token as usize & 0x00ff_ffff;
-                    iseq.push(Instruction::Stfld { table, entry })
+                    let token = Token(self.read_u32()?);
+                    iseq.push(Instruction::Stfld { token })
                 }
                 il_instr::STELEM_I1 => iseq.push(Instruction::Stelem_I1),
                 il_instr::STELEM_I4 => iseq.push(Instruction::Stelem_I4),

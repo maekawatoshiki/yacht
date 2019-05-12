@@ -94,8 +94,6 @@ impl PEFileReader {
         let metadata_streams =
             self.read_metadata_streams(metadata_offset, &metadata_header, &stream_headers)?;
 
-        // // self.dump_metadata_tables(&metadata_streams);
-
         Some(Image::new(
             CLIInfo {
                 cli_header,
@@ -180,7 +178,7 @@ impl PEFileReader {
                 let locals_ty = if local_var_sig_tok == 0 {
                     vec![]
                 } else {
-                    match image.get_table(local_var_sig_tok) {
+                    match image.get_table_entry(local_var_sig_tok) {
                         Table::StandAloneSig(sast) => {
                             let mut blob = image
                                 .metadata

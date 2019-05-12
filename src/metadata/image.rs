@@ -133,7 +133,7 @@ impl Image {
 
         for (class, extends) in extends {
             let token = decode_typedef_or_ref_token(extends as u32);
-            let typedef_or_ref = self.get_table(token);
+            let typedef_or_ref = self.get_table_entry(token);
             match typedef_or_ref {
                 Table::TypeDef(_) => {
                     class.borrow_mut().parent =
@@ -225,7 +225,7 @@ impl Image {
             .add("System", "Int32", class_system_int32_ref);
     }
 
-    pub fn get_table<T: Into<Token>>(&self, token: T) -> Table {
+    pub fn get_table_entry<T: Into<Token>>(&self, token: T) -> Table {
         let DecodedToken(table, entry) = decode_token(token.into());
         self.metadata.metadata_stream.tables[table as usize][entry as usize - 1]
     }
@@ -239,7 +239,7 @@ impl Image {
     }
 
     pub fn get_entry_method(&mut self) -> MethodInfoRef {
-        let method_or_file = self.get_table(self.cli_info.cli_header.entry_point_token);
+        let method_or_file = self.get_table_entry(self.cli_info.cli_header.entry_point_token);
         let mdef = match method_or_file {
             Table::MethodDef(t) => t,
             // TOOD: File
@@ -272,7 +272,7 @@ impl Image {
         type_ref_table: &TypeRefTable,
     ) -> (&String, &String, &String) {
         let token = type_ref_table.resolution_scope_table_and_entry();
-        let assembly_ref_table = retrieve!(self.get_table(token), Table::AssemblyRef);
+        let assembly_ref_table = retrieve!(self.get_table_entry(token), Table::AssemblyRef);
         let asm_ref_name = self.get_string(assembly_ref_table.name);
         let ty_namespace = self.get_string(type_ref_table.type_namespace);
         let ty_name = self.get_string(type_ref_table.type_name);

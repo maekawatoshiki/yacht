@@ -138,9 +138,3 @@ impl BrKind {
         }
     }
 }
-
-impl BasicBlock {
-    pub fn code_end_position(&self) -> usize {
-        self.start + self.code.len()
-    }
-}

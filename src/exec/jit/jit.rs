@@ -196,22 +196,22 @@ impl<'a> JITCompiler<'a> {
             self.generate_func(func, &method);
         }
 
-        // Set all the virtual functions to the appropriate vtable
+        // Set all the class methods to the appropriate method_table
 
         LLVMPositionBuilderAtEnd(self.builder, bb_before_entry);
 
-        for (_vtable_ptr, (llvm_vtable, vmethods)) in &self.method_table_map {
-            if vmethods.len() == 0 {
+        for (_, (llvm_method_table, methods)) in &self.method_table_map {
+            if methods.len() == 0 {
                 continue;
             }
 
-            let vtable = self.typecast(*llvm_vtable, LLVMPointerType(LLVMTypeOf(vmethods[0]), 0));
-            for (i, vmethod) in vmethods.iter().enumerate() {
-                self.store2element(
-                    vtable,
-                    vec![llvm_const_int32(self.context, i as u64)],
-                    *vmethod,
-                );
+            let method_table = self.typecast(
+                *llvm_method_table,
+                LLVMPointerType(LLVMTypeOf(methods[0]), 0),
+            );
+
+            for (i, vmethod) in methods.iter().enumerate() {
+                self.store2element(method_table, vec![self.llvm_int32(i as u64)], *vmethod);
             }
         }
 
@@ -498,7 +498,7 @@ impl<'a> JITCompiler<'a> {
         #[rustfmt::skip]
         macro_rules! push_i4 { ($n:expr) => {
              stack.push(TypedValue::new(
-                Type::i4_ty(), llvm_const_int32(self.context, $n as u64),
+                Type::i4_ty(), self.llvm_int32($n as u64),
             ))
         }}
         #[rustfmt::skip]
@@ -530,12 +530,9 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldnull => push_i4!(0),
                 Instruction::Ldstr { us_offset } => stack.push(TypedValue::new(
                     Type::string_ty(),
-                    llvm_const_ptr(
-                        self.context,
-                        Box::into_raw(Box::new(String::from_utf16_lossy(
-                            self.image.get_user_string(*us_offset),
-                        ))) as *mut u64,
-                    ),
+                    self.llvm_ptr(Box::into_raw(Box::new(String::from_utf16_lossy(
+                        self.image.get_user_string(*us_offset),
+                    ))) as *mut u8),
                 )),
                 Instruction::Ldc_I4_0 => push_i4!(0),
                 Instruction::Ldc_I4_1 => push_i4!(1),
@@ -553,9 +550,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldloc_2 => ldloc!(2),
                 Instruction::Ldloc_3 => ldloc!(3),
                 Instruction::Ldloc_S { n } => ldloc!(*n as usize),
-                Instruction::Ldfld { table, entry } => {
-                    self.gen_instr_ldfld(&mut stack, *table, *entry)
-                }
+                Instruction::Ldfld { token } => self.gen_instr_ldfld(&mut stack, *token),
                 Instruction::Ldelem_U1 => self.gen_instr_ldelem_i1(&mut stack),
                 Instruction::Ldelem_I1 => self.gen_instr_ldelem_i1(&mut stack),
                 Instruction::Ldelem_I4 => self.gen_instr_ldelem_i4(&mut stack),
@@ -564,9 +559,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Stloc_2 => stloc!(2),
                 Instruction::Stloc_3 => stloc!(3),
                 Instruction::Stloc_S { n } => stloc!(*n as usize),
-                Instruction::Stfld { table, entry } => {
-                    self.gen_instr_stfld(&mut stack, *table, *entry)
-                }
+                Instruction::Stfld { token } => self.gen_instr_stfld(&mut stack, *token),
                 Instruction::Stelem_I1 => self.gen_instr_stelem_i1(&mut stack),
                 Instruction::Stelem_I4 => self.gen_instr_stelem_i4(&mut stack),
                 Instruction::Ldarg_0 => ldarg!(0),
@@ -584,12 +577,8 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Call { token } => self.gen_instr_call(&mut stack, *token),
                 Instruction::CallVirt { token } => self.gen_instr_callvirt(&mut stack, *token),
                 Instruction::Box { token } => self.gen_instr_box(&mut stack, *token),
-                Instruction::Newobj { table, entry } => {
-                    self.gen_instr_newobj(&mut stack, *table, *entry)
-                }
-                Instruction::Newarr { table, entry } => {
-                    self.gen_instr_newarr(&mut stack, *table, *entry)
-                }
+                Instruction::Newobj { token } => self.gen_instr_newobj(&mut stack, *token),
+                Instruction::Newarr { token } => self.gen_instr_newarr(&mut stack, *token),
                 Instruction::Add => binop!(Add),
                 Instruction::Sub => binop!(Sub),
                 Instruction::Mul => binop!(Mul),
@@ -683,11 +672,11 @@ impl<'a> JITCompiler<'a> {
         Ok(stack)
     }
 
-    unsafe fn gen_instr_call(&mut self, stack: &mut Vec<TypedValue>, token: u32) {
+    unsafe fn gen_instr_call(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         self.gen_instr_general_call(stack, token)
     }
 
-    unsafe fn gen_instr_callvirt(&mut self, stack: &mut Vec<TypedValue>, token: u32) {
+    unsafe fn gen_instr_callvirt(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         self.gen_instr_general_call(stack, token)
     }
 
@@ -725,7 +714,7 @@ impl<'a> JITCompiler<'a> {
         func
     }
 
-    unsafe fn gen_instr_general_call(&mut self, stack: &mut Vec<TypedValue>, token: u32) {
+    unsafe fn gen_instr_general_call(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         unsafe fn call(
             compiler: &mut JITCompiler,
             stack: &mut Vec<TypedValue>,
@@ -775,13 +764,8 @@ impl<'a> JITCompiler<'a> {
                 .collect();
             let obj = args[0];
 
-            let vtable = compiler.load_element(
-                obj,
-                vec![
-                    llvm_const_int32(compiler.context, 0),
-                    llvm_const_int32(compiler.context, 0),
-                ],
-            );
+            let method_table =
+                compiler.load_element(obj, vec![compiler.llvm_int32(0), compiler.llvm_int32(0)]);
             let idx = method
                 .as_mdef()
                 .class
@@ -790,8 +774,7 @@ impl<'a> JITCompiler<'a> {
                 .iter()
                 .position(|m| m.borrow().get_name() == &method.as_mdef().name)
                 .unwrap() as u64;
-            let raw_vmethod =
-                compiler.load_element(vtable, vec![llvm_const_int32(compiler.context, idx)]);
+            let raw_vmethod = compiler.load_element(method_table, vec![compiler.llvm_int32(idx)]);
             let vmethod = compiler.typecast(raw_vmethod, method_ty);
 
             let ret = compiler.call_function(vmethod, args);
@@ -800,10 +783,10 @@ impl<'a> JITCompiler<'a> {
             }
         };
 
-        match self.image.get_table(token) {
+        match self.image.get_table_entry(token) {
             Table::MemberRef(mrt) => {
                 let token = mrt.class_table_and_entry();
-                let class = &self.image.get_table(token);
+                let class = &self.image.get_table_entry(token);
                 match class {
                     Table::TypeRef(trt) => {
                         let (asm_ref_name, ty_namespace, ty_name) =
@@ -840,21 +823,18 @@ impl<'a> JITCompiler<'a> {
         }
     }
 
-    unsafe fn gen_instr_stfld(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
+    unsafe fn gen_instr_stfld(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let val = stack.pop().unwrap();
         let obj = stack.pop().unwrap();
-        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
-        match table {
+        match self.image.get_table_entry(token) {
             Table::Field(f) => {
                 let name = self.image.get_string(f.name);
                 let class = &obj.ty.as_class().unwrap().borrow();
-                let idx = class.fields.iter().position(|f| &f.name == name).unwrap() + /*vtable=*/1;
+                let idx =
+                    class.fields.iter().position(|f| &f.name == name).unwrap() + /*method_table=*/1;
                 self.store2element(
                     obj.val,
-                    vec![
-                        llvm_const_int32(self.context, 0),
-                        llvm_const_int32(self.context, idx as u64),
-                    ],
+                    vec![self.llvm_int32(0), self.llvm_int32(idx as u64)],
                     val.val,
                 )
             }
@@ -862,12 +842,9 @@ impl<'a> JITCompiler<'a> {
         }
     }
 
-    unsafe fn gen_instr_ldfld(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
+    unsafe fn gen_instr_ldfld(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let obj = stack.pop().unwrap();
-        match &self
-            .image
-            .get_table(DecodedToken(table as u32, entry as u32))
-        {
+        match self.image.get_table_entry(token) {
             Table::Field(f) => {
                 let name = self.image.get_string(f.name);
                 let class = &obj.ty.as_class().unwrap().borrow();
@@ -883,8 +860,8 @@ impl<'a> JITCompiler<'a> {
                     self.load_element(
                         obj.val,
                         vec![
-                            llvm_const_int32(self.context, 0),
-                            llvm_const_int32(self.context, idx as u64 + /*vtable=*/1),
+                            self.llvm_int32(0),
+                            self.llvm_int32(idx as u64 + /*method_table=*/1),
                         ],
                     ),
                 ));
@@ -911,7 +888,7 @@ impl<'a> JITCompiler<'a> {
             vec![LLVMBuildAdd(
                 self.builder,
                 index,
-                llvm_const_int32(self.context, 4),
+                self.llvm_int32(4),
                 cstr0!(),
             )],
         )
@@ -934,7 +911,7 @@ impl<'a> JITCompiler<'a> {
             vec![LLVMBuildAdd(
                 self.builder,
                 index,
-                llvm_const_int32(self.context, 4),
+                self.llvm_int32(4),
                 cstr0!(),
             )],
             value,
@@ -946,7 +923,7 @@ impl<'a> JITCompiler<'a> {
             stack.pop().unwrap().val,
             LLVMPointerType(LLVMInt32TypeInContext(self.context), 0),
         );
-        let index = self.load_element(array, vec![llvm_const_int32(self.context, 0)]);
+        let index = self.load_element(array, vec![self.llvm_int32(0)]);
         stack.push(TypedValue::new(Type::i4_ty(), index));
     }
 
@@ -958,10 +935,9 @@ impl<'a> JITCompiler<'a> {
         ))
     }
 
-    unsafe fn gen_instr_box(&mut self, stack: &mut Vec<TypedValue>, token: u32) {
+    unsafe fn gen_instr_box(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let val = stack.pop().unwrap().val;
-        let table = self.image.get_table(token);
-        match table {
+        match self.image.get_table_entry(token) {
             Table::TypeRef(trt) => {
                 // TODO: Refactor
                 let (asm_ref_name, ty_namespace, ty_name) =
@@ -994,18 +970,12 @@ impl<'a> JITCompiler<'a> {
                         );
                         self.store2element(
                             new_obj,
-                            vec![
-                                llvm_const_int32(self.context, 0),
-                                llvm_const_int32(self.context, 0),
-                            ],
+                            vec![self.llvm_int32(0), self.llvm_int32(0)],
                             method_table,
                         );
                         self.store2element(
                             new_obj,
-                            vec![
-                                llvm_const_int32(self.context, 0),
-                                llvm_const_int32(self.context, 1),
-                            ],
+                            vec![self.llvm_int32(0), self.llvm_int32(1)],
                             val,
                         );
                         stack.push(TypedValue::new(Type::object_ty(), new_obj));
@@ -1017,14 +987,13 @@ impl<'a> JITCompiler<'a> {
         }
     }
 
-    unsafe fn gen_instr_newarr(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
+    unsafe fn gen_instr_newarr(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let len = stack.pop().unwrap().val;
-        let table = &self.image.metadata.metadata_stream.tables[table][entry - 1];
-        match table {
+        match self.image.get_table_entry(token) {
             Table::TypeRef(trt) => {
                 // TODO: Refactor
                 let (asm_ref_name, ty_namespace, ty_name) =
-                    self.image.get_info_from_type_ref_table(trt);
+                    self.image.get_info_from_type_ref_table(&trt);
                 match (
                     asm_ref_name.as_str(),
                     ty_namespace.as_str(),
@@ -1043,7 +1012,7 @@ impl<'a> JITCompiler<'a> {
                                     .get_helper_function("new_szarray")
                                     .unwrap()
                                     .llvm_function,
-                                vec![llvm_const_int32(self.context, sz), len],
+                                vec![self.llvm_int32(sz), len],
                             ),
                             llvm_szarr_ty,
                         );
@@ -1056,9 +1025,8 @@ impl<'a> JITCompiler<'a> {
         }
     }
 
-    unsafe fn gen_instr_newobj(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
-        let table = self.image.metadata.metadata_stream.tables[table][entry - 1];
-        match table {
+    unsafe fn gen_instr_newobj(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
+        match self.image.get_table_entry(token) {
             Table::MemberRef(_mrt) => {} // TODO
             Table::MethodDef(mdt) => {
                 let method_ref = self.image.get_method_by_rva(mdt.rva);
@@ -1086,18 +1054,15 @@ impl<'a> JITCompiler<'a> {
                 self.call_function(func, params);
 
                 let class = method.class.borrow();
-                let vtable = self.ensure_all_class_methods_compiled(
+                let method_table = self.ensure_all_class_methods_compiled(
                     self.class_types.get_method_table_ptr(&class).unwrap(),
                     &class.method_table,
                 );
 
                 self.store2element(
                     new_obj,
-                    vec![
-                        llvm_const_int32(self.context, 0),
-                        llvm_const_int32(self.context, 0),
-                    ],
-                    vtable,
+                    vec![self.llvm_int32(0), self.llvm_int32(0)],
+                    method_table,
                 );
 
                 stack.push(TypedValue::new(
@@ -1149,7 +1114,7 @@ impl<'a> JITCompiler<'a> {
             .map(|ClassField { ty, .. }| ty.to_llvmty(self))
             .collect::<Vec<LLVMTypeRef>>();
 
-        // vtable always occupies the first field
+        // method_table always occupies the first field
         fields_ty.insert(
             0,
             LLVMPointerType(LLVMPointerType(LLVMInt8TypeInContext(self.context), 0), 0),
@@ -1164,7 +1129,7 @@ impl<'a> JITCompiler<'a> {
         LLVMConstPtrToInt(
             LLVMConstGEP(
                 LLVMConstNull(class),
-                vec![llvm_const_int32(self.context, 1)].as_mut_ptr(),
+                vec![self.llvm_int32(1)].as_mut_ptr(),
                 1,
             ),
             LLVMInt32TypeInContext(self.context),
@@ -1209,17 +1174,17 @@ impl<'a> JITCompiler<'a> {
 
     unsafe fn ensure_all_class_methods_compiled(
         &mut self,
-        vtable_ptr: VTablePtr,
-        vtable: &Vec<MethodInfoRef>,
+        method_table_ptr: VTablePtr,
+        method_table: &Vec<MethodInfoRef>,
     ) -> LLVMValueRef {
-        if let Some((llvm_vtable, _)) = self.method_table_map.get(&vtable_ptr) {
-            return *llvm_vtable;
+        if let Some((llvm_method_table, _)) = self.method_table_map.get(&method_table_ptr) {
+            return *llvm_method_table;
         }
 
-        let llvm_vtable = llvm_const_ptr(self.context, vtable_ptr as *mut u64);
+        let llvm_method_table = self.llvm_ptr(method_table_ptr as *mut u8);
         let mut vmethods = vec![];
 
-        for vmethod in vtable {
+        for vmethod in method_table {
             match &*vmethod.borrow() {
                 MethodInfo::MDef(m) => vmethods.push(self.get_function_by_rva(m.rva)),
                 // TODO
@@ -1244,9 +1209,9 @@ impl<'a> JITCompiler<'a> {
         }
 
         self.method_table_map
-            .insert(vtable_ptr, (llvm_vtable, vmethods));
+            .insert(method_table_ptr, (llvm_method_table, vmethods));
 
-        llvm_vtable
+        llvm_method_table
     }
 
     unsafe fn load_element(&self, obj: LLVMValueRef, mut idx: Vec<LLVMValueRef>) -> LLVMValueRef {
@@ -1278,6 +1243,14 @@ impl<'a> JITCompiler<'a> {
             self.typecast(val, LLVMGetElementType(LLVMTypeOf(gep))),
             gep,
         );
+    }
+
+    unsafe fn llvm_int32(&self, n: u64) -> LLVMValueRef {
+        llvm_const_int32(self.context, n)
+    }
+
+    unsafe fn llvm_ptr(&self, ptr: *mut u8) -> LLVMValueRef {
+        llvm_const_ptr(self.context, ptr)
     }
 }
 
@@ -1443,7 +1416,7 @@ unsafe fn llvm_const_int32(ctx: LLVMContextRef, n: u64) -> LLVMValueRef {
     LLVMConstInt(LLVMInt32TypeInContext(ctx), n, 1)
 }
 
-unsafe fn llvm_const_ptr(ctx: LLVMContextRef, p: *mut u64) -> LLVMValueRef {
+unsafe fn llvm_const_ptr(ctx: LLVMContextRef, p: *mut u8) -> LLVMValueRef {
     let ptr_as_int = LLVMConstInt(LLVMInt64TypeInContext(ctx), p as u64, 0);
     let const_ptr = LLVMConstIntToPtr(ptr_as_int, LLVMPointerType(LLVMInt8TypeInContext(ctx), 0));
     const_ptr
