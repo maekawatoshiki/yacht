@@ -1,14 +1,5 @@
 // TODO: What a dirty code
 
-// use super::attribute::{
-//     Annotation, Attribute, AttributeInfo, CodeAttribute, ElementValue, ElementValuePair, Exception,
-//     InnerClassesBody, LineNumber, StackMapFrame, StackMapFrameBody, VerificationTypeInfo,
-// };
-// use super::classfile::ClassFile;
-// use super::constant;
-// use super::constant::{Constant, ConstantType};
-// use super::field::FieldInfo;
-// use super::method::MethodInfo;
 use crate::exec::decode::BytesToInstructions;
 use crate::metadata::{class::*, header::*, image::*, metadata::*, method::*, signature::*};
 use rustc_hash::FxHashMap;
@@ -189,8 +180,7 @@ impl PEFileReader {
                 let locals_ty = if local_var_sig_tok == 0 {
                     vec![]
                 } else {
-                    let (table, entry) = decode_token(local_var_sig_tok);
-                    match image.get_table(table, entry - 1) {
+                    match image.get_table(local_var_sig_tok) {
                         Table::StandAloneSig(sast) => {
                             let mut blob = image
                                 .metadata

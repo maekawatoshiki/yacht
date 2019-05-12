@@ -1,4 +1,7 @@
-use crate::metadata::header::{CLIHeader, SectionHeader};
+use crate::metadata::{
+    header::{CLIHeader, SectionHeader},
+    token::*,
+};
 use rustc_hash::FxHashMap;
 
 #[derive(Debug, Clone)]
@@ -247,18 +250,8 @@ pub struct TypeRefTable {
 }
 
 impl MemberRefTable {
-    pub fn class_table_and_entry(&self) -> (usize, usize) {
-        let tag = self.class & 0b111; // MemberRefParent
-        let table = match tag {
-            0 => TableKind::TypeDef.into_num(),
-            1 => TableKind::TypeRef.into_num(),
-            2 => TableKind::ModuleRef.into_num(),
-            3 => TableKind::MethodDef.into_num(),
-            4 => TableKind::TypeSpec.into_num(),
-            _ => unreachable!(),
-        };
-        let entry = self.class as usize >> 3;
-        (table, entry)
+    pub fn class_table_and_entry(&self) -> DecodedToken {
+        decode_member_ref_parent_token(self.class)
     }
 }
 
@@ -373,6 +366,12 @@ impl TableKind {
             TableKind::TypeRef => 0x01,
             TableKind::TypeSpec => 0x1B,
         }
+    }
+}
+
+impl Into<u32> for TableKind {
+    fn into(self) -> u32 {
+        self.into_num() as u32
     }
 }
 

@@ -1,5 +1,5 @@
-use crate::metadata::{class::*, image::*, metadata::*};
-use std::{iter::repeat_with, slice::Iter};
+use crate::metadata::{class::*, image::*};
+use std::{fmt, iter::repeat_with, slice::Iter};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
@@ -212,8 +212,8 @@ impl MethodSignature {
     }
 }
 
-impl ::std::fmt::Debug for ElementType {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+impl fmt::Debug for ElementType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "ElementType::{}",
@@ -248,37 +248,4 @@ pub fn decompress_uint<'a>(sig: &mut Iter<'a, u8>) -> Option<u32> {
         let u = *sig.next()? as u32;
         Some(((x & 0b0001_1111) << 24) + (y << 16) + (z << 8) + u)
     }
-}
-
-pub fn encode_typedef_or_ref_token(table: TableKind, entry: u32) -> u32 {
-    let tag = match table {
-        TableKind::TypeDef => 0,
-        TableKind::TypeRef => 1,
-        TableKind::TypeSpec => 2,
-        _ => unreachable!(),
-    };
-    let idx = entry << 2;
-    tag | idx
-}
-
-pub fn decode_typedef_or_ref_token(token: u32) -> (u32, u32) {
-    let tag = token & 0b11;
-    let idx = token >> 2;
-    match tag {
-        0 => (TableKind::TypeDef.into_num() as u32, idx),
-        1 => (TableKind::TypeRef.into_num() as u32, idx),
-        2 => (TableKind::TypeSpec.into_num() as u32, idx),
-        _ => unreachable!(),
-    }
-}
-
-pub fn encode_token(table: TableKind, entry: u32) -> u32 {
-    let table = (table.into_num() as u32) << (32 - 8);
-    table | entry
-}
-
-pub fn decode_token(token: u32) -> (u32, u32) {
-    let table = token >> (32 - 8);
-    let entry = token & 0x00ff_ffff;
-    (table, entry)
 }

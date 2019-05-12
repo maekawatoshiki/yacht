@@ -3,7 +3,7 @@ use crate::{
         instruction::*,
         jit::{builtin::*, cfg::*},
     },
-    metadata::{class::*, image::*, metadata::*, method::*, signature::*},
+    metadata::{class::*, image::*, metadata::*, method::*, signature::*, token::*},
 };
 use llvm;
 use llvm::{core::*, prelude::*};
@@ -800,10 +800,10 @@ impl<'a> JITCompiler<'a> {
             }
         };
 
-        match self.image.get_table_by_token(token) {
+        match self.image.get_table(token) {
             Table::MemberRef(mrt) => {
-                let (table, entry) = mrt.class_table_and_entry();
-                let class = &self.image.get_table(table as u32, entry as u32 - 1);
+                let token = mrt.class_table_and_entry();
+                let class = &self.image.get_table(token);
                 match class {
                     Table::TypeRef(trt) => {
                         let (asm_ref_name, ty_namespace, ty_name) =
@@ -864,7 +864,10 @@ impl<'a> JITCompiler<'a> {
 
     unsafe fn gen_instr_ldfld(&mut self, stack: &mut Vec<TypedValue>, table: usize, entry: usize) {
         let obj = stack.pop().unwrap();
-        match &self.image.get_table(table as u32, entry as u32 - 1) {
+        match &self
+            .image
+            .get_table(DecodedToken(table as u32, entry as u32))
+        {
             Table::Field(f) => {
                 let name = self.image.get_string(f.name);
                 let class = &obj.ty.as_class().unwrap().borrow();
@@ -957,7 +960,7 @@ impl<'a> JITCompiler<'a> {
 
     unsafe fn gen_instr_box(&mut self, stack: &mut Vec<TypedValue>, token: u32) {
         let val = stack.pop().unwrap().val;
-        let table = self.image.get_table_by_token(token);
+        let table = self.image.get_table(token);
         match table {
             Table::TypeRef(trt) => {
                 // TODO: Refactor

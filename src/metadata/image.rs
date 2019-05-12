@@ -1,4 +1,4 @@
-use crate::metadata::{class::*, file_reader::*, metadata::*, method::*, signature::*};
+use crate::metadata::{class::*, file_reader::*, metadata::*, method::*, signature::*, token::*};
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
 
@@ -134,7 +134,7 @@ impl Image {
 
         for (class, extends) in extends {
             let (table, entry) = decode_typedef_or_ref_token(extends as u32);
-            let typedef_or_ref = self.get_table(table, entry - 1);
+            let typedef_or_ref = self.get_table(DecodedToken(table, entry));
             match typedef_or_ref {
                 Table::TypeDef(_) => {
                     class.borrow_mut().parent =
@@ -226,12 +226,8 @@ impl Image {
             .add("System", "Int32", class_system_int32_ref);
     }
 
-    pub fn get_table(&self, table: u32, entry: u32) -> Table {
-        self.metadata.metadata_stream.tables[table as usize][entry as usize]
-    }
-
-    pub fn get_table_by_token(&self, token: u32) -> Table {
-        let (table, entry) = decode_token(token);
+    pub fn get_table<T: Into<Token>>(&self, token: T) -> Table {
+        let DecodedToken(table, entry) = decode_token(token.into());
         self.metadata.metadata_stream.tables[table as usize][entry as usize - 1]
     }
 
@@ -244,8 +240,7 @@ impl Image {
     }
 
     pub fn get_entry_method(&mut self) -> MethodInfoRef {
-        let (table, entry) = decode_token(self.cli_info.cli_header.entry_point_token);
-        let method_or_file = self.get_table(table, entry - 1);
+        let method_or_file = self.get_table(self.cli_info.cli_header.entry_point_token);
         let mdef = match method_or_file {
             Table::MethodDef(t) => t,
             // TOOD: File
@@ -278,7 +273,10 @@ impl Image {
         type_ref_table: &TypeRefTable,
     ) -> (&String, &String, &String) {
         let (table, entry) = type_ref_table.resolution_scope_table_and_entry();
-        let assembly_ref_table = retrieve!(self.get_table(table, entry - 1), Table::AssemblyRef);
+        let assembly_ref_table = retrieve!(
+            self.get_table(DecodedToken(table, entry)),
+            Table::AssemblyRef
+        );
         let asm_ref_name = self.get_string(assembly_ref_table.name);
         let ty_namespace = self.get_string(type_ref_table.type_namespace);
         let ty_name = self.get_string(type_ref_table.type_name);
