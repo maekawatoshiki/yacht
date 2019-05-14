@@ -799,18 +799,13 @@ impl<'a> JITCompiler<'a> {
                 let class = &self.image.get_table_entry(token);
                 match class {
                     Table::TypeRef(trt) => {
-                        let (asm_ref_name, ty_namespace, ty_name) =
-                            self.image.get_info_from_type_ref_table(trt);
+                        let type_path = self.image.get_path_from_type_ref_table(trt);
                         let name = self.image.get_string(mrt.name);
                         let ty = self.image.get_method_ref_type_from_signature(mrt.signature);
-
-                        if let Some(f) = self.builtin_functions.get_function(
-                            asm_ref_name.as_str(),
-                            ty_namespace.as_str(),
-                            ty_name.as_str(),
-                            name.as_str(),
-                            &ty,
-                        ) {
+                        if let Some(f) = self
+                            .builtin_functions
+                            .get_method(type_path.with_method_name(name), &ty)
+                        {
                             let method_sig = ty.as_fnptr().unwrap();
                             call(self, stack, f.llvm_function, method_sig);
                         }
@@ -950,13 +945,9 @@ impl<'a> JITCompiler<'a> {
         match self.image.get_table_entry(token) {
             Table::TypeRef(trt) => {
                 // TODO: Refactor
-                let (asm_ref_name, ty_namespace, ty_name) =
-                    self.image.get_info_from_type_ref_table(&trt);
-                match (
-                    asm_ref_name.as_str(),
-                    ty_namespace.as_str(),
-                    ty_name.as_str(),
-                ) {
+                let TypeFullPath(asm_ref_name, ty_namespace, ty_name) =
+                    self.image.get_path_from_type_ref_table(&trt);
+                match (asm_ref_name, ty_namespace, ty_name) {
                     ("mscorlib", "System", "Int32") => {
                         let class_system_int32_ref =
                             self.image.class_cache.get(&token.into()).unwrap().clone();
@@ -1005,13 +996,9 @@ impl<'a> JITCompiler<'a> {
         match self.image.get_table_entry(token) {
             Table::TypeRef(trt) => {
                 // TODO: Refactor
-                let (asm_ref_name, ty_namespace, ty_name) =
-                    self.image.get_info_from_type_ref_table(&trt);
-                match (
-                    asm_ref_name.as_str(),
-                    ty_namespace.as_str(),
-                    ty_name.as_str(),
-                ) {
+                let TypeFullPath(asm_ref_name, ty_namespace, ty_name) =
+                    self.image.get_path_from_type_ref_table(&trt);
+                match (asm_ref_name, ty_namespace, ty_name) {
                     ("mscorlib", "System", ty) => {
                         let (szarr_ty, sz) = match ty {
                             "Int32" => (Type::i4_szarr_ty(), 4),
@@ -1207,11 +1194,13 @@ impl<'a> JITCompiler<'a> {
                     let type_name = class.name.as_str();
                     vmethods.push(
                         self.builtin_functions
-                            .get_function(
-                                "mscorlib",
-                                type_namespace,
-                                type_name,
-                                m.name.as_str(),
+                            .get_method(
+                                MethodFullPath(
+                                    "mscorlib",
+                                    type_namespace,
+                                    type_name,
+                                    m.name.as_str(),
+                                ),
                                 &m.ty,
                             )
                             .unwrap()

@@ -39,3 +39,10 @@ impl<'a> Into<TypeFullPath<'a>> for &'a ClassInfo {
         )
     }
 }
+
+impl<'a> TypeFullPath<'a> {
+    pub fn with_method_name(self, name: &'a str) -> MethodFullPath<'a> {
+        let TypeFullPath(asm_name, ty_namespace, ty_name) = self;
+        MethodFullPath(asm_name, ty_namespace, ty_name, name)
+    }
+}

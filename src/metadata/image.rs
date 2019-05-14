@@ -282,16 +282,16 @@ impl Image {
         self.metadata.blob.get(&n.into()).unwrap()
     }
 
-    pub fn get_info_from_type_ref_table(
-        &self,
+    pub fn get_path_from_type_ref_table<'a>(
+        &'a self,
         type_ref_table: &TypeRefTable,
-    ) -> (&String, &String, &String) {
+    ) -> TypeFullPath<'a> {
         let token = type_ref_table.resolution_scope_table_and_entry();
         let assembly_ref_table = retrieve!(self.get_table_entry(token), Table::AssemblyRef);
-        let asm_ref_name = self.get_string(assembly_ref_table.name);
-        let ty_namespace = self.get_string(type_ref_table.type_namespace);
-        let ty_name = self.get_string(type_ref_table.type_name);
-        (asm_ref_name, ty_namespace, ty_name)
+        let asm_ref_name = self.get_string(assembly_ref_table.name).as_str();
+        let ty_namespace = self.get_string(type_ref_table.type_namespace).as_str();
+        let ty_name = self.get_string(type_ref_table.type_name).as_str();
+        TypeFullPath(asm_ref_name, ty_namespace, ty_name)
     }
 
     pub fn get_method_ref_type_from_signature(&self, signature: u16) -> Type {

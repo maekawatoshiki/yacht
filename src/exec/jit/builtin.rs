@@ -1,12 +1,10 @@
-use crate::metadata::signature::*;
+use crate::{
+    metadata::signature::*,
+    util::{holder::MethodHolder, name_path::*},
+};
 use llvm::{core::*, prelude::*};
 use rustc_hash::FxHashMap;
 use std::ffi::{c_void, CString};
-
-type AssemblyMap = FxHashMap<String, TypeNamespaceMap>;
-type TypeNamespaceMap = FxHashMap<String, TypeNameMap>;
-type TypeNameMap = FxHashMap<String, FunctionMap>;
-type FunctionMap = FxHashMap<String, Vec<Function>>;
 
 #[derive(Clone)]
 pub struct Function {
@@ -17,7 +15,7 @@ pub struct Function {
 
 #[derive(Clone)]
 pub struct BuiltinFunctions {
-    map: AssemblyMap,
+    map: MethodHolder<Function>,
     helper_map: FxHashMap<String, Function>,
 }
 
@@ -122,45 +120,27 @@ impl BuiltinFunctions {
                     def_func!([0x20], str,  [],         object_to_string,      "[mscorlib]System::Object.ToString()"),
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
 
-                macro_rules! hashmap {
-                    ($e:expr) => {{
-                        $e.into_iter()
-                            .map(|(x, y)| (x.to_string(), y))
-                            .collect::<FxHashMap<_, _>>()
-                    }};
-                }
+                let mut holder = MethodHolder::new();
 
-                let console_function_map: FunctionMap =
-                    hashmap!(vec![("WriteLine", write_line), ("Write", write)]);
-                let string_function_map: FunctionMap =
-                    hashmap!(vec![("get_Length", get_length), ("get_Chars", get_chars)]);
-                let object_function_map: FunctionMap =
-                    hashmap!(vec![("ToString", obj_to_string)]);
-                let int32_function_map: FunctionMap =
-                    hashmap!(vec![("ToString", int32_to_string)]);
-                let type_name_map: TypeNameMap = hashmap!(vec![("Console", console_function_map),
-                                                               ("String",  string_function_map),
-                                                               ("Object",  object_function_map),
-                                                               ("Int32",   int32_function_map)]);
-                let type_namespace_map: TypeNamespaceMap =
-                    hashmap!(vec![("System", type_name_map)]);
-                let assembly_map: AssemblyMap = hashmap!(vec![("mscorlib", type_namespace_map)]);
+                holder.add_list(MethodFullPath("mscorlib", "System", "Console", "WriteLine"),  write_line);
+                holder.add_list(MethodFullPath("mscorlib", "System", "Console", "Write"),      write);
+                holder.add_list(MethodFullPath("mscorlib", "System", "Object",  "ToString"),   obj_to_string);
+                holder.add_list(MethodFullPath("mscorlib", "System", "Int32",   "ToString"),   int32_to_string);
+                holder.add_list(MethodFullPath("mscorlib", "System", "String",  "get_Chars"),  get_chars);
+                holder.add_list(MethodFullPath("mscorlib", "System", "String",  "get_Length"), get_length);
 
-                assembly_map
+                holder
             },
         }
     }
 
-    pub fn get_function(
+    pub fn get_method<'a, T: Into<MethodFullPath<'a>>>(
         &self,
-        aname: &str,
-        tsname: &str,
-        tname: &str,
-        name: &str,
+        path: T,
         ty: &Type,
     ) -> Option<&Function> {
-        let funcs = self.map.get(aname)?.get(tsname)?.get(tname)?.get(name)?;
-        funcs.iter().find(|f| &f.ty == ty)
+        let methods = self.map.get_list(path.into())?;
+        methods.iter().find(|f| &f.ty == ty)
     }
 
     pub fn get_helper_function(&self, name: &str) -> Option<&Function> {
@@ -168,25 +148,11 @@ impl BuiltinFunctions {
     }
 
     pub fn list_all_function(&self) -> Vec<Function> {
-        let mut funcs = vec![];
-
-        for (_, type_namespace_map) in &self.map {
-            for (_, type_name_map) in type_namespace_map {
-                for (_, function_map) in type_name_map {
-                    for (_, func_list) in function_map {
-                        for func in func_list {
-                            funcs.push(func.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        for (_, func) in &self.helper_map {
-            funcs.push(func.clone());
-        }
-
-        funcs
+        let mut functions = self.map.collect();
+        self.helper_map.iter().for_each(|(_, f)| {
+            functions.push(f.clone());
+        });
+        functions
     }
 }
 
@@ -265,7 +231,7 @@ pub fn int_to_string(int32: *mut u8) -> *mut String {
 #[link(name = "gc")]
 extern "C" {
     fn GC_malloc(len: u32) -> *mut u8;
-    // fn GC_register_finalizer(obj: *mut u8, f: *mut u8, cd: *mut u8, ofn: *mut u8, ocd: *mut u8);
+// fn GC_register_finalizer(obj: *mut u8, f: *mut u8, cd: *mut u8, ofn: *mut u8, ocd: *mut u8);
 }
 
 #[no_mangle]
