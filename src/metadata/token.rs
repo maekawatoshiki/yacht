@@ -27,9 +27,9 @@ impl Into<Token> for DecodedToken {
     }
 }
 
-pub fn decode_resolution_scope_token<T: Into<u32>>(token: T) -> DecodedToken {
-    let token: u32 = token.into();
-    let tag = token & 0b11;
+pub fn decode_resolution_scope_token<T: Into<Token>>(token: T) -> DecodedToken {
+    let Token(raw_token) = token.into();
+    let tag = raw_token & 0b11;
     let table: u32 = match tag {
         0 => TableKind::Module,
         1 => TableKind::ModuleRef,
@@ -38,14 +38,14 @@ pub fn decode_resolution_scope_token<T: Into<u32>>(token: T) -> DecodedToken {
         _ => unreachable!(),
     }
     .into();
-    let entry = token >> 2;
+    let entry = raw_token >> 2;
     DecodedToken(table, entry)
 }
 
-pub fn decode_typedef_or_ref_token<T: Into<u32>>(token: T) -> DecodedToken {
-    let token: u32 = token.into();
-    let tag = token & 0b11;
-    let idx = token >> 2;
+pub fn decode_typedef_or_ref_token<T: Into<Token>>(token: T) -> DecodedToken {
+    let Token(raw_token) = token.into();
+    let tag = raw_token & 0b11;
+    let idx = raw_token >> 2;
     DecodedToken(
         match tag {
             0 => TableKind::TypeDef.into(),
@@ -57,9 +57,9 @@ pub fn decode_typedef_or_ref_token<T: Into<u32>>(token: T) -> DecodedToken {
     )
 }
 
-pub fn decode_member_ref_parent_token<T: Into<u32>>(token: T) -> DecodedToken {
-    let token: u32 = token.into();
-    let tag = token & 0b111;
+pub fn decode_member_ref_parent_token<T: Into<Token>>(token: T) -> DecodedToken {
+    let Token(raw_token) = token.into();
+    let tag = raw_token & 0b111;
     let table: u32 = match tag {
         0 => TableKind::TypeDef,
         1 => TableKind::TypeRef,
@@ -69,7 +69,7 @@ pub fn decode_member_ref_parent_token<T: Into<u32>>(token: T) -> DecodedToken {
         _ => unreachable!(),
     }
     .into();
-    let entry = token >> 3;
+    let entry = raw_token >> 3;
     DecodedToken(table, entry)
 }
 
@@ -77,8 +77,8 @@ pub fn encode_token(table: u32, entry: u32) -> Token {
     Token((table << (32 - 8)) | entry)
 }
 
-pub fn decode_token(token: Token) -> DecodedToken {
-    let Token(raw_token) = token;
+pub fn decode_token<T: Into<Token>>(token: T) -> DecodedToken {
+    let Token(raw_token) = token.into();
     let table = raw_token >> (32 - 8);
     let entry = raw_token & 0x00ff_ffff;
     DecodedToken(table, entry)

@@ -4,6 +4,7 @@ use crate::{
         jit::{builtin::*, cfg::*},
     },
     metadata::{class::*, image::*, metadata::*, method::*, signature::*, token::*},
+    util::{holder::*, name_path::*},
 };
 use llvm;
 use llvm::{core::*, prelude::*};
@@ -17,6 +18,15 @@ macro_rules! cstr0 {
         CString::new("").unwrap().as_ptr()
     };
 }
+
+macro_rules! raw_memory {
+    ($elem_ty:ty, $len:expr) => {{
+        Box::into_raw(vec![0 as $elem_ty; $len].into_boxed_slice()) as *mut $elem_ty
+    }};
+}
+
+pub type MethodTableElementTy = *mut ::std::ffi::c_void;
+pub type MethodTablePtrTy = *mut MethodTableElementTy;
 
 pub type CResult<T> = Result<T, Error>;
 
@@ -58,7 +68,7 @@ pub struct JITCompiler<'a> {
     pub compile_queue: VecDeque<(LLVMValueRef, MethodInfoRef)>,
     pub builtin_functions: BuiltinFunctions,
     pub class_types: ClassTypesHolder,
-    pub method_table_map: FxHashMap<VTablePtr, (LLVMValueRef, Vec<LLVMValueRef>)>,
+    pub method_table_map: FxHashMap<MethodTablePtrTy, (LLVMValueRef, Vec<LLVMValueRef>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,7 +79,7 @@ pub struct Environment {
 
 #[derive(Debug, Clone)]
 pub struct ClassTypesHolder {
-    map: FxHashMap<String, FxHashMap<String, (LLVMTypeRef, MethodTablePtr)>>,
+    base: TypeHolder<(LLVMTypeRef, MethodTablePtrTy)>,
 }
 
 impl<'a> JITCompiler<'a> {
@@ -951,7 +961,10 @@ impl<'a> JITCompiler<'a> {
                         let class_system_int32_ref =
                             self.image.class_cache.get(&token.into()).unwrap().clone();
                         let class_system_int32 = class_system_int32_ref.borrow();
-                        let class_int32 = self.class_types.get_by_name("System", "Int32").unwrap();
+                        let class_int32 = self
+                            .class_types
+                            .get(TypeFullPath("mscorlib", "System", "Int32"))
+                            .unwrap();
                         let new_obj = self.typecast(
                             self.call_function(
                                 self.builtin_functions
@@ -964,7 +977,7 @@ impl<'a> JITCompiler<'a> {
                         );
                         let method_table = self.ensure_all_class_methods_compiled(
                             self.class_types
-                                .get_method_table_ptr(&class_system_int32)
+                                .get_method_table_ptr(&*class_system_int32)
                                 .unwrap(),
                             &class_system_int32.method_table,
                         );
@@ -1055,7 +1068,7 @@ impl<'a> JITCompiler<'a> {
 
                 let class = method.class.borrow();
                 let method_table = self.ensure_all_class_methods_compiled(
-                    self.class_types.get_method_table_ptr(&class).unwrap(),
+                    self.class_types.get_method_table_ptr(&*class).unwrap(),
                     &class.method_table,
                 );
 
@@ -1174,7 +1187,7 @@ impl<'a> JITCompiler<'a> {
 
     unsafe fn ensure_all_class_methods_compiled(
         &mut self,
-        method_table_ptr: VTablePtr,
+        method_table_ptr: MethodTablePtrTy,
         method_table: &Vec<MethodInfoRef>,
     ) -> LLVMValueRef {
         if let Some((llvm_method_table, _)) = self.method_table_map.get(&method_table_ptr) {
@@ -1324,6 +1337,8 @@ impl TypedValue {
 
 impl ClassTypesHolder {
     pub unsafe fn new(ctx: LLVMContextRef) -> Self {
+        // TODO: Refactor
+
         let system_object =
             LLVMStructCreateNamed(ctx, CString::new("System::Object").unwrap().as_ptr());
         let mut fields_ty = vec![LLVMPointerType(
@@ -1353,62 +1368,46 @@ impl ClassTypesHolder {
         let method_table_len = 1;
 
         Self {
-            map: {
-                let mut namespace = FxHashMap::default();
-                namespace.insert("System".to_string(), {
-                    let mut name = FxHashMap::default();
-                    name.insert(
-                        "Object".to_string(),
-                        (
-                            LLVMPointerType(system_object, 0),
-                            Box::into_raw(vec![0u64; method_table_len].into_boxed_slice())
-                                as MethodTablePtr,
-                        ),
-                    );
-                    name.insert(
-                        "Int32".to_string(),
-                        (
-                            LLVMPointerType(system_int32, 0),
-                            Box::into_raw(vec![0u64; method_table_len].into_boxed_slice())
-                                as MethodTablePtr,
-                        ),
-                    );
-                    name
-                });
-                namespace
+            base: {
+                let mut holder = TypeHolder::new();
+                holder.add(
+                    TypeFullPath("mscorlib", "System", "Object"),
+                    (
+                        LLVMPointerType(system_object, 0),
+                        raw_memory!(MethodTableElementTy, method_table_len),
+                    ),
+                );
+                holder.add(
+                    TypeFullPath("mscorlib", "System", "Int32"),
+                    (
+                        LLVMPointerType(system_int32, 0),
+                        raw_memory!(MethodTableElementTy, method_table_len),
+                    ),
+                );
+                holder
             },
         }
     }
 
-    pub fn get(&self, class: &ClassInfo) -> Option<LLVMTypeRef> {
-        if let Some(names) = self.map.get(&class.namespace) {
-            if let Some(ty) = names.get(&class.name) {
-                return Some((*ty).0);
-            }
-        }
-        None
+    pub fn get<'a, T: Into<TypeFullPath<'a>>>(&self, path: T) -> Option<LLVMTypeRef> {
+        Some((*self.base.get(path)?).0)
     }
 
-    pub fn get_by_name(&self, namespace: &str, name: &str) -> Option<LLVMTypeRef> {
-        Some(self.map.get(namespace)?.get(name)?.0)
-    }
-
-    pub fn get_method_table_ptr(&self, class: &ClassInfo) -> Option<MethodTablePtr> {
-        Some(self.map.get(&class.namespace)?.get(&class.name)?.1)
+    pub fn get_method_table_ptr<'a, T: Into<TypeFullPath<'a>>>(
+        &self,
+        path: T,
+    ) -> Option<MethodTablePtrTy> {
+        Some((*self.base.get(path)?).1)
     }
 
     pub fn add(&mut self, class: &ClassInfo, ty: LLVMTypeRef) {
-        self.map
-            .entry(class.namespace.clone())
-            .or_insert(FxHashMap::default())
-            .insert(
-                class.name.clone(),
-                (
-                    ty,
-                    Box::into_raw(vec![0u64; class.method_table.len()].into_boxed_slice())
-                        as MethodTablePtr,
-                ),
-            );
+        self.base.add(
+            TypeNamespaceAndName(class.namespace.as_str(), class.name.as_str()),
+            (
+                ty,
+                raw_memory!(MethodTableElementTy, class.method_table.len()),
+            ),
+        );
     }
 }
 

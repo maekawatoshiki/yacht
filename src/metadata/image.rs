@@ -1,4 +1,7 @@
-use crate::metadata::{class::*, file_reader::*, metadata::*, method::*, signature::*, token::*};
+use crate::{
+    metadata::{class::*, file_reader::*, metadata::*, method::*, signature::*, token::*},
+    util::{holder::*, name_path::*},
+};
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
 
@@ -22,12 +25,8 @@ pub struct Image {
     pub class_cache: FxHashMap<Token, ClassInfoRef>,
 
     /// Holds all the standard classes like ``System::Object``. Will be removed in the future.
-    standard_classes: StandardClassHolder, // pub memberref_cache: FxHashMap<usize, MethodBodyRef>
-}
-
-#[derive(Debug, Clone)]
-pub struct StandardClassHolder {
-    map: FxHashMap<String, FxHashMap<String, ClassInfoRef>>,
+    standard_classes: TypeHolder<ClassInfoRef>,
+    // pub memberref_cache: FxHashMap<usize, MethodBodyRef>
 }
 
 impl Image {
@@ -42,7 +41,7 @@ impl Image {
             reader,
             method_cache: FxHashMap::default(),
             class_cache: FxHashMap::default(),
-            standard_classes: StandardClassHolder::new(),
+            standard_classes: TypeHolder::new(),
         }
     }
 
@@ -62,7 +61,10 @@ impl Image {
             let tref = retrieve!(typeref, Table::TypeRef);
             let namespace = self.get_string(tref.type_namespace).as_str();
             let name = self.get_string(tref.type_name).as_str();
-            if let Some(class) = self.standard_classes.get_by_name(namespace, name) {
+            if let Some(class) = self
+                .standard_classes
+                .get(TypeFullPath("mscorlib", namespace, name))
+            {
                 self.class_cache.insert(token, class.clone());
             }
         }
@@ -78,6 +80,7 @@ impl Image {
                     (td.field_list as usize - 1, td.method_list as usize - 1)
                 });
             let class_info = Rc::new(RefCell::new(ClassInfo {
+                resolution_scope: ResolutionScope::None,
                 parent: None,
                 fields: vec![],
                 methods: vec![],
@@ -163,7 +166,7 @@ impl Image {
             // If already borrowed, it means that ``class`` is System::Object.
             None => self
                 .standard_classes
-                .get_by_name("System", "Object")
+                .get(TypeFullPath("mscorlib", "System", "Object"))
                 .unwrap()
                 .try_borrow()
                 .map(|sys_obj| sys_obj.methods.clone())
@@ -188,8 +191,16 @@ impl Image {
     }
 
     fn setup_all_standard_class(&mut self) {
-        let class_system_object_ref = ClassInfo::new_ref("System", "Object", vec![], vec![], None);
+        let class_system_object_ref = ClassInfo::new_ref(
+            ResolutionScope::asm_ref("mscorlib"),
+            "System",
+            "Object",
+            vec![],
+            vec![],
+            None,
+        );
         let class_system_int32_ref = ClassInfo::new_ref(
+            ResolutionScope::asm_ref("mscorlib"),
             "System",
             "Int32",
             vec![],
@@ -219,10 +230,14 @@ impl Image {
                 .push(system_int32_to_string.clone());
         }
 
-        self.standard_classes
-            .add("System", "Object", class_system_object_ref);
-        self.standard_classes
-            .add("System", "Int32", class_system_int32_ref);
+        self.standard_classes.add(
+            TypeFullPath("mscorlib", "System", "Object"),
+            class_system_object_ref,
+        );
+        self.standard_classes.add(
+            TypeFullPath("mscorlib", "System", "Int32"),
+            class_system_int32_ref,
+        );
     }
 
     pub fn get_table_entry<T: Into<Token>>(&self, token: T) -> Table {
@@ -284,24 +299,5 @@ impl Image {
         SignatureParser::new(sig)
             .parse_method_ref_sig(self)
             .unwrap()
-    }
-}
-
-impl StandardClassHolder {
-    pub fn new() -> Self {
-        Self {
-            map: FxHashMap::default(),
-        }
-    }
-
-    pub fn get_by_name(&self, namespace: &str, name: &str) -> Option<&ClassInfoRef> {
-        self.map.get(namespace)?.get(name)
-    }
-
-    pub fn add(&mut self, namespace: &str, name: &str, class: ClassInfoRef) {
-        self.map
-            .entry(namespace.to_string())
-            .or_insert(FxHashMap::default())
-            .insert(name.to_string(), class);
     }
 }
