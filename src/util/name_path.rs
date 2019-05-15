@@ -16,6 +16,20 @@ pub struct TypeFullPath<'a>(pub &'a str, pub &'a str, pub &'a str);
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct TypeNamespaceAndName<'a>(pub &'a str, pub &'a str);
 
+impl<'a> Into<Vec<&'a str>> for TypeFullPath<'a> {
+    fn into(self) -> Vec<&'a str> {
+        let TypeFullPath(topl, ty_nspace, ty_name) = self;
+        vec![topl, ty_nspace, ty_name]
+    }
+}
+
+impl<'a> Into<Vec<&'a str>> for TypeNamespaceAndName<'a> {
+    fn into(self) -> Vec<&'a str> {
+        let full: TypeFullPath = self.into();
+        full.into()
+    }
+}
+
 impl<'a> Into<TypeFullPath<'a>> for TypeNamespaceAndName<'a> {
     fn into(self) -> TypeFullPath<'a> {
         let TypeNamespaceAndName(type_namespace, type_name) = self;

@@ -25,7 +25,7 @@ pub struct Image {
     pub class_cache: FxHashMap<Token, ClassInfoRef>,
 
     /// Holds all the standard classes like ``System::Object``. Will be removed in the future.
-    standard_classes: TypeHolder<ClassInfoRef>,
+    standard_classes: Holder<ClassInfoRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>
 }
 
@@ -41,7 +41,7 @@ impl Image {
             reader,
             method_cache: FxHashMap::default(),
             class_cache: FxHashMap::default(),
-            standard_classes: TypeHolder::new(),
+            standard_classes: Holder::new(),
         }
     }
 
