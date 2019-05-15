@@ -63,7 +63,7 @@ impl Image {
             let name = self.get_string(tref.type_name).as_str();
             if let Some(class) = self
                 .standard_classes
-                .get(TypeFullPath("mscorlib", namespace, name))
+                .get(TypeFullPath(vec!["mscorlib", namespace, name]))
             {
                 self.class_cache.insert(token, class.clone());
             }
@@ -166,7 +166,7 @@ impl Image {
             // If already borrowed, it means that ``class`` is System::Object.
             None => self
                 .standard_classes
-                .get(TypeFullPath("mscorlib", "System", "Object"))
+                .get(TypeFullPath(vec!["mscorlib", "System", "Object"]))
                 .unwrap()
                 .try_borrow()
                 .map(|sys_obj| sys_obj.methods.clone())
@@ -231,11 +231,11 @@ impl Image {
         }
 
         self.standard_classes.add(
-            TypeFullPath("mscorlib", "System", "Object"),
+            TypeFullPath(vec!["mscorlib", "System", "Object"]),
             class_system_object_ref,
         );
         self.standard_classes.add(
-            TypeFullPath("mscorlib", "System", "Int32"),
+            TypeFullPath(vec!["mscorlib", "System", "Int32"]),
             class_system_int32_ref,
         );
     }
@@ -291,7 +291,7 @@ impl Image {
         let asm_ref_name = self.get_string(assembly_ref_table.name).as_str();
         let ty_namespace = self.get_string(type_ref_table.type_namespace).as_str();
         let ty_name = self.get_string(type_ref_table.type_name).as_str();
-        TypeFullPath(asm_ref_name, ty_namespace, ty_name)
+        TypeFullPath(vec![asm_ref_name, ty_namespace, ty_name])
     }
 
     pub fn get_method_ref_type_from_signature(&self, signature: u16) -> Type {

@@ -1,14 +1,13 @@
-use super::name_path::*;
 use rustc_hash::FxHashMap;
 use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
-pub enum TreeMap<T: Debug> {
+pub enum TreeMap<T: Debug + Clone> {
     Map(FxHashMap<String, TreeMap<T>>),
     Value(T),
 }
 
-impl<T: Debug> TreeMap<T> {
+impl<T: Debug + Clone> TreeMap<T> {
     pub fn as_map(&self) -> Option<&FxHashMap<String, TreeMap<T>>> {
         match self {
             TreeMap::Map(map) => Some(map),
@@ -17,6 +16,13 @@ impl<T: Debug> TreeMap<T> {
     }
 
     pub fn as_value(&self) -> Option<&T> {
+        match self {
+            TreeMap::Map(_) => None,
+            TreeMap::Value(val) => Some(val),
+        }
+    }
+
+    pub fn as_value_mut(&mut self) -> Option<&mut T> {
         match self {
             TreeMap::Map(_) => None,
             TreeMap::Value(val) => Some(val),
@@ -34,8 +40,19 @@ impl<T: Debug> TreeMap<T> {
         cur.as_value()
     }
 
-    pub fn add<'a, P: Into<Vec<&'a str>>>(&mut self, path: P, val: T) -> Option<()> {
-        let path = path.into();
+    pub fn get_mut<'a, P: Into<Vec<&'a str>>>(&mut self, path: P) -> Option<&mut T> {
+        let mut cur = self;
+        for name in path.into() {
+            match cur {
+                TreeMap::Map(map) => cur = map.get_mut(name)?,
+                TreeMap::Value(_) => return None,
+            }
+        }
+        cur.as_value_mut()
+    }
+
+    pub fn add<'a, P: Into<Vec<&'a str>>>(&mut self, path_: P, val: T) -> Option<()> {
+        let path = path_.into();
         let len = path.len();
         let mut cur = self;
         for (i, name) in path.iter().enumerate() {
@@ -55,14 +72,27 @@ impl<T: Debug> TreeMap<T> {
         }
         Some(())
     }
+
+    pub fn collect_values(&self) -> Vec<T> {
+        let mut values = vec![];
+        match self {
+            TreeMap::Map(map) => {
+                for (_, elem) in map {
+                    values.append(&mut elem.collect_values())
+                }
+            }
+            TreeMap::Value(val) => values.push(val.clone()),
+        }
+        values
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct Holder<T: Debug> {
+pub struct Holder<T: Debug + Clone> {
     map: TreeMap<T>,
 }
 
-impl<T: Debug> Holder<T> {
+impl<T: Debug + Clone> Holder<T> {
     pub fn new() -> Self {
         Holder {
             map: TreeMap::Map(FxHashMap::default()),
@@ -73,102 +103,15 @@ impl<T: Debug> Holder<T> {
         self.map.get(path.into())
     }
 
+    pub fn get_mut<'a, P: Into<Vec<&'a str>>>(&mut self, path: P) -> Option<&mut T> {
+        self.map.get_mut(path.into())
+    }
+
     pub fn add<'a, P: Into<Vec<&'a str>>>(&mut self, path: P, val: T) {
         self.map.add(path.into(), val).unwrap()
     }
-}
 
-#[derive(Clone, Debug)]
-pub struct TypeHolder<T> {
-    map: FxHashMap<String, FxHashMap<String, FxHashMap<String, T>>>,
-}
-
-impl<T> TypeHolder<T> {
-    pub fn new() -> Self {
-        TypeHolder {
-            map: FxHashMap::default(),
-        }
-    }
-
-    pub fn get<'a, P: Into<TypeFullPath<'a>>>(&self, path: P) -> Option<&T> {
-        let TypeFullPath(asm_name, ty_namespace, ty_name) = path.into();
-        self.map.get(asm_name)?.get(ty_namespace)?.get(ty_name)
-    }
-
-    pub fn add<'a, P: Into<TypeFullPath<'a>>>(&mut self, path: P, val: T) {
-        let TypeFullPath(asm_name, ty_namespace, ty_name) = path.into();
-        self.map
-            .entry(asm_name.to_string())
-            .or_insert(FxHashMap::default())
-            .entry(ty_namespace.to_string())
-            .or_insert(FxHashMap::default())
-            .insert(ty_name.to_string(), val);
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct MethodHolder<T: Clone> {
-    map: FxHashMap<String, FxHashMap<String, FxHashMap<String, FxHashMap<String, Vec<T>>>>>,
-}
-
-impl<T: Clone> MethodHolder<T> {
-    pub fn new() -> Self {
-        MethodHolder {
-            map: FxHashMap::default(),
-        }
-    }
-
-    pub fn get_list<'a, P: Into<MethodFullPath<'a>>>(&self, path: P) -> Option<&Vec<T>> {
-        let MethodFullPath(asm_name, ty_namespace, ty_name, method_name) = path.into();
-        self.map
-            .get(asm_name)?
-            .get(ty_namespace)?
-            .get(ty_name)?
-            .get(method_name)
-    }
-
-    pub fn add<'a, P: Into<MethodFullPath<'a>>>(&mut self, path: P, val: T) {
-        let MethodFullPath(asm_name, ty_namespace, ty_name, method_name) = path.into();
-        self.map
-            .entry(asm_name.to_string())
-            .or_insert(FxHashMap::default())
-            .entry(ty_namespace.to_string())
-            .or_insert(FxHashMap::default())
-            .entry(ty_name.to_string())
-            .or_insert(FxHashMap::default())
-            .entry(method_name.to_string())
-            .or_insert(vec![])
-            .push(val)
-    }
-
-    pub fn add_list<'a, P: Into<MethodFullPath<'a>>>(&mut self, path: P, list: Vec<T>) {
-        let MethodFullPath(asm_name, ty_namespace, ty_name, method_name) = path.into();
-        *self
-            .map
-            .entry(asm_name.to_string())
-            .or_insert(FxHashMap::default())
-            .entry(ty_namespace.to_string())
-            .or_insert(FxHashMap::default())
-            .entry(ty_name.to_string())
-            .or_insert(FxHashMap::default())
-            .entry(method_name.to_string())
-            .or_insert(vec![]) = list;
-    }
-
-    pub fn collect(&self) -> Vec<T> {
-        let mut methods = vec![];
-        // TODO: Use ``flatten``
-        for (_, type_namespace_map) in &self.map {
-            for (_, type_name_map) in type_namespace_map {
-                for (_, method_map) in type_name_map {
-                    for (_, method_list) in method_map {
-                        for method in method_list {
-                            methods.push(method.clone());
-                        }
-                    }
-                }
-            }
-        }
-        methods
+    pub fn collect_values(&self) -> Vec<T> {
+        self.map.collect_values()
     }
 }

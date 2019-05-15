@@ -79,7 +79,7 @@ pub struct Environment {
 
 #[derive(Debug, Clone)]
 pub struct ClassTypesHolder {
-    base: TypeHolder<(LLVMTypeRef, MethodTablePtrTy)>,
+    base: Holder<(LLVMTypeRef, MethodTablePtrTy)>,
 }
 
 impl<'a> JITCompiler<'a> {
@@ -945,16 +945,15 @@ impl<'a> JITCompiler<'a> {
         match self.image.get_table_entry(token) {
             Table::TypeRef(trt) => {
                 // TODO: Refactor
-                let TypeFullPath(asm_ref_name, ty_namespace, ty_name) =
-                    self.image.get_path_from_type_ref_table(&trt);
-                match (asm_ref_name, ty_namespace, ty_name) {
+                let TypeFullPath(path) = self.image.get_path_from_type_ref_table(&trt);
+                match (path[0], path[1], path[2]) {
                     ("mscorlib", "System", "Int32") => {
                         let class_system_int32_ref =
                             self.image.class_cache.get(&token.into()).unwrap().clone();
                         let class_system_int32 = class_system_int32_ref.borrow();
                         let class_int32 = self
                             .class_types
-                            .get(TypeFullPath("mscorlib", "System", "Int32"))
+                            .get(TypeFullPath(vec!["mscorlib", "System", "Int32"]))
                             .unwrap();
                         let new_obj = self.typecast(
                             self.call_function(
@@ -996,9 +995,8 @@ impl<'a> JITCompiler<'a> {
         match self.image.get_table_entry(token) {
             Table::TypeRef(trt) => {
                 // TODO: Refactor
-                let TypeFullPath(asm_ref_name, ty_namespace, ty_name) =
-                    self.image.get_path_from_type_ref_table(&trt);
-                match (asm_ref_name, ty_namespace, ty_name) {
+                let TypeFullPath(path) = self.image.get_path_from_type_ref_table(&trt);
+                match (path[0], path[1], path[2]) {
                     ("mscorlib", "System", ty) => {
                         let (szarr_ty, sz) = match ty {
                             "Int32" => (Type::i4_szarr_ty(), 4),
@@ -1190,17 +1188,15 @@ impl<'a> JITCompiler<'a> {
                 // TODO
                 MethodInfo::MRef(m) => {
                     let class = m.class.borrow();
-                    let type_namespace = class.namespace.as_str();
-                    let type_name = class.name.as_str();
                     vmethods.push(
                         self.builtin_functions
                             .get_method(
-                                MethodFullPath(
+                                MethodFullPath(vec![
                                     "mscorlib",
-                                    type_namespace,
-                                    type_name,
+                                    class.namespace.as_str(),
+                                    class.name.as_str(),
                                     m.name.as_str(),
-                                ),
+                                ]),
                                 &m.ty,
                             )
                             .unwrap()
@@ -1358,16 +1354,16 @@ impl ClassTypesHolder {
 
         Self {
             base: {
-                let mut holder = TypeHolder::new();
+                let mut holder = Holder::new();
                 holder.add(
-                    TypeFullPath("mscorlib", "System", "Object"),
+                    TypeFullPath(vec!["mscorlib", "System", "Object"]),
                     (
                         LLVMPointerType(system_object, 0),
                         raw_memory!(MethodTableElementTy, method_table_len),
                     ),
                 );
                 holder.add(
-                    TypeFullPath("mscorlib", "System", "Int32"),
+                    TypeFullPath(vec!["mscorlib", "System", "Int32"]),
                     (
                         LLVMPointerType(system_int32, 0),
                         raw_memory!(MethodTableElementTy, method_table_len),
@@ -1379,14 +1375,14 @@ impl ClassTypesHolder {
     }
 
     pub fn get<'a, T: Into<TypeFullPath<'a>>>(&self, path: T) -> Option<LLVMTypeRef> {
-        Some((*self.base.get(path)?).0)
+        Some((*self.base.get(path.into())?).0)
     }
 
     pub fn get_method_table_ptr<'a, T: Into<TypeFullPath<'a>>>(
         &self,
         path: T,
     ) -> Option<MethodTablePtrTy> {
-        Some((*self.base.get(path)?).1)
+        Some((*self.base.get(path.into())?).1)
     }
 
     pub fn add(&mut self, class: &ClassInfo, ty: LLVMTypeRef) {

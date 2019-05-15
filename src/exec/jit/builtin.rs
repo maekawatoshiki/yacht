@@ -1,12 +1,12 @@
 use crate::{
     metadata::signature::*,
-    util::{holder::MethodHolder, name_path::*},
+    util::{holder::*, name_path::*},
 };
 use llvm::{core::*, prelude::*};
 use rustc_hash::FxHashMap;
 use std::ffi::{c_void, CString};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Function {
     pub ty: Type,
     pub function: *mut c_void,
@@ -15,7 +15,7 @@ pub struct Function {
 
 #[derive(Clone)]
 pub struct BuiltinFunctions {
-    map: MethodHolder<Function>,
+    map: Holder<Vec<Function>>,
     helper_map: FxHashMap<String, Function>,
 }
 
@@ -120,14 +120,14 @@ impl BuiltinFunctions {
                     def_func!([0x20], str,  [],         object_to_string,      "[mscorlib]System::Object.ToString()"),
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
 
-                let mut holder = MethodHolder::new();
+                let mut holder = Holder::new();
 
-                holder.add_list(MethodFullPath("mscorlib", "System", "Console", "WriteLine"),  write_line);
-                holder.add_list(MethodFullPath("mscorlib", "System", "Console", "Write"),      write);
-                holder.add_list(MethodFullPath("mscorlib", "System", "Object",  "ToString"),   obj_to_string);
-                holder.add_list(MethodFullPath("mscorlib", "System", "Int32",   "ToString"),   int32_to_string);
-                holder.add_list(MethodFullPath("mscorlib", "System", "String",  "get_Chars"),  get_chars);
-                holder.add_list(MethodFullPath("mscorlib", "System", "String",  "get_Length"), get_length);
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "Console", "WriteLine" ]), write_line     );
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "Console", "Write"     ]), write          );
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "Object",  "ToString"  ]), obj_to_string  );
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "Int32",   "ToString"  ]), int32_to_string);
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "String",  "get_Chars" ]), get_chars      );
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "String",  "get_Length"]), get_length     );
 
                 holder
             },
@@ -139,7 +139,7 @@ impl BuiltinFunctions {
         path: T,
         ty: &Type,
     ) -> Option<&Function> {
-        let methods = self.map.get_list(path.into())?;
+        let methods = self.map.get(path.into())?;
         methods.iter().find(|f| &f.ty == ty)
     }
 
@@ -148,10 +148,9 @@ impl BuiltinFunctions {
     }
 
     pub fn list_all_function(&self) -> Vec<Function> {
-        let mut functions = self.map.collect();
-        self.helper_map.iter().for_each(|(_, f)| {
-            functions.push(f.clone());
-        });
+        let mut functions: Vec<Function> =
+            self.map.collect_values().into_iter().flatten().collect();
+        functions.append(&mut self.helper_map.iter().map(|(_, f)| f.clone()).collect());
         functions
     }
 }
