@@ -1387,7 +1387,7 @@ impl ClassTypesHolder {
 
     pub fn add(&mut self, class: &ClassInfo, ty: LLVMTypeRef) {
         self.base.add(
-            TypeNamespaceAndName(class.namespace.as_str(), class.name.as_str()),
+            class.into(): TypeFullPath,
             (
                 ty,
                 raw_memory!(MethodTableElementTy, class.method_table.len()),
