@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 use std::{
     char::decode_utf16,
     ffi::{c_void, CString},
-    mem,
+    mem, ptr,
 };
 
 #[derive(Clone, Debug)]
@@ -233,9 +233,7 @@ pub fn int_to_string(int32: *mut u8) -> *mut Vec<u16> {
     unsafe {
         let class_int32 = int32 as *mut u64;
         let value = *class_int32.offset(1) as i32;
-        Box::into_raw(Box::new(
-            format!("{}", value).encode_utf16().collect::<Vec<u16>>(),
-        ))
+        new_utf16_string(format!("{}", value))
     }
 }
 
@@ -243,7 +241,27 @@ pub fn int_to_string(int32: *mut u8) -> *mut Vec<u16> {
 #[link(name = "gc")]
 extern "C" {
     fn GC_malloc(len: u32) -> *mut u8;
-// fn GC_register_finalizer(obj: *mut u8, f: *mut u8, cd: *mut u8, ofn: *mut u8, ocd: *mut u8);
+    fn GC_register_finalizer(obj: *mut u8, f: *mut u8, cd: *mut u8, ofn: *mut u8, ocd: *mut u8);
+}
+
+unsafe fn new_utf16_string(s: String) -> *mut Vec<u16> {
+    let utf16 = s.encode_utf16().collect::<Vec<u16>>();
+    let ptr = GC_malloc(mem::size_of::<Vec<u16>>() as u32);
+    ptr::copy_nonoverlapping(&utf16 as *const Vec<u16>, ptr as *mut Vec<u16>, 1);
+    mem::forget(utf16);
+    GC_register_finalizer(
+        ptr,
+        finalizer_string as *mut u8,
+        0 as *mut u8,
+        0 as *mut u8,
+        0 as *mut u8,
+    );
+    ptr as *mut Vec<u16>
+}
+
+#[no_mangle]
+fn finalizer_string(obj: *mut Vec<u16>, _cd: *mut u8) {
+    unsafe { ptr::drop_in_place(obj) }
 }
 
 #[no_mangle]
