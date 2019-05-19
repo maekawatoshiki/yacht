@@ -540,9 +540,9 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldnull => push_i4!(0),
                 Instruction::Ldstr { us_offset } => stack.push(TypedValue::new(
                     Type::string_ty(),
-                    self.llvm_ptr(Box::into_raw(Box::new(String::from_utf16_lossy(
-                        self.image.get_user_string(*us_offset),
-                    ))) as *mut u8),
+                    self.llvm_ptr(Box::into_raw(Box::new(
+                        self.image.get_user_string(*us_offset).clone(),
+                    )) as *mut u8),
                 )),
                 Instruction::Ldc_I4_0 => push_i4!(0),
                 Instruction::Ldc_I4_1 => push_i4!(1),

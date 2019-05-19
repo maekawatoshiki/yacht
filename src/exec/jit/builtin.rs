@@ -1,10 +1,16 @@
+// TODO: GC support for String(Vec<u16>)
+
 use crate::{
     metadata::signature::*,
     util::{holder::*, name_path::*},
 };
 use llvm::{core::*, prelude::*};
 use rustc_hash::FxHashMap;
-use std::ffi::{c_void, CString};
+use std::{
+    char::decode_utf16,
+    ffi::{c_void, CString},
+    mem,
+};
 
 #[derive(Clone, Debug)]
 pub struct Function {
@@ -161,23 +167,25 @@ pub fn write_line_i4(n: i32) {
 }
 
 #[no_mangle]
-pub fn write_line_char(c: i32) {
-    println!("{}", c as u8 as char);
+pub fn write_line_char(c: u16) {
+    println!(
+        "{}",
+        decode_utf16([c].iter().cloned()).next().unwrap().unwrap()
+    );
 }
 
 #[no_mangle]
-pub fn write_line_string(s: *mut String) {
-    println!("{}", unsafe { &*s });
+pub fn write_line_string(s: *mut Vec<u16>) {
+    println!("{}", String::from_utf16_lossy(unsafe { &*s }));
 }
 
 #[no_mangle]
-pub unsafe fn write_line_string_obj(s: *mut String, o: *mut u8) {
-    let string = { &*s };
+pub unsafe fn write_line_string_obj(s: *mut Vec<u16>, o: *mut u8) {
+    let string = String::from_utf16_lossy({ &*s });
     let class_int32 = o as *mut u64;
     let method_table = *class_int32.offset(0) as *mut u64;
-    let to_string =
-        ::std::mem::transmute::<u64, fn(*mut u8) -> *mut String>(*method_table.offset(0));
-    let string2 = &*to_string(class_int32 as *mut u8);
+    let to_string = mem::transmute::<u64, fn(*mut u8) -> *mut Vec<u16>>(*method_table.offset(0));
+    let string2 = String::from_utf16_lossy(&*to_string(class_int32 as *mut u8));
     for (i, s) in string.split("{0}").enumerate() {
         if i > 0 {
             print!("{}", string2)
@@ -193,36 +201,41 @@ pub fn write_i4(n: i32) {
 }
 
 #[no_mangle]
-pub fn write_char(c: i32) {
-    print!("{}", c as u8 as char);
+pub fn write_char(c: u16) {
+    print!(
+        "{}",
+        decode_utf16([c].iter().cloned()).next().unwrap().unwrap()
+    );
 }
 
 #[no_mangle]
-pub fn write_string(s: *mut String) {
-    print!("{}", unsafe { &*s });
+pub fn write_string(s: *mut Vec<u16>) {
+    print!("{}", String::from_utf16_lossy(unsafe { &*s }));
 }
 
 #[no_mangle]
-pub fn get_length(s: *mut String) -> i32 {
+pub fn get_length(s: *mut Vec<u16>) -> i32 {
     unsafe { &*s }.len() as i32
 }
 
 #[no_mangle]
-pub fn get_chars_i4(s: *mut String, i: i32) -> i32 {
-    unsafe { &*s }.as_str().as_bytes()[i as usize] as i32
+pub fn get_chars_i4(s: *mut Vec<u16>, i: i32) -> i32 {
+    (unsafe { &*s })[i as usize] as i32
 }
 
 #[no_mangle]
-pub fn object_to_string(_obj: *mut u8) -> *mut String {
+pub fn object_to_string(_obj: *mut u8) -> *mut Vec<u16> {
     unimplemented!()
 }
 
 #[no_mangle]
-pub fn int_to_string(int32: *mut u8) -> *mut String {
+pub fn int_to_string(int32: *mut u8) -> *mut Vec<u16> {
     unsafe {
         let class_int32 = int32 as *mut u64;
         let value = *class_int32.offset(1) as i32;
-        Box::into_raw(Box::new(format!("{}", value)))
+        Box::into_raw(Box::new(
+            format!("{}", value).encode_utf16().collect::<Vec<u16>>(),
+        ))
     }
 }
 
