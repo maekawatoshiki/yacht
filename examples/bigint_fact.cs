@@ -68,7 +68,7 @@ public class A {
     var n = new BigInt(1);
     for (int i = 0; i < 100; i++) {
       n = n.Mul(n, i + 1);
-      Console.Write(i);
+      Console.Write(i + 1);
       Console.Write("! = ");
       n.Dump();
     }
