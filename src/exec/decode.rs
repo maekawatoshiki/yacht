@@ -71,60 +71,42 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::CONV_I4 => iseq.push(Instruction::Conv_I4),
                 il_instr::POP => iseq.push(Instruction::Pop),
                 il_instr::DUP => iseq.push(Instruction::Dup),
-                il_instr::BGE => {
+                il_instr::BGE => iseq.push(Instruction::Bge({
                     let target = self.read_u32()? as i32;
-                    iseq.push(Instruction::Bge {
-                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
-                    })
-                }
-                il_instr::BGT => {
+                    *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap()
+                })),
+                il_instr::BGT => iseq.push(Instruction::Bgt({
                     let target = self.read_u32()? as i32;
-                    iseq.push(Instruction::Bgt {
-                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
-                    })
-                }
-                il_instr::BLT => {
+                    *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap()
+                })),
+                il_instr::BLT => iseq.push(Instruction::Blt({
                     let target = self.read_u32()? as i32;
-                    iseq.push(Instruction::Blt {
-                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
-                    })
-                }
-                il_instr::BLE => {
+                    *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap()
+                })),
+                il_instr::BLE => iseq.push(Instruction::Ble({
                     let target = self.read_u32()? as i32;
-                    iseq.push(Instruction::Ble {
-                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
-                    })
-                }
-                il_instr::BEQ => {
+                    *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap()
+                })),
+                il_instr::BEQ => iseq.push(Instruction::Beq({
                     let target = self.read_u32()? as i32;
-                    iseq.push(Instruction::Beq {
-                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
-                    })
-                }
-                il_instr::BNE_UN => {
+                    *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap()
+                })),
+                il_instr::BNE_UN => iseq.push(Instruction::Bne_un({
                     let target = self.read_u32()? as i32;
-                    iseq.push(Instruction::Bne_un {
-                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
-                    })
-                }
-                il_instr::BRFALSE => {
+                    *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap()
+                })),
+                il_instr::BRFALSE => iseq.push(Instruction::Brfalse({
                     let target = self.read_u32()? as i32;
-                    iseq.push(Instruction::Brfalse {
-                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
-                    })
-                }
-                il_instr::BRTRUE => {
+                    *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap()
+                })),
+                il_instr::BRTRUE => iseq.push(Instruction::Brtrue({
                     let target = self.read_u32()? as i32;
-                    iseq.push(Instruction::Brtrue {
-                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
-                    })
-                }
-                il_instr::BR => {
+                    *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap()
+                })),
+                il_instr::BR => iseq.push(Instruction::Br({
                     let target = self.read_u32()? as i32;
-                    iseq.push(Instruction::Br {
-                        target: *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap(),
-                    })
-                }
+                    *self.target_map.get(&(i as i32 + 1 + 4 + target)).unwrap()
+                })),
                 0xfe => match self.iter.next()?.1 {
                     &il_instr::CLT => iseq.push(Instruction::Clt),
                     &il_instr::CEQ => iseq.push(Instruction::Ceq),

@@ -358,6 +358,7 @@ impl<'a> JITCompiler<'a> {
         let builder = LLVMCreateBuilderInContext(self.context);
         let entry_bb = LLVMGetEntryBasicBlock(func);
         let first_inst = LLVMGetFirstInstruction(entry_bb);
+
         // A variable must be declared at the first point of entry block
         if first_inst == ptr::null_mut() {
             LLVMPositionBuilderAtEnd(builder, entry_bb);
@@ -382,6 +383,7 @@ impl<'a> JITCompiler<'a> {
         let builder = LLVMCreateBuilderInContext(self.context);
         let entry_bb = LLVMGetEntryBasicBlock(func);
         let first_inst = LLVMGetFirstInstruction(entry_bb);
+
         // A variable is always declared at the first point of entry block
         if first_inst == ptr::null_mut() {
             LLVMPositionBuilderAtEnd(builder, entry_bb);
@@ -447,16 +449,16 @@ impl<'a> JITCompiler<'a> {
                     .push(PhiStack { src_bb, stack });
                 Ok(*destination)
             }
-            BrKind::JmpRequired { destination } => {
+            BrKind::ImplicitJmp { destination } => {
                 let src_bb = self.get_basic_block(cur_block!().start).retrieve();
-                if cur_bb_has_no_terminator(self.builder) {
-                    let bb = self.get_basic_block(*destination).retrieve();
-                    LLVMBuildBr(self.builder, bb);
-                }
                 self.phi_stack
                     .entry(*destination)
                     .or_insert(vec![])
                     .push(PhiStack { src_bb, stack });
+                if cur_bb_has_no_terminator(self.builder) {
+                    let bb = self.get_basic_block(*destination).retrieve();
+                    LLVMBuildBr(self.builder, bb);
+                }
                 Ok(*destination)
             }
             _ => Ok(0),

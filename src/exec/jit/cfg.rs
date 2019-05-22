@@ -13,7 +13,7 @@ pub struct BasicBlock {
 pub enum BrKind {
     ConditionalJmp { destinations: Vec<usize> },
     UnconditionalJmp { destination: usize },
-    JmpRequired { destination: usize },
+    ImplicitJmp { destination: usize },
     BlockStart,
 }
 
@@ -46,14 +46,14 @@ impl CFGMaker {
 
         for (pc, instr) in code.iter().enumerate() {
             match instr {
-                Instruction::Bge { target }
-                | Instruction::Bgt { target }
-                | Instruction::Ble { target }
-                | Instruction::Blt { target }
-                | Instruction::Beq { target }
-                | Instruction::Bne_un { target }
-                | Instruction::Brfalse { target }
-                | Instruction::Brtrue { target } => {
+                Instruction::Bge(target)
+                | Instruction::Bgt(target)
+                | Instruction::Ble(target)
+                | Instruction::Blt(target)
+                | Instruction::Beq(target)
+                | Instruction::Bne_un(target)
+                | Instruction::Brfalse(target)
+                | Instruction::Brtrue(target) => {
                     jmp_at!(
                         pc,
                         BrKind::ConditionalJmp {
@@ -63,7 +63,7 @@ impl CFGMaker {
                     new_block_starts_at!(*target);
                     new_block_starts_at!(pc + 1);
                 }
-                Instruction::Br { target } => {
+                Instruction::Br(target) => {
                     jmp_at!(
                         pc,
                         BrKind::UnconditionalJmp {
@@ -94,18 +94,18 @@ impl CFGMaker {
             for kind in kind_list {
                 match kind {
                     BrKind::BlockStart => {
-                        match start {
-                            Some(start) if start < key => {
-                                create_block!(start..key, BrKind::JmpRequired { destination: key })
+                        if let Some(start) = start {
+                            if start < key {
+                                create_block!(start..key, BrKind::ImplicitJmp { destination: key })
                             }
-                            _ => {}
                         }
                         start = Some(key)
                     }
                     BrKind::ConditionalJmp { .. } | BrKind::UnconditionalJmp { .. } => {
-                        match start {
-                            Some(start) if start < key + 1 => create_block!(start..key + 1, kind),
-                            _ => {}
+                        if let Some(start) = start {
+                            if start <= key {
+                                create_block!(start..key + 1, kind)
+                            }
                         }
                         start = None;
                     }
@@ -133,7 +133,7 @@ impl BrKind {
     pub fn get_unconditional_jump_destination(&self) -> usize {
         match self {
             BrKind::UnconditionalJmp { destination } => *destination,
-            BrKind::JmpRequired { destination } => *destination,
+            BrKind::ImplicitJmp { destination } => *destination,
             _ => panic!(),
         }
     }
