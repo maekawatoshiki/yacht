@@ -28,28 +28,13 @@ impl<'a> BytesToInstructions<'a> {
                     let token = self.read_u32()?;
                     assert!(token & 0xff000000 == 0x70000000);
                     let us_offset = token & 0x00ffffff;
-                    iseq.push(Instruction::Ldstr { us_offset })
+                    iseq.push(Instruction::Ldstr(us_offset))
                 }
-                il_instr::CALL => {
-                    let token = Token(self.read_u32()?);
-                    iseq.push(Instruction::Call { token })
-                }
-                il_instr::CALLVIRT => {
-                    let token = Token(self.read_u32()?);
-                    iseq.push(Instruction::CallVirt { token })
-                }
-                il_instr::BOX => {
-                    let token = Token(self.read_u32()?);
-                    iseq.push(Instruction::Box { token })
-                }
-                il_instr::NEWOBJ => {
-                    let token = Token(self.read_u32()?);
-                    iseq.push(Instruction::Newobj { token })
-                }
-                il_instr::NEWARR => {
-                    let token = Token(self.read_u32()?);
-                    iseq.push(Instruction::Newarr { token })
-                }
+                il_instr::CALL => iseq.push(Instruction::Call(Token(self.read_u32()?))),
+                il_instr::CALLVIRT => iseq.push(Instruction::CallVirt(Token(self.read_u32()?))),
+                il_instr::BOX => iseq.push(Instruction::Box(Token(self.read_u32()?))),
+                il_instr::NEWOBJ => iseq.push(Instruction::Newobj(Token(self.read_u32()?))),
+                il_instr::NEWARR => iseq.push(Instruction::Newarr(Token(self.read_u32()?))),
                 il_instr::LDC_I4_0 => iseq.push(Instruction::Ldc_I4_0),
                 il_instr::LDC_I4_1 => iseq.push(Instruction::Ldc_I4_1),
                 il_instr::LDC_I4_2 => iseq.push(Instruction::Ldc_I4_2),
@@ -59,14 +44,8 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::LDC_I4_6 => iseq.push(Instruction::Ldc_I4_6),
                 il_instr::LDC_I4_7 => iseq.push(Instruction::Ldc_I4_7),
                 il_instr::LDC_I4_8 => iseq.push(Instruction::Ldc_I4_8),
-                il_instr::LDC_I4_S => {
-                    let n = self.read_u8()?;
-                    iseq.push(Instruction::Ldc_I4_S { n: n as i32 })
-                }
-                il_instr::LDC_I4 => {
-                    let n = self.read_u32()?;
-                    iseq.push(Instruction::Ldc_I4 { n: n as i32 })
-                }
+                il_instr::LDC_I4_S => iseq.push(Instruction::Ldc_I4_S(self.read_u8()? as i32)),
+                il_instr::LDC_I4 => iseq.push(Instruction::Ldc_I4(self.read_u32()? as i32)),
                 il_instr::LDARG_0 => iseq.push(Instruction::Ldarg_0),
                 il_instr::LDARG_1 => iseq.push(Instruction::Ldarg_1),
                 il_instr::LDARG_2 => iseq.push(Instruction::Ldarg_2),
@@ -75,14 +54,8 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::LDLOC_1 => iseq.push(Instruction::Ldloc_1),
                 il_instr::LDLOC_2 => iseq.push(Instruction::Ldloc_2),
                 il_instr::LDLOC_3 => iseq.push(Instruction::Ldloc_3),
-                il_instr::LDLOC_S => {
-                    let n = self.read_u8()?;
-                    iseq.push(Instruction::Ldloc_S { n })
-                }
-                il_instr::LDFLD => {
-                    let token = Token(self.read_u32()?);
-                    iseq.push(Instruction::Ldfld { token })
-                }
+                il_instr::LDLOC_S => iseq.push(Instruction::Ldloc_S(self.read_u8()?)),
+                il_instr::LDFLD => iseq.push(Instruction::Ldfld(Token(self.read_u32()?))),
                 il_instr::LDELEM_U1 => iseq.push(Instruction::Ldelem_U1),
                 il_instr::LDELEM_I1 => iseq.push(Instruction::Ldelem_I1),
                 il_instr::LDELEM_I4 => iseq.push(Instruction::Ldelem_I4),
@@ -90,14 +63,8 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::STLOC_1 => iseq.push(Instruction::Stloc_1),
                 il_instr::STLOC_2 => iseq.push(Instruction::Stloc_2),
                 il_instr::STLOC_3 => iseq.push(Instruction::Stloc_3),
-                il_instr::STLOC_S => {
-                    let n = self.read_u8()?;
-                    iseq.push(Instruction::Stloc_S { n })
-                }
-                il_instr::STFLD => {
-                    let token = Token(self.read_u32()?);
-                    iseq.push(Instruction::Stfld { token })
-                }
+                il_instr::STLOC_S => iseq.push(Instruction::Stloc_S(self.read_u8()?)),
+                il_instr::STFLD => iseq.push(Instruction::Stfld(Token(self.read_u32()?))),
                 il_instr::STELEM_I1 => iseq.push(Instruction::Stelem_I1),
                 il_instr::STELEM_I4 => iseq.push(Instruction::Stelem_I4),
                 il_instr::LDLEN => iseq.push(Instruction::Ldlen),

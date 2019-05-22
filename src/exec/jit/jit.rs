@@ -538,7 +538,7 @@ impl<'a> JITCompiler<'a> {
         for instr in code {
             match instr {
                 Instruction::Ldnull => push_i4!(0),
-                Instruction::Ldstr { us_offset } => stack.push(TypedValue::new(
+                Instruction::Ldstr(us_offset) => stack.push(TypedValue::new(
                     Type::string_ty(),
                     self.llvm_ptr(Box::into_raw(Box::new(
                         self.image.get_user_string(*us_offset).clone(),
@@ -553,14 +553,14 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldc_I4_6 => push_i4!(6),
                 Instruction::Ldc_I4_7 => push_i4!(7),
                 Instruction::Ldc_I4_8 => push_i4!(8),
-                Instruction::Ldc_I4_S { n } => push_i4!(*n),
-                Instruction::Ldc_I4 { n } => push_i4!(*n),
+                Instruction::Ldc_I4_S(n) => push_i4!(*n),
+                Instruction::Ldc_I4(n) => push_i4!(*n),
                 Instruction::Ldloc_0 => ldloc!(0),
                 Instruction::Ldloc_1 => ldloc!(1),
                 Instruction::Ldloc_2 => ldloc!(2),
                 Instruction::Ldloc_3 => ldloc!(3),
-                Instruction::Ldloc_S { n } => ldloc!(*n as usize),
-                Instruction::Ldfld { token } => self.gen_instr_ldfld(&mut stack, *token),
+                Instruction::Ldloc_S(n) => ldloc!(*n as usize),
+                Instruction::Ldfld(token) => self.gen_instr_ldfld(&mut stack, *token),
                 Instruction::Ldelem_U1 => self.gen_instr_ldelem_i1(&mut stack),
                 Instruction::Ldelem_I1 => self.gen_instr_ldelem_i1(&mut stack),
                 Instruction::Ldelem_I4 => self.gen_instr_ldelem_i4(&mut stack),
@@ -568,8 +568,8 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Stloc_1 => stloc!(1),
                 Instruction::Stloc_2 => stloc!(2),
                 Instruction::Stloc_3 => stloc!(3),
-                Instruction::Stloc_S { n } => stloc!(*n as usize),
-                Instruction::Stfld { token } => self.gen_instr_stfld(&mut stack, *token),
+                Instruction::Stloc_S(n) => stloc!(*n as usize),
+                Instruction::Stfld(token) => self.gen_instr_stfld(&mut stack, *token),
                 Instruction::Stelem_I1 => self.gen_instr_stelem_i1(&mut stack),
                 Instruction::Stelem_I4 => self.gen_instr_stelem_i4(&mut stack),
                 Instruction::Ldarg_0 => ldarg!(0),
@@ -584,11 +584,11 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Dup => {
                     stack.push(stack.last().unwrap().clone());
                 }
-                Instruction::Call { token } => self.gen_instr_call(&mut stack, *token),
-                Instruction::CallVirt { token } => self.gen_instr_callvirt(&mut stack, *token),
-                Instruction::Box { token } => self.gen_instr_box(&mut stack, *token),
-                Instruction::Newobj { token } => self.gen_instr_newobj(&mut stack, *token),
-                Instruction::Newarr { token } => self.gen_instr_newarr(&mut stack, *token),
+                Instruction::Call(token) => self.gen_instr_call(&mut stack, *token),
+                Instruction::CallVirt(token) => self.gen_instr_callvirt(&mut stack, *token),
+                Instruction::Box(token) => self.gen_instr_box(&mut stack, *token),
+                Instruction::Newobj(token) => self.gen_instr_newobj(&mut stack, *token),
+                Instruction::Newarr(token) => self.gen_instr_newarr(&mut stack, *token),
                 Instruction::Add => binop!(Add),
                 Instruction::Sub => binop!(Sub),
                 Instruction::Mul => binop!(Mul),

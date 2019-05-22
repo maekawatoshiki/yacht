@@ -1,6 +1,9 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed)]
 pub struct PEFileHeader {
-    // machine: Always 0x14c
+    /// Always 0x14c
+    pub machine: u16,
+
     /// Number of sections; indicates size of the Section Table,
     /// which immediately follows the headers.
     pub number_of_sections: u16,
@@ -9,8 +12,12 @@ pub struct PEFileHeader {
     /// January 1st 1970 00:00:00 or 0.
     pub time_date_stamp: u32,
 
-    // pointer_to_symbol_table: Always 0
-    // number_of_symbols: Always 0
+    /// Always 0
+    pub pointer_to_symbol_table: u32,
+
+    /// Always 0
+    pub number_of_symbols: u32,
+
     /// Size of the optional header, the format is described below.
     pub optional_header_size: u16,
 

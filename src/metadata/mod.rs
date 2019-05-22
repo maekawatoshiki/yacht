@@ -1,5 +1,5 @@
 pub mod class;
-pub mod file_reader;
+pub mod pe_parser;
 pub mod header;
 pub mod metadata;
 pub mod method;

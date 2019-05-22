@@ -1,5 +1,5 @@
 extern crate yacht;
-use yacht::{exec::jit, metadata::file_reader};
+use yacht::{exec::jit, metadata::image};
 
 extern crate clap;
 use clap::{App, Arg};
@@ -7,15 +7,13 @@ use clap::{App, Arg};
 extern crate ansi_term;
 use ansi_term::Colour;
 
-use std::{cell::RefCell, rc::Rc};
-
 const VERSION_STR: &'static str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     let app = App::new("Yacht")
         .version(VERSION_STR)
         .author("uint256_t")
-        .about("An ECMA-335 Implementation written in Rust")
+        .about("An ECMA-335 implementation written in Rust")
         .arg(Arg::with_name("file").help("Input file name").index(1));
     let app_matches = app.clone().get_matches();
 
@@ -30,14 +28,10 @@ fn main() {
         None => { eprintln!("{}: {}", Colour::Red.bold().paint("error"), $msg); return }
     } }}; }
 
-    let mut pe_file_reader = expect!(
-        file_reader::PEFileReader::new(filename),
-        format!("File not found '{}'", filename)
+    let mut image = expect!(
+        image::Image::from_file(filename),
+        "Error occurred while loading file"
     );
-
-    let mut image = expect!(pe_file_reader.create_image(), "Broken file");
-    image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
-    image.setup_all_class();
     let method = image.get_entry_method();
 
     unsafe {
@@ -49,8 +43,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, fs, rc::Rc};
-    use yacht::{exec::jit, metadata::file_reader};
+    use std::fs;
+    use yacht::{exec::jit, metadata::image};
 
     #[test]
     fn pe_file_reader() {
@@ -61,10 +55,7 @@ mod tests {
             if !filename.ends_with(".exe") {
                 continue;
             }
-            let mut pe_file_reader = file_reader::PEFileReader::new(filename).unwrap();
-            let mut image = pe_file_reader.create_image().unwrap();
-            image.reader = Some(Rc::new(RefCell::new(pe_file_reader)));
-            image.setup_all_class();
+            let mut image = image::Image::from_file(filename).unwrap();
             let method = image.get_entry_method();
             unsafe {
                 let mut jit = jit::jit::JITCompiler::new(&mut image);

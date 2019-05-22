@@ -9,10 +9,9 @@ use std::{
     io::{BufReader, Read, Seek, SeekFrom},
     iter,
 };
-// use std::mem::transmute;
 
 #[derive(Debug)]
-pub struct PEFileReader {
+pub struct PEParser {
     reader: BufReader<File>,
 }
 
@@ -24,7 +23,7 @@ macro_rules! try_eq {
     }};
 }
 
-impl PEFileReader {
+impl PEParser {
     pub fn new(filename: &str) -> Option<Self> {
         let file = match File::open(filename) {
             Ok(file) => file,
@@ -40,20 +39,17 @@ impl PEFileReader {
         self.read_msdos_header()?;
 
         let pe_file_header = self.read_pe_file_header()?;
-        dprintln!("PE File Header: {:?}", pe_file_header);
 
         let mut pe_optional_headers = vec![];
         let pe_optional_header_size = 224;
-        for i in 0..pe_file_header.optional_header_size / pe_optional_header_size {
+        for _ in 0..pe_file_header.optional_header_size / pe_optional_header_size {
             let pe_optional_header = self.read_pe_optional_header()?;
-            dprintln!("PE Optional Header({}): {:?}", i, pe_optional_header);
             pe_optional_headers.push(pe_optional_header);
         }
 
         let mut sections = vec![];
-        for i in 0..pe_file_header.number_of_sections {
+        for _ in 0..pe_file_header.number_of_sections {
             let section = self.read_section_header()?;
-            dprintln!("Section({}): {:?}", i, section);
             sections.push(section);
         }
 
@@ -67,17 +63,13 @@ impl PEFileReader {
             None
         }()?;
 
-        dprintln!(".text starts at 0x{:x}", text_section.pointer_to_raw_data);
-
         let cli_header_offset = text_section.pointer_to_raw_data as u64 + 8; /* CLI loader stub */
         self.reader.seek(SeekFrom::Start(cli_header_offset)).ok()?;
 
         let cli_header = self.read_cli_header()?;
-        dprintln!("CLI Header: {:?}", cli_header);
 
         let metadata_offset = (cli_header.metadata_rva - text_section.virtual_address
             + text_section.pointer_to_raw_data) as u64;
-        dprintln!("MetaData starts at {:x}", metadata_offset);
         self.reader.seek(SeekFrom::Start(metadata_offset)).ok()?;
 
         let metadata_header = self.read_metadata_header()?;
@@ -117,10 +109,7 @@ impl PEFileReader {
             .find(|section| section.name == ".text")
             .unwrap();
         let start = (rva - text_section.virtual_address + text_section.pointer_to_raw_data) as u64;
-        dprintln!("Method body begin at: {}", start);
-        let method = self.read_method_body(image, class, rva, start)?;
-        dprintln!("Method: {:?}", method);
-        Some(method)
+        self.read_method_body(image, class, rva, start)
     }
 
     fn read_method_body(
@@ -256,8 +245,7 @@ impl PEFileReader {
                 ][..]
         );
 
-        let lfanew = self.read_u32()?;
-        dprintln!("lfanew: {:x}", lfanew);
+        let _lfanew = self.read_u32()?;
 
         let mut latter = [0u8; 64];
         self.read_bytes(&mut latter)?;
@@ -273,8 +261,6 @@ impl PEFileReader {
                 ][..]
         );
 
-        dprintln!("MSDOS Header: success");
-
         Some(())
     }
 
@@ -283,31 +269,12 @@ impl PEFileReader {
         self.read_bytes(&mut pe_signature)?;
         try_eq!(&pe_signature[..] == &['P' as u8, 'E' as u8, 0, 0][..]);
 
-        let machine = self.read_u16()?;
-        try_eq!(machine == 0x14c);
+        let pe_file_header = self.read_struct::<PEFileHeader>()?;
+        try_eq!(pe_file_header.machine == 0x14c);
+        try_eq!(pe_file_header.pointer_to_symbol_table == 0);
+        try_eq!(pe_file_header.number_of_symbols == 0);
 
-        let number_of_sections = self.read_u16()?;
-
-        let time_date_stamp = self.read_u32()?;
-
-        let pointer_to_symbol_table = self.read_u32()?;
-        try_eq!(pointer_to_symbol_table == 0);
-
-        let number_of_symbols = self.read_u32()?;
-        try_eq!(number_of_symbols == 0);
-
-        let optional_header_size = self.read_u16()?;
-
-        let characteristics = self.read_u16()?;
-
-        dprintln!("PE File Header: success");
-
-        Some(PEFileHeader {
-            number_of_sections,
-            time_date_stamp,
-            optional_header_size,
-            characteristics,
-        })
+        Some(pe_file_header)
     }
 
     fn read_pe_optional_header(&mut self) -> Option<PEOptionalHeader> {
@@ -636,7 +603,6 @@ impl PEFileReader {
 
         let table_kinds = TableKind::table_kinds(valid);
         let tables = self.read_metadata_tables(&table_kinds, &rows)?;
-        dprintln!("MetaData Tables: {:?}", tables);
 
         Some(MetaDataStream {
             major_version,
@@ -848,7 +814,7 @@ impl PEFileReader {
     }
 }
 
-impl PEFileReader {
+impl PEParser {
     fn read_bytes(&mut self, buf: &mut [u8]) -> Option<()> {
         match self.reader.read_exact(buf) {
             Ok(()) => Some(()),

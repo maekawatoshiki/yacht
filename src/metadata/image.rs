@@ -1,5 +1,5 @@
 use crate::{
-    metadata::{class::*, file_reader::*, metadata::*, method::*, signature::*, token::*},
+    metadata::{class::*, metadata::*, method::*, pe_parser::*, signature::*, token::*},
     util::{holder::*, name_path::*},
 };
 use rustc_hash::FxHashMap;
@@ -16,7 +16,7 @@ pub struct Image {
     pub metadata: MetaDataStreams,
 
     /// PE file reader
-    pub reader: Option<Rc<RefCell<PEFileReader>>>,
+    pub pe_parser: Option<Rc<RefCell<PEParser>>>,
 
     /// Cache ``MethodInfoRef`` by RVA
     pub method_cache: FxHashMap<RVA, MethodInfoRef>,
@@ -33,16 +33,24 @@ impl Image {
     pub fn new(
         cli_info: CLIInfo,
         metadata: MetaDataStreams,
-        reader: Option<Rc<RefCell<PEFileReader>>>,
+        pe_parser: Option<Rc<RefCell<PEParser>>>,
     ) -> Self {
         Self {
             cli_info,
             metadata,
-            reader,
+            pe_parser,
             method_cache: FxHashMap::default(),
             class_cache: FxHashMap::default(),
             standard_classes: Holder::new(),
         }
+    }
+
+    pub fn from_file(filename: &str) -> Option<Image> {
+        let mut pe_parser = PEParser::new(filename)?;
+        let mut image = pe_parser.create_image()?;
+        image.pe_parser = Some(Rc::new(RefCell::new(pe_parser)));
+        image.setup_all_class();
+        Some(image)
     }
 
     pub fn setup_all_class(&mut self) {
@@ -116,15 +124,15 @@ impl Image {
             class.borrow_mut().fields = fields;
         }
 
-        let file_reader_ref = self.reader.as_ref().unwrap().clone();
-        let mut file_reader = file_reader_ref.borrow_mut();
+        let pe_parser_ref = self.pe_parser.as_ref().unwrap().clone();
+        let mut pe_parser = pe_parser_ref.borrow_mut();
 
         for (class, range) in methods_to_setup {
             let mut methods = vec![];
 
             for mdef in &methoddefs[range] {
                 let mdef = retrieve!(mdef, Table::MethodDef);
-                let method = file_reader
+                let method = pe_parser
                     .read_method(self, class.clone(), mdef.rva)
                     .unwrap();
                 self.method_cache.insert(mdef.rva, method.clone());
