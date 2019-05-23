@@ -1,7 +1,8 @@
 using System;
 
-class Node {
+public class Node {
   public virtual void Dump() {}
+  public virtual int Eval() { return 0; }
 }
 
 class OpNode : Node {
@@ -22,9 +23,16 @@ class OpNode : Node {
     rhs.Dump();
     Console.Write(")");
   }
+
+  public override int Eval() {
+    int l = lhs.Eval(), r = rhs.Eval();
+    if (op == '+') return l + r;
+    if (op == '*') return l * r;
+    return 0;
+  }
 }
 
-class NumNode : Node {
+public class NumNode : Node {
   public char num;
 
   public NumNode(char num_) {
@@ -35,6 +43,8 @@ class NumNode : Node {
     Console.Write(" ");
     Console.Write(num);
   }
+
+  public override int Eval() { return num - '0'; }
 }
 
 public class Parser {
@@ -47,13 +57,10 @@ public class Parser {
     len = expr.Length;
   }
 
-  public void Parse() {
+  public Node Parse() {
     Console.Write("Expression: ");
     Console.WriteLine(expr);
-
-    Node node = ExprAdd();
-    Console.Write("RPN:");
-    node.Dump();
+    return ExprAdd();
   }
 
   Node ExprAdd() {
@@ -88,6 +95,12 @@ public class Parser {
 public class Calc {
   public static void Main() {
     var parser = new Parser("1+2*3+4");
-    parser.Parse();
+    var node = parser.Parse();
+
+    Console.Write("RPN:");
+    node.Dump();
+
+    Console.Write("\nEval: ");
+    Console.WriteLine(node.Eval());
   }
 }
