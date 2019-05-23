@@ -499,18 +499,27 @@ impl<'a> JITCompiler<'a> {
         mut stack: Vec<TypedValue>,
     ) -> CResult<Vec<TypedValue>> {
         #[rustfmt::skip]
-        macro_rules! binop { ($op:ident) => {{
+        macro_rules! binop { ($iop:ident, $fop:ident) => {{
             let val2 = stack.pop().unwrap();
             let val1 = stack.pop().unwrap();
-            stack.push(TypedValue::new(
-                val1.ty,
-                concat_idents!(LLVMBuild, $op)(self.builder, val1.val, val2.val, cstr0!()),
-            ));
+            stack.push(match val1.ty.base {
+                ElementType::I4 => TypedValue::new(val1.ty,
+                                                  concat_idents!(LLVMBuild, $iop)(self.builder, val1.val, val2.val, cstr0!())),
+                ElementType::R8 => TypedValue::new(val1.ty,
+                                                  concat_idents!(LLVMBuild, $fop)(self.builder, val1.val, val2.val, cstr0!())),
+                _ => unimplemented!()
+            })
         }}}
         #[rustfmt::skip]
         macro_rules! push_i4 { ($n:expr) => {
              stack.push(TypedValue::new(
                 Type::i4_ty(), self.llvm_int32($n as u64),
+            ))
+        }}
+        #[rustfmt::skip]
+        macro_rules! push_r8 { ($n:expr) => {
+             stack.push(TypedValue::new(
+                Type::r8_ty(), self.llvm_real($n),
             ))
         }}
         #[rustfmt::skip]
@@ -557,6 +566,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldc_I4_8 => push_i4!(8),
                 Instruction::Ldc_I4_S(n) => push_i4!(*n),
                 Instruction::Ldc_I4(n) => push_i4!(*n),
+                Instruction::Ldc_R8(f) => push_r8!(*f),
                 Instruction::Ldloc_0 => ldloc!(0),
                 Instruction::Ldloc_1 => ldloc!(1),
                 Instruction::Ldloc_2 => ldloc!(2),
@@ -591,11 +601,11 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Box(token) => self.gen_instr_box(&mut stack, *token),
                 Instruction::Newobj(token) => self.gen_instr_newobj(&mut stack, *token),
                 Instruction::Newarr(token) => self.gen_instr_newarr(&mut stack, *token),
-                Instruction::Add => binop!(Add),
-                Instruction::Sub => binop!(Sub),
-                Instruction::Mul => binop!(Mul),
-                Instruction::Div => binop!(SDiv),
-                Instruction::Rem => binop!(SRem),
+                Instruction::Add => binop!(Add, FAdd),
+                Instruction::Sub => binop!(Sub, FSub),
+                Instruction::Mul => binop!(Mul, FMul),
+                Instruction::Div => binop!(SDiv, FDiv),
+                Instruction::Rem => binop!(SRem, FRem),
                 Instruction::Ret => {
                     let ret_ty =
                         LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(self.generating.unwrap())));
@@ -1249,6 +1259,10 @@ impl<'a> JITCompiler<'a> {
         llvm_const_int32(self.context, n)
     }
 
+    unsafe fn llvm_real(&self, f: f64) -> LLVMValueRef {
+        llvm_const_real(self.context, f)
+    }
+
     unsafe fn llvm_ptr(&self, ptr: *mut u8) -> LLVMValueRef {
         llvm_const_ptr(self.context, ptr)
     }
@@ -1270,6 +1284,7 @@ impl CastIntoLLVMType for Type {
             ElementType::Boolean => LLVMInt8TypeInContext(ctx),
             ElementType::Char => LLVMInt32TypeInContext(ctx),
             ElementType::I4 => LLVMInt32TypeInContext(ctx),
+            ElementType::R8 => LLVMDoubleTypeInContext(ctx),
             ElementType::String => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
             ElementType::SzArray(ref szarr) => {
                 LLVMPointerType(szarr.elem_ty.to_llvmty(compiler), 0)
@@ -1400,6 +1415,10 @@ impl ClassTypesHolder {
 
 unsafe fn llvm_const_int32(ctx: LLVMContextRef, n: u64) -> LLVMValueRef {
     LLVMConstInt(LLVMInt32TypeInContext(ctx), n, 1)
+}
+
+unsafe fn llvm_const_real(ctx: LLVMContextRef, f: f64) -> LLVMValueRef {
+    LLVMConstReal(LLVMDoubleTypeInContext(ctx), f)
 }
 
 unsafe fn llvm_const_ptr(ctx: LLVMContextRef, p: *mut u8) -> LLVMValueRef {

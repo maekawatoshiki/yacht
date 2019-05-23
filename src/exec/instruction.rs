@@ -16,6 +16,7 @@ pub enum Instruction {
     Ldc_I4_8,
     Ldc_I4_S(i32),
     Ldc_I4(i32),
+    Ldc_R8(f64),
     Ldarg_0,
     Ldarg_1,
     Ldarg_2,
@@ -82,6 +83,7 @@ pub mod il_instr {
     pub const LDC_I4_8 : u8 = 0x1e;
     pub const LDC_I4_S : u8 = 0x1f;
     pub const LDC_I4   : u8 = 0x20;
+    pub const LDC_R8   : u8 = 0x23;
     pub const LDARG_0  : u8 = 0x02;
     pub const LDARG_1  : u8 = 0x03;
     pub const LDARG_2  : u8 = 0x04;
@@ -130,6 +132,7 @@ pub mod il_instr {
 
     pub fn get_instr_size<'a>(instr: u8) -> usize {
         match instr {
+            LDC_R8 => 9,
             LDNULL | LDSTR | 
             CALL | CALLVIRT |
             NEWOBJ | NEWARR | BOX |

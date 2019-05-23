@@ -1,6 +1,6 @@
 use crate::{exec::instruction::*, metadata::token::*};
 use rustc_hash::FxHashMap;
-use std::{iter::Enumerate, slice::Iter};
+use std::{iter::Enumerate, mem::transmute, slice::Iter};
 
 #[derive(Debug, Clone)]
 pub struct BytesToInstructions<'a> {
@@ -46,6 +46,9 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::LDC_I4_8 => iseq.push(Instruction::Ldc_I4_8),
                 il_instr::LDC_I4_S => iseq.push(Instruction::Ldc_I4_S(self.read_u8()? as i32)),
                 il_instr::LDC_I4 => iseq.push(Instruction::Ldc_I4(self.read_u32()? as i32)),
+                il_instr::LDC_R8 => iseq.push(Instruction::Ldc_R8(unsafe {
+                    transmute::<u64, f64>(self.read_u64()?)
+                })),
                 il_instr::LDARG_0 => iseq.push(Instruction::Ldarg_0),
                 il_instr::LDARG_1 => iseq.push(Instruction::Ldarg_1),
                 il_instr::LDARG_2 => iseq.push(Instruction::Ldarg_2),
@@ -158,5 +161,26 @@ impl<'a> BytesToInstructions<'a> {
         let z = *self.iter.next()?.1 as u32;
         let u = *self.iter.next()?.1 as u32;
         Some((u << 24) + (z << 16) + (y << 8) + x)
+    }
+
+    fn read_u64(&mut self) -> Option<u64> {
+        let n0 = *self.iter.next()?.1 as u64;
+        let n1 = *self.iter.next()?.1 as u64;
+        let n2 = *self.iter.next()?.1 as u64;
+        let n3 = *self.iter.next()?.1 as u64;
+        let n4 = *self.iter.next()?.1 as u64;
+        let n5 = *self.iter.next()?.1 as u64;
+        let n6 = *self.iter.next()?.1 as u64;
+        let n7 = *self.iter.next()?.1 as u64;
+        Some(
+            (n7 << 56)
+                + (n6 << 48)
+                + (n5 << 40)
+                + (n4 << 32)
+                + (n3 << 24)
+                + (n2 << 16)
+                + (n1 << 8)
+                + n0,
+        )
     }
 }

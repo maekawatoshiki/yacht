@@ -67,8 +67,8 @@ impl BuiltinFunctions {
                 macro_rules! parse_llvm_ty {
                     (void) => { LLVMVoidTypeInContext(ctx) };
                     (i4  ) => { LLVMInt32TypeInContext(ctx) };
+                    (r8  ) => { LLVMDoubleTypeInContext(ctx) };
                     (char) => { LLVMInt32TypeInContext(ctx) };
-                    // (dbl)     => { VariableType::Double. to_llvmty(context) };
                     (str ) => { LLVMPointerType(LLVMInt8TypeInContext(ctx), 0) };
                     (obj ) => { LLVMPointerType(LLVMInt8TypeInContext(ctx), 0) };
                     (ptr ) => { LLVMPointerType(LLVMInt8TypeInContext(ctx), 0) };
@@ -77,8 +77,8 @@ impl BuiltinFunctions {
                 macro_rules! parse_ty {
                     (void) => { Type::void_ty() };
                     (i4  ) => { Type::i4_ty() };
+                    (r8  ) => { Type::r8_ty() };
                     (char) => { Type::char_ty() };
-                    // (dbl)     => { VariableType::Double. to_llvmty(context) };
                     (obj ) => { Type::object_ty() };
                     (str ) => { Type::string_ty() };
                 }
@@ -105,12 +105,14 @@ impl BuiltinFunctions {
                 let write_line = vec![
                     def_func!(        void, [str ],     write_line_string,     "[mscorlib]System::Console.WriteLine(String)"),
                     def_func!(        void, [i4  ],     write_line_i4,         "[mscorlib]System::Console.WriteLine(int32)"),
+                    def_func!(        void, [r8  ],     write_line_r8,         "[mscorlib]System::Console.WriteLine(float64)"),
                     def_func!(        void, [char],     write_line_char,       "[mscorlib]System::Console.WriteLine(char)"),
                     def_func!(        void, [str, obj], write_line_string_obj, "[mscorlib]System::Console.WriteLine(String, Object)"),
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
                 let write = vec![
                     def_func!(        void, [str ],     write_string,          "[mscorlib]System::Console.Write(String)"),
                     def_func!(        void, [i4  ],     write_i4,              "[mscorlib]System::Console.Write(int32)"),
+                    def_func!(        void, [r8  ],     write_r8,              "[mscorlib]System::Console.Write(float64)"),
                     def_func!(        void, [char],     write_char,            "[mscorlib]System::Console.Write(char)"),
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
                 let get_length = vec![
@@ -167,6 +169,11 @@ pub fn write_line_i4(n: i32) {
 }
 
 #[no_mangle]
+pub fn write_line_r8(n: f64) {
+    println!("{}", n);
+}
+
+#[no_mangle]
 pub fn write_line_char(c: u16) {
     println!(
         "{}",
@@ -197,6 +204,11 @@ pub unsafe fn write_line_string_obj(s: *mut Vec<u16>, o: *mut u8) {
 
 #[no_mangle]
 pub fn write_i4(n: i32) {
+    print!("{}", n);
+}
+
+#[no_mangle]
+pub fn write_r8(n: f64) {
     print!("{}", n);
 }
 

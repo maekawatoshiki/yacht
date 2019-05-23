@@ -12,6 +12,7 @@ pub enum ElementType {
     Boolean,
     Char,
     I4,
+    R8,
     String,
     Class(ClassInfoRef),
     SzArray(Box<SzArrayInfo>),
@@ -67,6 +68,10 @@ impl Type {
         Self::new(ElementType::I4)
     }
 
+    pub fn r8_ty() -> Self {
+        Self::new(ElementType::R8)
+    }
+
     pub fn simple_method_ty(ret: Type, params: &[Type]) -> Self {
         Self::new(ElementType::FnPtr(Box::new(MethodSignature {
             info: 0,
@@ -105,6 +110,7 @@ impl Type {
             0x02 => Some(Type::new(ElementType::Boolean)),
             0x03 => Some(Type::new(ElementType::Char)),
             0x08 => Some(Type::new(ElementType::I4)),
+            0x0d => Some(Type::new(ElementType::R8)),
             0x0e => Some(Type::new(ElementType::String)),
             0x12 => Type::class_into_type(image, sig),
             0x1c => Some(Type::new(ElementType::Object)),
@@ -225,6 +231,7 @@ impl fmt::Debug for ElementType {
                 ElementType::Boolean => "Boolean".to_string(),
                 ElementType::Char => "Char".to_string(),
                 ElementType::I4 => "I4".to_string(),
+                ElementType::R8 => "R8".to_string(),
                 ElementType::String => "String".to_string(),
                 ElementType::SzArray(s) => format!("SzArray({:?})", s),
                 ElementType::FnPtr(f) => format!("FnPtr({:?})", f),
