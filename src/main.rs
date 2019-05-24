@@ -52,7 +52,7 @@ mod tests {
         for entry in paths {
             let path = entry.unwrap().path();
             let filename = path.to_str().unwrap();
-            if !filename.ends_with(".exe") {
+            if !filename.ends_with(".exe") || filename == "smallpt.exe" {
                 continue;
             }
             let mut image = image::Image::from_file(filename).unwrap();

@@ -102,10 +102,9 @@ internal static class Program {
           radiance(spheres, reflRay, depth, random) * RP 
           : radiance(spheres, new Ray(x, tdir), depth, random) * TP) 
         : radiance(spheres, reflRay, depth, random) * Re + radiance(spheres, new Ray(x, tdir), depth, random) * Tr);
-    return new Vec(0,0,0);
   }
   private static void Main() {
-    int w = 500, h = 500, samps = 40; // # samples
+    int w = 200, h = 200, samps = 25; 
     Ray cam = new Ray(new Vec(50, 52, 295.6), new Vec(0, -0.042612, -1).norm()); // cam pos, dir
     Vec cx = new Vec(w * .5135 / h, 0, 0), cy = (cx % cam.d).norm() * .5135; 
     var c = new Vec[w*h];
