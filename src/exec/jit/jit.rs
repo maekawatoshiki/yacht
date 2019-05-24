@@ -503,10 +503,21 @@ impl<'a> JITCompiler<'a> {
             let val2 = stack.pop().unwrap();
             let val1 = stack.pop().unwrap();
             stack.push(match val1.ty.base {
-                ElementType::I4 => TypedValue::new(val1.ty,
+                ElementType::I4 | ElementType::U4 => TypedValue::new(val1.ty,
                                                   concat_idents!(LLVMBuild, $iop)(self.builder, val1.val, val2.val, cstr0!())),
                 ElementType::R8 => TypedValue::new(val1.ty,
                                                   concat_idents!(LLVMBuild, $fop)(self.builder, val1.val, val2.val, cstr0!())),
+                _ => unimplemented!()
+            })
+        }}}
+        #[rustfmt::skip]
+        macro_rules! unaryop { ($iop:ident, $fop:ident) => {{
+            let val = stack.pop().unwrap();
+            stack.push(match val.ty.base {
+                ElementType::I4 | ElementType::U4 => TypedValue::new(val.ty,
+                                                  concat_idents!(LLVMBuild, $iop)(self.builder, val.val, cstr0!())),
+                ElementType::R8 => TypedValue::new(val.ty,
+                                                  concat_idents!(LLVMBuild, $fop)(self.builder, val.val, cstr0!())),
                 _ => unimplemented!()
             })
         }}}
@@ -543,6 +554,13 @@ impl<'a> JITCompiler<'a> {
                 LLVMBuildLoad(self.builder, self.get_argument($n, None), cstr0!()),
             ))
         }}
+        #[rustfmt::skip]
+        macro_rules! starg { ($n:expr) => {{
+            let val = self.get_argument($n, None);
+            LLVMBuildStore(self.builder,
+                self.typecast(stack.pop().unwrap().val,
+                    LLVMGetElementType(LLVMTypeOf(val))), val);
+        }}; }
 
         let code = &block.code;
 
@@ -555,6 +573,7 @@ impl<'a> JITCompiler<'a> {
                         self.image.get_user_string(*us_offset).clone(),
                     )) as *mut u8),
                 )),
+                Instruction::Ldc_I4_M1 => push_i4!(0 - 1),
                 Instruction::Ldc_I4_0 => push_i4!(0),
                 Instruction::Ldc_I4_1 => push_i4!(1),
                 Instruction::Ldc_I4_2 => push_i4!(2),
@@ -576,6 +595,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldelem_U1 => self.gen_instr_ldelem_i1(&mut stack),
                 Instruction::Ldelem_I1 => self.gen_instr_ldelem_i1(&mut stack),
                 Instruction::Ldelem_I4 => self.gen_instr_ldelem_i4(&mut stack),
+                Instruction::Ldelem_ref => self.gen_instr_ldelem_ref(&mut stack),
                 Instruction::Stloc_0 => stloc!(0),
                 Instruction::Stloc_1 => stloc!(1),
                 Instruction::Stloc_2 => stloc!(2),
@@ -584,12 +604,17 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Stfld(token) => self.gen_instr_stfld(&mut stack, *token),
                 Instruction::Stelem_I1 => self.gen_instr_stelem_i1(&mut stack),
                 Instruction::Stelem_I4 => self.gen_instr_stelem_i4(&mut stack),
+                Instruction::Stelem_ref => self.gen_instr_stelem_ref(&mut stack),
+                Instruction::Starg_S(n) => starg!(*n as usize),
                 Instruction::Ldarg_0 => ldarg!(0),
                 Instruction::Ldarg_1 => ldarg!(1),
                 Instruction::Ldarg_2 => ldarg!(2),
                 Instruction::Ldarg_3 => ldarg!(3),
+                Instruction::Ldarg_S(n) => ldarg!(*n as usize),
                 Instruction::Ldlen => self.gen_instr_ldlen(&mut stack),
                 Instruction::Conv_I4 => self.gen_instr_conv_i4(&mut stack),
+                Instruction::Conv_R8 => self.gen_instr_conv_r8(&mut stack),
+                Instruction::Conv_R_un => self.gen_instr_conv_r_un(&mut stack),
                 Instruction::Pop => {
                     stack.pop();
                 }
@@ -606,6 +631,11 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Mul => binop!(Mul, FMul),
                 Instruction::Div => binop!(SDiv, FDiv),
                 Instruction::Rem => binop!(SRem, FRem),
+                Instruction::Xor => binop!(Xor, Xor),
+                Instruction::Shl => binop!(Shl, Shl),
+                Instruction::Shr => binop!(AShr, AShr),
+                Instruction::Shr_un => binop!(LShr, LShr),
+                Instruction::Neg => unaryop!(Neg, FNeg),
                 Instruction::Ret => {
                     let ret_ty =
                         LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(self.generating.unwrap())));
@@ -635,28 +665,52 @@ impl<'a> JITCompiler<'a> {
                     LLVMBuildCondBr(self.builder, cond_val, bb_then, bb_else);
                 }
                 Instruction::Bge { .. }
+                | Instruction::Bge_un { .. }
                 | Instruction::Blt { .. }
                 | Instruction::Ble { .. }
+                | Instruction::Ble_un { .. }
                 | Instruction::Beq { .. }
                 | Instruction::Bne_un { .. }
                 | Instruction::Bgt { .. } => {
                     let val2 = stack.pop().unwrap();
                     let val1 = stack.pop().unwrap();
-                    let cond_val = LLVMBuildICmp(
-                        self.builder,
-                        match instr {
-                            Instruction::Bge { .. } => llvm::LLVMIntPredicate::LLVMIntSGE,
-                            Instruction::Blt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
-                            Instruction::Ble { .. } => llvm::LLVMIntPredicate::LLVMIntSLE,
-                            Instruction::Bgt { .. } => llvm::LLVMIntPredicate::LLVMIntSGT,
-                            Instruction::Beq { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
-                            Instruction::Bne_un { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
-                            _ => unreachable!(),
-                        },
-                        val1.val,
-                        val2.val,
-                        cstr0!(),
-                    );
+                    let cond_val = match val1.ty.base {
+                        ElementType::I4 | ElementType::U4 => LLVMBuildICmp(
+                            self.builder,
+                            match instr {
+                                Instruction::Bge { .. } => llvm::LLVMIntPredicate::LLVMIntSGE,
+                                Instruction::Bge_un { .. } => llvm::LLVMIntPredicate::LLVMIntUGE,
+                                Instruction::Blt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
+                                Instruction::Ble { .. } => llvm::LLVMIntPredicate::LLVMIntSLE,
+                                Instruction::Ble_un { .. } => llvm::LLVMIntPredicate::LLVMIntULE,
+                                Instruction::Bgt { .. } => llvm::LLVMIntPredicate::LLVMIntSGT,
+                                Instruction::Beq { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
+                                Instruction::Bne_un { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
+                                _ => unreachable!(),
+                            },
+                            val1.val,
+                            val2.val,
+                            cstr0!(),
+                        ),
+                        ElementType::R8 => LLVMBuildFCmp(
+                            self.builder,
+                            match instr {
+                                Instruction::Bge { .. } => llvm::LLVMRealPredicate::LLVMRealOGE,
+                                Instruction::Bge_un { .. } => llvm::LLVMRealPredicate::LLVMRealOGE,
+                                Instruction::Blt { .. } => llvm::LLVMRealPredicate::LLVMRealOLT,
+                                Instruction::Ble { .. } => llvm::LLVMRealPredicate::LLVMRealOLE,
+                                Instruction::Ble_un { .. } => llvm::LLVMRealPredicate::LLVMRealOLE,
+                                Instruction::Bgt { .. } => llvm::LLVMRealPredicate::LLVMRealOGT,
+                                Instruction::Beq { .. } => llvm::LLVMRealPredicate::LLVMRealOEQ,
+                                Instruction::Bne_un { .. } => llvm::LLVMRealPredicate::LLVMRealONE,
+                                _ => unreachable!(),
+                            },
+                            val1.val,
+                            val2.val,
+                            cstr0!(),
+                        ),
+                        _ => unreachable!(),
+                    };
                     let destinations = block.kind.get_conditional_jump_destinations();
                     let bb_then = self.get_basic_block(destinations[0]).retrieve();
                     let bb_else = self.get_basic_block(destinations[1]).retrieve();
@@ -669,13 +723,14 @@ impl<'a> JITCompiler<'a> {
                         LLVMBuildBr(self.builder, bb_br);
                     }
                 }
-                Instruction::Clt | Instruction::Ceq => {
+                Instruction::Clt | Instruction::Cgt | Instruction::Ceq => {
                     let val2 = stack.pop().unwrap();
                     let val1 = stack.pop().unwrap();
                     let cond_val = self.typecast(
                         LLVMBuildICmp(
                             self.builder,
                             match instr {
+                                Instruction::Cgt { .. } => llvm::LLVMIntPredicate::LLVMIntSGT,
                                 Instruction::Clt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
                                 Instruction::Ceq { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
                                 _ => unreachable!(),
@@ -888,26 +943,37 @@ impl<'a> JITCompiler<'a> {
     }
 
     unsafe fn gen_instr_ldelem_i1(&mut self, stack: &mut Vec<TypedValue>) {
-        let val = self.gen_instr_general_ldelem(stack);
-        stack.push(TypedValue::new(Type::boolean_ty(), val))
+        let typed_val = self.gen_instr_general_ldelem(stack);
+        stack.push(typed_val);
     }
 
     unsafe fn gen_instr_ldelem_i4(&mut self, stack: &mut Vec<TypedValue>) {
-        let val = self.gen_instr_general_ldelem(stack);
-        stack.push(TypedValue::new(Type::i4_ty(), val))
+        let typed_val = self.gen_instr_general_ldelem(stack);
+        stack.push(typed_val);
     }
 
-    unsafe fn gen_instr_general_ldelem(&mut self, stack: &mut Vec<TypedValue>) -> LLVMValueRef {
+    unsafe fn gen_instr_ldelem_ref(&mut self, stack: &mut Vec<TypedValue>) {
+        let typed_val = self.gen_instr_general_ldelem(stack);
+        stack.push(typed_val)
+    }
+
+    unsafe fn gen_instr_general_ldelem(&mut self, stack: &mut Vec<TypedValue>) -> TypedValue {
         let index = stack.pop().unwrap().val;
-        let array = stack.pop().unwrap().val;
-        self.load_element(
-            array,
-            vec![LLVMBuildAdd(
-                self.builder,
-                index,
-                self.llvm_int32(4),
-                cstr0!(),
-            )],
+        let TypedValue {
+            ty: arr_ty,
+            val: array,
+        } = stack.pop().unwrap();
+        TypedValue::new(
+            arr_ty.as_szarray().unwrap().elem_ty.clone(),
+            self.load_element(
+                array,
+                vec![LLVMBuildAdd(
+                    self.builder,
+                    index,
+                    self.llvm_int32(4),
+                    cstr0!(),
+                )],
+            ),
         )
     }
 
@@ -916,6 +982,10 @@ impl<'a> JITCompiler<'a> {
     }
 
     unsafe fn gen_instr_stelem_i4(&mut self, stack: &mut Vec<TypedValue>) {
+        self.gen_instr_general_stelem(stack)
+    }
+
+    unsafe fn gen_instr_stelem_ref(&mut self, stack: &mut Vec<TypedValue>) {
         self.gen_instr_general_stelem(stack)
     }
 
@@ -949,6 +1019,27 @@ impl<'a> JITCompiler<'a> {
         stack.push(TypedValue::new(
             Type::i4_ty(),
             self.typecast(value, LLVMInt32TypeInContext(self.context)),
+        ))
+    }
+
+    unsafe fn gen_instr_conv_r8(&mut self, stack: &mut Vec<TypedValue>) {
+        let value = stack.pop().unwrap().val;
+        stack.push(TypedValue::new(
+            Type::r8_ty(),
+            self.typecast(value, LLVMDoubleTypeInContext(self.context)),
+        ))
+    }
+
+    unsafe fn gen_instr_conv_r_un(&mut self, stack: &mut Vec<TypedValue>) {
+        let value = stack.pop().unwrap().val;
+        stack.push(TypedValue::new(
+            Type::r8_ty(),
+            LLVMBuildUIToFP(
+                self.builder,
+                value,
+                LLVMDoubleTypeInContext(self.context),
+                cstr0!(),
+            ),
         ))
     }
 
@@ -1030,6 +1121,27 @@ impl<'a> JITCompiler<'a> {
                     }
                     _ => unimplemented!(),
                 }
+            }
+            Table::TypeDef(_) => {
+                let elem_ty = Type::new(ElementType::Class(
+                    self.image.class_cache.get(&token).unwrap().clone(),
+                ));
+                let szarr_ty = Type::new(ElementType::SzArray(Box::new(SzArrayInfo {
+                    elem_ty: elem_ty.clone(),
+                })));
+                let llvm_elem_ty = elem_ty.to_llvmty(self);
+                let llvm_szarr_ty = szarr_ty.to_llvmty(self);
+                let new_arr = self.typecast(
+                    self.call_function(
+                        self.builtin_functions
+                            .get_helper_function("new_szarray")
+                            .unwrap()
+                            .llvm_function,
+                        vec![self.get_size_of_llvm_class_type(llvm_elem_ty), len],
+                    ),
+                    llvm_szarr_ty,
+                );
+                stack.push(TypedValue::new(szarr_ty, new_arr));
             }
             e => unimplemented!("newarr: unimplemented: {:?}", e),
         }
@@ -1284,6 +1396,7 @@ impl CastIntoLLVMType for Type {
             ElementType::Boolean => LLVMInt8TypeInContext(ctx),
             ElementType::Char => LLVMInt32TypeInContext(ctx),
             ElementType::I4 => LLVMInt32TypeInContext(ctx),
+            ElementType::U4 => LLVMInt32TypeInContext(ctx),
             ElementType::R8 => LLVMDoubleTypeInContext(ctx),
             ElementType::String => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
             ElementType::SzArray(ref szarr) => {
@@ -1294,7 +1407,7 @@ impl CastIntoLLVMType for Type {
                 compiler.get_class_type(class)
             }
             ElementType::Object => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
-            _ => unimplemented!(),
+            ElementType::FnPtr(_) => unimplemented!(),
         }
     }
 }

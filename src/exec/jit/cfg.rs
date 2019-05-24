@@ -47,8 +47,10 @@ impl CFGMaker {
         for (pc, instr) in code.iter().enumerate() {
             match instr {
                 Instruction::Bge(target)
+                | Instruction::Bge_un(target)
                 | Instruction::Bgt(target)
                 | Instruction::Ble(target)
+                | Instruction::Ble_un(target)
                 | Instruction::Blt(target)
                 | Instruction::Beq(target)
                 | Instruction::Bne_un(target)

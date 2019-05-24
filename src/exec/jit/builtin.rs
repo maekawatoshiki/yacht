@@ -102,6 +102,21 @@ impl BuiltinFunctions {
                     }}
                 }
 
+                let sqrt = vec![
+                    def_func!(        r8,   [r8 ],      sqrt_r8,               "[mscorlib]System::Math.Sqrt(float64)")
+                ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
+                let abs = vec![
+                    def_func!(        r8,   [r8 ],      abs_r8,                "[mscorlib]System::Math.Abs(float64)")
+                ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
+                let cos = vec![
+                    def_func!(        r8,   [r8 ],      cos_r8,                "[mscorlib]System::Math.Cos(float64)")
+                ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
+                let sin = vec![
+                    def_func!(        r8,   [r8 ],      sin_r8,                "[mscorlib]System::Math.Sin(float64)")
+                ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
+                let pow = vec![
+                    def_func!(        r8,   [r8, r8],   pow_r8_r8,             "[mscorlib]System::Math.Pow(float64, float64)")
+                ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
                 let write_line = vec![
                     def_func!(        void, [str ],     write_line_string,     "[mscorlib]System::Console.WriteLine(String)"),
                     def_func!(        void, [i4  ],     write_line_i4,         "[mscorlib]System::Console.WriteLine(int32)"),
@@ -136,6 +151,11 @@ impl BuiltinFunctions {
                 holder.add(MethodFullPath(vec!["mscorlib", "System", "Int32",   "ToString"  ]), int32_to_string);
                 holder.add(MethodFullPath(vec!["mscorlib", "System", "String",  "get_Chars" ]), get_chars      );
                 holder.add(MethodFullPath(vec!["mscorlib", "System", "String",  "get_Length"]), get_length     );
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "Math",    "Sqrt"      ]), sqrt           );
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "Math",    "Sin"       ]), sin            );
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "Math",    "Cos"       ]), cos            );
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "Math",    "Abs"       ]), abs            );
+                holder.add(MethodFullPath(vec!["mscorlib", "System", "Math",    "Pow"       ]), pow            );
 
                 holder
             },
@@ -161,6 +181,31 @@ impl BuiltinFunctions {
         functions.append(&mut self.helper_map.iter().map(|(_, f)| f.clone()).collect());
         functions
     }
+}
+
+#[no_mangle]
+pub fn abs_r8(n: f64) -> f64 {
+    n.abs()
+}
+
+#[no_mangle]
+pub fn sin_r8(n: f64) -> f64 {
+    n.sin()
+}
+
+#[no_mangle]
+pub fn cos_r8(n: f64) -> f64 {
+    n.cos()
+}
+
+#[no_mangle]
+pub fn pow_r8_r8(x: f64, y: f64) -> f64 {
+    x.powf(y)
+}
+
+#[no_mangle]
+pub fn sqrt_r8(n: f64) -> f64 {
+    n.sqrt()
 }
 
 #[no_mangle]

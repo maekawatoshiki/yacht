@@ -12,6 +12,7 @@ pub enum ElementType {
     Boolean,
     Char,
     I4,
+    U4,
     R8,
     String,
     Class(ClassInfoRef),
@@ -68,6 +69,10 @@ impl Type {
         Self::new(ElementType::I4)
     }
 
+    pub fn u4_ty() -> Self {
+        Self::new(ElementType::U4)
+    }
+
     pub fn r8_ty() -> Self {
         Self::new(ElementType::R8)
     }
@@ -110,6 +115,7 @@ impl Type {
             0x02 => Some(Type::new(ElementType::Boolean)),
             0x03 => Some(Type::new(ElementType::Char)),
             0x08 => Some(Type::new(ElementType::I4)),
+            0x09 => Some(Type::new(ElementType::U4)),
             0x0d => Some(Type::new(ElementType::R8)),
             0x0e => Some(Type::new(ElementType::String)),
             0x12 => Type::class_into_type(image, sig),
@@ -118,7 +124,8 @@ impl Type {
                 elem_ty: Type::into_type(image, sig)?,
             })))),
             // TODO
-            _ => None,
+            e => unimplemented!("{:?}", e),
+            // _ => None,
         }
     }
 
@@ -132,6 +139,13 @@ impl Type {
     pub fn as_class(&self) -> Option<&ClassInfoRef> {
         match self.base {
             ElementType::Class(ref class) => Some(class),
+            _ => None,
+        }
+    }
+
+    pub fn as_szarray(&self) -> Option<&SzArrayInfo> {
+        match self.base {
+            ElementType::SzArray(ref szarr) => Some(szarr),
             _ => None,
         }
     }
@@ -231,6 +245,7 @@ impl fmt::Debug for ElementType {
                 ElementType::Boolean => "Boolean".to_string(),
                 ElementType::Char => "Char".to_string(),
                 ElementType::I4 => "I4".to_string(),
+                ElementType::U4 => "U4".to_string(),
                 ElementType::R8 => "R8".to_string(),
                 ElementType::String => "String".to_string(),
                 ElementType::SzArray(s) => format!("SzArray({:?})", s),
