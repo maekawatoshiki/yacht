@@ -47,12 +47,12 @@ mod tests {
     use yacht::{exec::jit, metadata::image};
 
     #[test]
-    fn pe_file_reader() {
+    fn exec_examples() {
         let paths = fs::read_dir("./examples").unwrap();
         for entry in paths {
             let path = entry.unwrap().path();
             let filename = path.to_str().unwrap();
-            if !filename.ends_with(".exe") || filename == "smallpt.exe" {
+            if !filename.ends_with(".exe") || filename.ends_with("smallpt.exe") {
                 continue;
             }
             let mut image = image::Image::from_file(filename).unwrap();

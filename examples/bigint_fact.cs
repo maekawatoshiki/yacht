@@ -9,13 +9,8 @@ class BigIntList {
     next = null;
   }
 
-  public void Dump() {
-    if (next != null) {
-      next.Dump();
-    }
-
-    Console.Write(n);
-    Console.Write(" ");
+  public override string ToString() {
+    return (next != null ? next.ToString() : "" ) + n + " ";
   }
 }
 
@@ -57,9 +52,8 @@ class BigInt {
     return ret;
   }
 
-  public void Dump() {
-    list.Dump();
-    Console.WriteLine("");
+  public override string ToString() {
+    return list.ToString();
   }
 }
 
@@ -68,9 +62,7 @@ public class A {
     var n = new BigInt(1);
     for (int i = 0; i < 100; i++) {
       n = n.Mul(n, i + 1);
-      Console.Write(i + 1);
-      Console.Write("! = ");
-      n.Dump();
+      Console.WriteLine((i + 1) + "! = " + n);
     }
   }
 }

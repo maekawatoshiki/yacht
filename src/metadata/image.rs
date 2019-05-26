@@ -25,7 +25,7 @@ pub struct Image {
     pub class_cache: FxHashMap<Token, ClassInfoRef>,
 
     /// Holds all the standard classes like ``System::Object``. Will be removed in the future.
-    standard_classes: Holder<ClassInfoRef>,
+    pub standard_classes: Holder<ClassInfoRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>
 }
 
@@ -215,7 +215,16 @@ impl Image {
             vec![],
             Some(class_system_object_ref.clone()),
         );
+        let class_system_string_ref = ClassInfo::new_ref(
+            ResolutionScope::asm_ref("mscorlib"),
+            "System",
+            "String",
+            vec![],
+            vec![],
+            Some(class_system_object_ref.clone()),
+        );
 
+        // TODO: DIRTY
         let system_object_to_string = Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
             name: "ToString".to_string(),
             ty: Type::full_method_ty(/*this*/ 0x20, Type::string_ty(), &[]),
@@ -226,16 +235,58 @@ impl Image {
             ty: Type::full_method_ty(/*this*/ 0x20, Type::string_ty(), &[]),
             class: class_system_int32_ref.clone(),
         })));
+        let system_string_to_string = Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
+            name: "ToString".to_string(),
+            ty: Type::full_method_ty(/*this*/ 0x20, Type::string_ty(), &[]),
+            class: class_system_string_ref.clone(),
+        })));
+        let system_string_get_chars = Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
+            name: "get_Chars".to_string(),
+            ty: Type::full_method_ty(/*this*/ 0x20, Type::char_ty(), &[Type::i4_ty()]),
+            class: class_system_string_ref.clone(),
+        })));
+        let system_string_get_length = Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
+            name: "get_Length".to_string(),
+            ty: Type::full_method_ty(/*this*/ 0x20, Type::i4_ty(), &[]),
+            class: class_system_string_ref.clone(),
+        })));
+        let system_string_concat2 = Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
+            name: "Concat".to_string(),
+            ty: Type::full_method_ty(
+                0,
+                Type::string_ty(),
+                &[Type::object_ty(), Type::object_ty()],
+            ),
+            class: class_system_string_ref.clone(),
+        })));
+        let system_string_concat3 = Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
+            name: "Concat".to_string(),
+            ty: Type::full_method_ty(
+                0,
+                Type::string_ty(),
+                &[Type::object_ty(), Type::object_ty(), Type::object_ty()],
+            ),
+            class: class_system_string_ref.clone(),
+        })));
 
         {
             let mut class_system_object = class_system_object_ref.borrow_mut();
             let mut class_system_int32 = class_system_int32_ref.borrow_mut();
-            class_system_object
-                .methods
-                .push(system_object_to_string.clone());
-            class_system_int32
-                .methods
-                .push(system_int32_to_string.clone());
+            let mut class_system_string = class_system_string_ref.borrow_mut();
+
+            class_system_object.methods.push(system_object_to_string);
+            class_system_int32.methods.push(system_int32_to_string);
+            class_system_string.methods = vec![
+                system_string_to_string,
+                system_string_get_chars,
+                system_string_get_length,
+                system_string_concat2,
+                system_string_concat3,
+            ];
+
+            class_system_object.method_table = class_system_object.methods.clone();
+            class_system_int32.method_table = class_system_int32.methods.clone();
+            class_system_string.method_table = class_system_string.methods.clone();
         }
 
         self.standard_classes.add(
@@ -246,11 +297,19 @@ impl Image {
             TypeFullPath(vec!["mscorlib", "System", "Int32"]),
             class_system_int32_ref,
         );
+        self.standard_classes.add(
+            TypeFullPath(vec!["mscorlib", "System", "String"]),
+            class_system_string_ref,
+        );
     }
 
     pub fn get_table_entry<T: Into<Token>>(&self, token: T) -> Table {
         let DecodedToken(table, entry) = decode_token(token.into());
         self.metadata.metadata_stream.tables[table as usize][entry as usize - 1]
+    }
+
+    pub fn get_class<T: Into<Token>>(&self, token: T) -> Option<&ClassInfoRef> {
+        self.class_cache.get(&token.into())
     }
 
     pub fn get_string<T: Into<u32>>(&self, n: T) -> &String {
@@ -307,5 +366,15 @@ impl Image {
         SignatureParser::new(sig)
             .parse_method_ref_sig(self)
             .unwrap()
+    }
+
+    pub fn find_class<'a, P: Into<TypeFullPath<'a>>>(&self, path_: P) -> Option<ClassInfoRef> {
+        let path = path_.into();
+        for (_, info) in &self.class_cache {
+            if (&*info.borrow()).into(): TypeFullPath == path {
+                return Some(info.clone());
+            }
+        }
+        None
     }
 }

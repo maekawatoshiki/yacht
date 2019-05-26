@@ -9,9 +9,16 @@ use crate::{
 use llvm;
 use llvm::{core::*, prelude::*};
 use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::CString;
 use std::ptr;
+
+thread_local! {
+    pub static STRING_METHOD_PTR: RefCell<Option<MethodTablePtrTy>> = {
+        RefCell::new(None)
+    }
+}
 
 macro_rules! cstr0 {
     () => {
@@ -103,7 +110,7 @@ impl<'a> JITCompiler<'a> {
         llvm::transforms::scalar::LLVMAddTailCallEliminationPass(pass_mgr);
         llvm::transforms::scalar::LLVMAddJumpThreadingPass(pass_mgr);
 
-        Self {
+        let mut self_ = Self {
             image,
             context,
             module,
@@ -118,7 +125,11 @@ impl<'a> JITCompiler<'a> {
             class_types: ClassTypesHolder::new(context),
             builtin_functions: BuiltinFunctions::new(context, module),
             method_table_map: FxHashMap::default(),
-        }
+        };
+
+        self_.setup_system_string();
+
+        self_
     }
 
     pub unsafe fn run_main(&mut self, main: LLVMValueRef) {
@@ -503,7 +514,7 @@ impl<'a> JITCompiler<'a> {
             let val2 = stack.pop().unwrap();
             let val1 = stack.pop().unwrap();
             stack.push(match val1.ty.base {
-                ElementType::I4 | ElementType::U4 => TypedValue::new(val1.ty,
+                ElementType::Char | ElementType::I4 | ElementType::U4 => TypedValue::new(val1.ty,
                                                   concat_idents!(LLVMBuild, $iop)(self.builder, val1.val, val2.val, cstr0!())),
                 ElementType::R8 => TypedValue::new(val1.ty,
                                                   concat_idents!(LLVMBuild, $fop)(self.builder, val1.val, val2.val, cstr0!())),
@@ -514,7 +525,7 @@ impl<'a> JITCompiler<'a> {
         macro_rules! unaryop { ($iop:ident, $fop:ident) => {{
             let val = stack.pop().unwrap();
             stack.push(match val.ty.base {
-                ElementType::I4 | ElementType::U4 => TypedValue::new(val.ty,
+                ElementType::Char | ElementType::I4 | ElementType::U4 => TypedValue::new(val.ty,
                                                   concat_idents!(LLVMBuild, $iop)(self.builder, val.val, cstr0!())),
                 ElementType::R8 => TypedValue::new(val.ty,
                                                   concat_idents!(LLVMBuild, $fop)(self.builder, val.val, cstr0!())),
@@ -567,12 +578,13 @@ impl<'a> JITCompiler<'a> {
         for instr in code {
             match instr {
                 Instruction::Ldnull => push_i4!(0),
-                Instruction::Ldstr(us_offset) => stack.push(TypedValue::new(
-                    Type::string_ty(),
-                    self.llvm_ptr(Box::into_raw(Box::new(
-                        self.image.get_user_string(*us_offset).clone(),
-                    )) as *mut u8),
-                )),
+                Instruction::Ldstr(us_offset) => self
+                    .create_new_string(&mut stack, self.image.get_user_string(*us_offset).clone()),
+                //     Type::string_ty(),
+                //     self.llvm_ptr(Box::into_raw(Box::new(
+                //         self.image.get_user_string(*us_offset).clone(),
+                //     )) as *mut u8),
+                // )),
                 Instruction::Ldc_I4_M1 => push_i4!(0 - 1),
                 Instruction::Ldc_I4_0 => push_i4!(0),
                 Instruction::Ldc_I4_1 => push_i4!(1),
@@ -675,7 +687,7 @@ impl<'a> JITCompiler<'a> {
                     let val2 = stack.pop().unwrap();
                     let val1 = stack.pop().unwrap();
                     let cond_val = match val1.ty.base {
-                        ElementType::I4 | ElementType::U4 => LLVMBuildICmp(
+                        ElementType::Char | ElementType::I4 | ElementType::U4 => LLVMBuildICmp(
                             self.builder,
                             match instr {
                                 Instruction::Bge { .. } => llvm::LLVMIntPredicate::LLVMIntSGE,
@@ -749,12 +761,69 @@ impl<'a> JITCompiler<'a> {
         Ok(stack)
     }
 
+    unsafe fn setup_system_string(&mut self) {
+        let class_system_string_ref = self
+            .image
+            .standard_classes
+            .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+            .unwrap()
+            .clone();
+        let class_system_string = class_system_string_ref.borrow();
+        let method_table_ptr = self
+            .class_types
+            .get_method_table_ptr(&*class_system_string)
+            .unwrap();
+        self.ensure_all_class_methods_compiled(method_table_ptr, &class_system_string.method_table);
+        STRING_METHOD_PTR.with(|smp| *smp.borrow_mut() = Some(method_table_ptr));
+    }
+
+    unsafe fn create_new_string(&mut self, stack: &mut Vec<TypedValue>, s: Vec<u16>) {
+        let class_system_string_ref = self
+            .image
+            .standard_classes
+            .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+            .unwrap()
+            .clone();
+        let class_system_string = class_system_string_ref.borrow();
+        let class_string = self
+            .class_types
+            .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+            .unwrap();
+        let new_string = self.typecast(
+            self.call_function(
+                self.builtin_functions
+                    .get_helper_function("memory_alloc")
+                    .unwrap()
+                    .llvm_function,
+                vec![self.get_size_of_llvm_class_type(class_string)],
+            ),
+            class_string,
+        );
+        let method_table = self.ensure_all_class_methods_compiled(
+            self.class_types
+                .get_method_table_ptr(&*class_system_string)
+                .unwrap(),
+            &class_system_string.method_table,
+        );
+        self.store2element(
+            new_string,
+            vec![self.llvm_int32(0), self.llvm_int32(0)],
+            method_table,
+        );
+        self.store2element(
+            new_string,
+            vec![self.llvm_int32(0), self.llvm_int32(1)],
+            self.llvm_ptr(Box::into_raw(Box::new(s)) as *mut u8),
+        );
+        stack.push(TypedValue::new(Type::string_ty(), new_string));
+    }
+
     unsafe fn gen_instr_call(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
-        self.gen_instr_general_call(stack, token)
+        self.gen_instr_general_call(stack, token, false)
     }
 
     unsafe fn gen_instr_callvirt(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
-        self.gen_instr_general_call(stack, token)
+        self.gen_instr_general_call(stack, token, true)
     }
 
     unsafe fn get_function_by_rva(&mut self, rva: u32) -> LLVMValueRef {
@@ -791,7 +860,12 @@ impl<'a> JITCompiler<'a> {
         func
     }
 
-    unsafe fn gen_instr_general_call(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
+    unsafe fn gen_instr_general_call(
+        &mut self,
+        stack: &mut Vec<TypedValue>,
+        token: Token,
+        is_virtual: bool,
+    ) {
         unsafe fn call(
             compiler: &mut JITCompiler,
             stack: &mut Vec<TypedValue>,
@@ -821,35 +895,24 @@ impl<'a> JITCompiler<'a> {
         unsafe fn callvirt(
             compiler: &mut JITCompiler,
             stack: &mut Vec<TypedValue>,
-            method: &MethodInfo,
+            method_name: &String,
+            class: &ClassInfoRef,
             method_sig: &MethodSignature,
             method_ty: LLVMTypeRef,
         ) {
             let args: Vec<LLVMValueRef> = stack
                 .drain(stack.len() - method_sig.params.len() -/*obj*/1..)
                 .map(|tv| tv.val)
-                .enumerate()
-                .map(|(i, arg)| {
-                    if i == 0 {
-                        /* this */
-                        arg
-                    } else {
-                        let llvm_ty = method_sig.params[i - 1].to_llvmty(compiler);
-                        compiler.typecast(arg, llvm_ty)
-                    }
-                })
                 .collect();
             let obj = args[0];
 
             let method_table =
                 compiler.load_element(obj, vec![compiler.llvm_int32(0), compiler.llvm_int32(0)]);
-            let idx = method
-                .as_mdef()
-                .class
+            let idx = class
                 .borrow()
                 .method_table
                 .iter()
-                .position(|m| m.borrow().get_name() == &method.as_mdef().name)
+                .position(|m| m.borrow().get_name() == method_name)
                 .unwrap() as u64;
             let raw_vmethod = compiler.load_element(method_table, vec![compiler.llvm_int32(idx)]);
             let vmethod = compiler.typecast(raw_vmethod, method_ty);
@@ -867,14 +930,25 @@ impl<'a> JITCompiler<'a> {
                 match class {
                     Table::TypeRef(trt) => {
                         let type_path = self.image.get_path_from_type_ref_table(trt);
-                        let name = self.image.get_string(mrt.name);
+                        let name = self.image.get_string(mrt.name).clone();
                         let ty = self.image.get_method_ref_type_from_signature(mrt.signature);
                         if let Some(f) = self
                             .builtin_functions
-                            .get_method(type_path.with_method_name(name), &ty)
+                            .get_method(type_path.with_method_name(&name), &ty)
                         {
                             let method_sig = ty.as_fnptr().unwrap();
-                            call(self, stack, f.llvm_function, method_sig);
+                            if is_virtual {
+                                callvirt(
+                                    self,
+                                    stack,
+                                    &name,
+                                    &self.image.get_class(token.into(): Token).unwrap().clone(),
+                                    method_sig,
+                                    LLVMTypeOf(f.llvm_function),
+                                );
+                            } else {
+                                call(self, stack, f.llvm_function, method_sig);
+                            }
                         }
                     }
                     _ => unimplemented!(),
@@ -885,8 +959,15 @@ impl<'a> JITCompiler<'a> {
                 let method_ref = self.image.get_method_by_rva(mdt.rva);
                 let method = method_ref.borrow();
                 let method_sig = method.as_mdef().ty.as_fnptr().unwrap();
-                if method.as_mdef().is_virtual() {
-                    callvirt(self, stack, &method, method_sig, LLVMTypeOf(func));
+                if is_virtual {
+                    callvirt(
+                        self,
+                        stack,
+                        method.get_name(),
+                        method.get_class(),
+                        method_sig,
+                        LLVMTypeOf(func),
+                    );
                 } else {
                     call(self, stack, func, method_sig);
                 }
@@ -1196,16 +1277,21 @@ impl<'a> JITCompiler<'a> {
         }
     }
 
-    unsafe fn call_function(
-        &self,
-        callee: LLVMValueRef,
-        mut args: Vec<LLVMValueRef>,
-    ) -> LLVMValueRef {
+    unsafe fn call_function(&self, callee: LLVMValueRef, args: Vec<LLVMValueRef>) -> LLVMValueRef {
+        let callee_ty = LLVMGetElementType(LLVMTypeOf(callee));
+        let params_count = LLVMCountParamTypes(callee_ty) as usize;
+        let mut params_ty = vec![0 as LLVMTypeRef; params_count];
+        LLVMGetParamTypes(callee_ty, params_ty.as_mut_ptr());
+        let mut conv_args: Vec<LLVMValueRef> = args
+            .iter()
+            .enumerate()
+            .map(|(i, arg)| self.typecast(*arg, params_ty[i]))
+            .collect();
         LLVMBuildCall(
             self.builder,
             callee,
-            args.as_mut_ptr(),
-            args.len() as u32,
+            conv_args.as_mut_ptr(),
+            conv_args.len() as u32,
             cstr0!(),
         )
     }
@@ -1309,18 +1395,12 @@ impl<'a> JITCompiler<'a> {
         for vmethod in method_table {
             match &*vmethod.borrow() {
                 MethodInfo::MDef(m) => vmethods.push(self.get_function_by_rva(m.rva)),
-                // TODO
                 MethodInfo::MRef(m) => {
                     let class = m.class.borrow();
                     vmethods.push(
                         self.builtin_functions
                             .get_method(
-                                MethodFullPath(vec![
-                                    "mscorlib",
-                                    class.namespace.as_str(),
-                                    class.name.as_str(),
-                                    m.name.as_str(),
-                                ]),
+                                ((&*class).into(): TypeFullPath).with_method_name(m.name.as_str()),
                                 &m.ty,
                             )
                             .unwrap()
@@ -1398,7 +1478,10 @@ impl CastIntoLLVMType for Type {
             ElementType::I4 => LLVMInt32TypeInContext(ctx),
             ElementType::U4 => LLVMInt32TypeInContext(ctx),
             ElementType::R8 => LLVMDoubleTypeInContext(ctx),
-            ElementType::String => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
+            ElementType::String => compiler
+                .class_types
+                .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+                .unwrap(),
             ElementType::SzArray(ref szarr) => {
                 LLVMPointerType(szarr.elem_ty.to_llvmty(compiler), 0)
             }
@@ -1480,7 +1563,18 @@ impl ClassTypesHolder {
             0,
         );
 
-        let method_table_len = 1;
+        let system_string =
+            LLVMStructCreateNamed(ctx, CString::new("System::String").unwrap().as_ptr());
+        let mut fields_ty = vec![
+            LLVMPointerType(LLVMPointerType(LLVMInt8TypeInContext(ctx), 0), 0),
+            LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
+        ];
+        LLVMStructSetBody(
+            system_string,
+            fields_ty.as_mut_ptr(),
+            fields_ty.len() as u32,
+            0,
+        );
 
         Self {
             base: {
@@ -1489,14 +1583,26 @@ impl ClassTypesHolder {
                     TypeFullPath(vec!["mscorlib", "System", "Object"]),
                     (
                         LLVMPointerType(system_object, 0),
-                        raw_memory!(MethodTableElementTy, method_table_len),
+                        raw_memory!(MethodTableElementTy, 1),
                     ),
                 );
                 holder.add(
                     TypeFullPath(vec!["mscorlib", "System", "Int32"]),
                     (
                         LLVMPointerType(system_int32, 0),
-                        raw_memory!(MethodTableElementTy, method_table_len),
+                        raw_memory!(MethodTableElementTy, 1),
+                    ),
+                );
+                holder.add(
+                    TypeFullPath(vec!["mscorlib", "System", "String"]),
+                    (
+                        LLVMPointerType(system_string, 0),
+                        raw_memory!(
+                            MethodTableElementTy,
+                            // TODO: 5 means ToString, get_Chars, get_Length,
+                            // Concat(obj,obj), Concat(obj, obj, obj).
+                            5
+                        ),
                     ),
                 );
                 holder

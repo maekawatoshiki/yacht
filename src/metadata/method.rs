@@ -84,6 +84,13 @@ impl MethodInfo {
             MethodInfo::MRef(ref m) => &m.name,
         }
     }
+
+    pub fn get_class(&self) -> &ClassInfoRef {
+        match self {
+            MethodInfo::MDef(ref m) => &m.class,
+            MethodInfo::MRef(ref m) => &m.class,
+        }
+    }
 }
 
 impl MethodDefInfo {

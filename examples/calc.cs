@@ -99,7 +99,7 @@ public class Calc {
 
     Console.Write("RPN:");
     node.Dump();
-
+    
     Console.Write("\nEval: ");
     Console.WriteLine(node.Eval());
   }
