@@ -252,7 +252,7 @@ unsafe fn retrieve_utf16_string_from_system_string(system_string: *mut u64) -> *
 unsafe fn new_system_string(s: String) -> *mut u64 {
     let system_string = memory_alloc(16) as *mut u64;
     *(system_string.offset(0) as *mut MethodTablePtrTy) =
-        STRING_METHOD_PTR.with(|smp| smp.borrow().unwrap());
+        STRING_METHOD_TABLE_PTR.with(|smp| smp.borrow().unwrap());
     *(system_string.offset(1) as *mut *mut Vec<u16>) = new_utf16_string(s);
     system_string
 }

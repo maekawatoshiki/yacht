@@ -15,7 +15,7 @@ use std::ffi::CString;
 use std::ptr;
 
 thread_local! {
-    pub static STRING_METHOD_PTR: RefCell<Option<MethodTablePtrTy>> = {
+    pub static STRING_METHOD_TABLE_PTR: RefCell<Option<MethodTablePtrTy>> = {
         RefCell::new(None)
     }
 }
@@ -410,6 +410,22 @@ impl<'a> JITCompiler<'a> {
         var
     }
 
+    unsafe fn setup_system_string(&mut self) {
+        let class_system_string_ref = self
+            .image
+            .standard_classes
+            .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+            .unwrap()
+            .clone();
+        let class_system_string = class_system_string_ref.borrow();
+        let method_table_ptr = self
+            .class_types
+            .get_method_table_ptr(&*class_system_string)
+            .unwrap();
+        self.ensure_all_class_methods_compiled(method_table_ptr, &class_system_string.method_table);
+        STRING_METHOD_TABLE_PTR.with(|smp| *smp.borrow_mut() = Some(method_table_ptr));
+    }
+
     // Returns destination
     unsafe fn compile_block(
         &mut self,
@@ -761,22 +777,6 @@ impl<'a> JITCompiler<'a> {
         Ok(stack)
     }
 
-    unsafe fn setup_system_string(&mut self) {
-        let class_system_string_ref = self
-            .image
-            .standard_classes
-            .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
-            .unwrap()
-            .clone();
-        let class_system_string = class_system_string_ref.borrow();
-        let method_table_ptr = self
-            .class_types
-            .get_method_table_ptr(&*class_system_string)
-            .unwrap();
-        self.ensure_all_class_methods_compiled(method_table_ptr, &class_system_string.method_table);
-        STRING_METHOD_PTR.with(|smp| *smp.borrow_mut() = Some(method_table_ptr));
-    }
-
     unsafe fn create_new_string(&mut self, stack: &mut Vec<TypedValue>, s: Vec<u16>) {
         let class_system_string_ref = self
             .image
@@ -870,25 +870,12 @@ impl<'a> JITCompiler<'a> {
             compiler: &mut JITCompiler,
             stack: &mut Vec<TypedValue>,
             func: LLVMValueRef,
-            method_sig: &MethodSignature,
+            msig: &MethodSignature,
         ) {
-            let has_this = if method_sig.has_this() { 1 } else { 0 };
-            let args = stack
-                .drain(stack.len() - method_sig.params.len() - has_this..)
-                .map(|tv| tv.val)
-                .enumerate()
-                .map(|(i, arg)| {
-                    if method_sig.has_this() && i == 0 {
-                        arg
-                    } else {
-                        let llvm_ty = method_sig.params[i - has_this].to_llvmty(compiler);
-                        compiler.typecast(arg, llvm_ty)
-                    }
-                })
-                .collect();
+            let args = get_arg_vals_from_stack(stack, msig.params.len(), msig.has_this());
             let ret = compiler.call_function(func, args);
-            if !method_sig.ret.is_void() {
-                stack.push(TypedValue::new(method_sig.ret.clone(), ret));
+            if !msig.ret.is_void() {
+                stack.push(TypedValue::new(msig.ret.clone(), ret));
             }
         };
 
@@ -900,10 +887,7 @@ impl<'a> JITCompiler<'a> {
             method_sig: &MethodSignature,
             method_ty: LLVMTypeRef,
         ) {
-            let args: Vec<LLVMValueRef> = stack
-                .drain(stack.len() - method_sig.params.len() -/*obj*/1..)
-                .map(|tv| tv.val)
-                .collect();
+            let args = get_arg_vals_from_stack(stack, method_sig.params.len(), true);
             let obj = args[0];
 
             let method_table =
@@ -1129,101 +1113,97 @@ impl<'a> JITCompiler<'a> {
         match self.image.get_table_entry(token) {
             Table::TypeRef(trt) => {
                 // TODO: Refactor
-                let TypeFullPath(path) = self.image.get_path_from_type_ref_table(&trt);
-                match (path[0], path[1], path[2]) {
-                    ("mscorlib", "System", "Int32") => {
-                        let class_system_int32_ref =
-                            self.image.class_cache.get(&token.into()).unwrap().clone();
-                        let class_system_int32 = class_system_int32_ref.borrow();
-                        let class_int32 = self
-                            .class_types
-                            .get(TypeFullPath(vec!["mscorlib", "System", "Int32"]))
-                            .unwrap();
-                        let new_obj = self.typecast(
-                            self.call_function(
-                                self.builtin_functions
-                                    .get_helper_function("memory_alloc")
-                                    .unwrap()
-                                    .llvm_function,
-                                vec![self.get_size_of_llvm_class_type(class_int32)],
-                            ),
-                            class_int32,
-                        );
-                        let method_table = self.ensure_all_class_methods_compiled(
-                            self.class_types
-                                .get_method_table_ptr(&*class_system_int32)
-                                .unwrap(),
-                            &class_system_int32.method_table,
-                        );
-                        self.store2element(
-                            new_obj,
-                            vec![self.llvm_int32(0), self.llvm_int32(0)],
-                            method_table,
-                        );
-                        self.store2element(
-                            new_obj,
-                            vec![self.llvm_int32(0), self.llvm_int32(1)],
-                            val,
-                        );
-                        stack.push(TypedValue::new(Type::object_ty(), new_obj));
-                    }
-                    _ => unimplemented!(),
-                }
+                let path = self.image.get_path_from_type_ref_table(&trt);
+                let class_ref = self.image.class_cache.get(&token.into()).unwrap().clone();
+                let class = class_ref.borrow();
+                let llvm_class = self.class_types.get(path).unwrap();
+                let new_obj = self.typecast(
+                    self.call_function(
+                        self.builtin_functions
+                            .get_helper_function("memory_alloc")
+                            .unwrap()
+                            .llvm_function,
+                        vec![self.get_size_of_llvm_class_type(llvm_class)],
+                    ),
+                    llvm_class,
+                );
+                let method_table = self.ensure_all_class_methods_compiled(
+                    self.class_types.get_method_table_ptr(&*class).unwrap(),
+                    &class.method_table,
+                );
+                self.store2element(
+                    new_obj,
+                    vec![self.llvm_int32(0), self.llvm_int32(0)],
+                    method_table,
+                );
+                self.store2element(new_obj, vec![self.llvm_int32(0), self.llvm_int32(1)], val);
+                stack.push(TypedValue::new(Type::object_ty(), new_obj));
             }
             e => unimplemented!("newarr: unimplemented: {:?}", e),
         }
     }
 
     unsafe fn gen_instr_newarr(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
+        unsafe fn newarr_typeref<'a>(
+            compiler: &mut JITCompiler,
+            len: LLVMValueRef,
+            trt: &TypeRefTable,
+        ) -> TypedValue {
+            let TypeFullPath(path) = compiler.image.get_path_from_type_ref_table(trt);
+            let ty = match (path[0], path[1], path[2]) {
+                ("mscorlib", "System", ty) => ty,
+                _ => unimplemented!(),
+            };
+            let (szarr_ty, sz) = match ty {
+                "Int32" => (Type::i4_szarr_ty(), 4),
+                "Boolean" => (Type::boolean_szarr_ty(), 1),
+                _ => unimplemented!(),
+            };
+            let llvm_szarr_ty = szarr_ty.to_llvmty(compiler);
+            let new_arr = compiler.typecast(
+                compiler.call_function(
+                    compiler
+                        .builtin_functions
+                        .get_helper_function("new_szarray")
+                        .unwrap()
+                        .llvm_function,
+                    vec![compiler.llvm_int32(sz), len],
+                ),
+                llvm_szarr_ty,
+            );
+            TypedValue::new(szarr_ty, new_arr)
+        }
+
+        unsafe fn newarr_typedef<'a>(
+            compiler: &mut JITCompiler,
+            len: LLVMValueRef,
+            token: Token,
+        ) -> TypedValue {
+            let elem_ty = Type::new(ElementType::Class(
+                compiler.image.class_cache.get(&token).unwrap().clone(),
+            ));
+            let szarr_ty = Type::szarr_ty(elem_ty.clone());
+            let llvm_elem_ty = elem_ty.to_llvmty(compiler);
+            let llvm_szarr_ty = szarr_ty.to_llvmty(compiler);
+            let new_arr = compiler.typecast(
+                compiler.call_function(
+                    compiler
+                        .builtin_functions
+                        .get_helper_function("new_szarray")
+                        .unwrap()
+                        .llvm_function,
+                    vec![compiler.get_size_of_llvm_class_type(llvm_elem_ty), len],
+                ),
+                llvm_szarr_ty,
+            );
+            TypedValue::new(szarr_ty, new_arr)
+        }
+
         let len = stack.pop().unwrap().val;
+
         match self.image.get_table_entry(token) {
-            Table::TypeRef(trt) => {
-                // TODO: Refactor
-                let TypeFullPath(path) = self.image.get_path_from_type_ref_table(&trt);
-                match (path[0], path[1], path[2]) {
-                    ("mscorlib", "System", ty) => {
-                        let (szarr_ty, sz) = match ty {
-                            "Int32" => (Type::i4_szarr_ty(), 4),
-                            "Boolean" => (Type::boolean_szarr_ty(), 1),
-                            _ => unimplemented!(),
-                        };
-                        let llvm_szarr_ty = szarr_ty.to_llvmty(self);
-                        let new_arr = self.typecast(
-                            self.call_function(
-                                self.builtin_functions
-                                    .get_helper_function("new_szarray")
-                                    .unwrap()
-                                    .llvm_function,
-                                vec![self.llvm_int32(sz), len],
-                            ),
-                            llvm_szarr_ty,
-                        );
-                        stack.push(TypedValue::new(szarr_ty, new_arr));
-                    }
-                    _ => unimplemented!(),
-                }
-            }
-            Table::TypeDef(_) => {
-                let elem_ty = Type::new(ElementType::Class(
-                    self.image.class_cache.get(&token).unwrap().clone(),
-                ));
-                let szarr_ty = Type::new(ElementType::SzArray(Box::new(SzArrayInfo {
-                    elem_ty: elem_ty.clone(),
-                })));
-                let llvm_elem_ty = elem_ty.to_llvmty(self);
-                let llvm_szarr_ty = szarr_ty.to_llvmty(self);
-                let new_arr = self.typecast(
-                    self.call_function(
-                        self.builtin_functions
-                            .get_helper_function("new_szarray")
-                            .unwrap()
-                            .llvm_function,
-                        vec![self.get_size_of_llvm_class_type(llvm_elem_ty), len],
-                    ),
-                    llvm_szarr_ty,
-                );
-                stack.push(TypedValue::new(szarr_ty, new_arr));
-            }
+            Table::TypeRef(trt) => stack.push(newarr_typeref(self, len, &trt)),
+            Table::TypeDef(_) => stack.push(newarr_typedef(self, len, token)),
             e => unimplemented!("newarr: unimplemented: {:?}", e),
         }
     }
@@ -1247,14 +1227,11 @@ impl<'a> JITCompiler<'a> {
                     ),
                     llvm_class_ty,
                 );
-                let mut params: Vec<LLVMValueRef> = stack
-                    .drain(stack.len() - method_sig.params.len()..)
-                    .map(|tv| tv.val)
-                    .collect();
-                params.insert(0, new_obj);
+                let mut args = get_arg_vals_from_stack(stack, method_sig.params.len(), false);
+                args.insert(0, new_obj);
 
                 let func = self.get_function_by_rva(mdt.rva);
-                self.call_function(func, params);
+                self.call_function(func, args);
 
                 let class = method.class.borrow();
                 let method_table = self.ensure_all_class_methods_compiled(
@@ -1269,7 +1246,7 @@ impl<'a> JITCompiler<'a> {
                 );
 
                 stack.push(TypedValue::new(
-                    Type::new(ElementType::Class(method.class.clone())),
+                    Type::class_ty(method.class.clone()),
                     new_obj,
                 ))
             }
@@ -1304,9 +1281,12 @@ impl<'a> JITCompiler<'a> {
     }
 
     unsafe fn get_class_type(&mut self, class: &ClassInfo) -> LLVMTypeRef {
+        // Return already created one
         if let Some(ty) = self.class_types.get(class) {
             return ty;
         }
+
+        // Create new class
 
         let class_ty = LLVMStructCreateNamed(
             self.context,
@@ -1377,6 +1357,7 @@ impl<'a> JITCompiler<'a> {
             },
             _ => {}
         }
+
         LLVMBuildTruncOrBitCast(self.builder, val, to, cstr0!())
     }
 
@@ -1630,6 +1611,17 @@ impl ClassTypesHolder {
             ),
         );
     }
+}
+
+fn get_arg_vals_from_stack(
+    stack: &mut Vec<TypedValue>,
+    params_len: usize,
+    has_this: bool,
+) -> Vec<LLVMValueRef> {
+    stack
+        .drain(stack.len() - params_len - if has_this { 1 } else { 0 }..)
+        .map(|tv| tv.val)
+        .collect()
 }
 
 unsafe fn llvm_const_int32(ctx: LLVMContextRef, n: u64) -> LLVMValueRef {
