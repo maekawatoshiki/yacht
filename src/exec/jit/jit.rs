@@ -1580,9 +1580,8 @@ impl ClassTypesHolder {
                         LLVMPointerType(system_string, 0),
                         raw_memory!(
                             MethodTableElementTy,
-                            // TODO: 5 means ToString, get_Chars, get_Length,
-                            // Concat(obj,obj), Concat(obj, obj, obj).
-                            5
+                            // TODO: 3 means ToString, get_Chars, get_Length
+                            3
                         ),
                     ),
                 );

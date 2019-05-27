@@ -198,91 +198,6 @@ impl Image {
         class.method_table = method_table;
     }
 
-    fn setup_all_standard_class(&mut self) {
-        let class_system_obj_ref = ClassInfo::new_ref(
-            ResolutionScope::asm_ref("mscorlib"),
-            "System",
-            "Object",
-            vec![],
-            vec![],
-            None,
-        );
-        let class_system_int32_ref = ClassInfo::new_ref(
-            ResolutionScope::asm_ref("mscorlib"),
-            "System",
-            "Int32",
-            vec![],
-            vec![],
-            Some(class_system_obj_ref.clone()),
-        );
-        let class_system_string_ref = ClassInfo::new_ref(
-            ResolutionScope::asm_ref("mscorlib"),
-            "System",
-            "String",
-            vec![],
-            vec![],
-            Some(class_system_obj_ref.clone()),
-        );
-
-        #[rustfmt::skip]
-        macro_rules! parse_ty {
-            (void) => { Type::void_ty() };
-            (i4  ) => { Type::i4_ty() };
-            (r8  ) => { Type::r8_ty() };
-            (char) => { Type::char_ty() };
-            (obj ) => { Type::object_ty() };
-            (str ) => { Type::string_ty() };
-        }
-
-        macro_rules! method {
-            ($ret_ty:ident, [ $($param_ty:ident),* ], $f:expr, $name:expr) => {{
-                method!([0], $ret_ty, [$($param_ty),*], $f, $name)
-            }};
-            ([$flags:expr], $ret_ty:ident, [ $($param_ty:ident),* ], $name:expr, $class:expr) => {{
-                Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
-                    name: $name.to_string(),
-                    ty: Type::full_method_ty($flags, parse_ty!($ret_ty), &[$(parse_ty!($param_ty)),*]),
-                    class: $class.clone(),
-                })))
-            }}
-        }
-
-        {
-            let mut class_system_obj = class_system_obj_ref.borrow_mut();
-            let mut class_system_int32 = class_system_int32_ref.borrow_mut();
-            let mut class_system_string = class_system_string_ref.borrow_mut();
-
-            class_system_obj.methods =
-                vec![method!([0x20], str, [], "ToString", class_system_obj_ref)];
-            class_system_int32.methods =
-                vec![method!([0x20], str, [], "ToString", class_system_int32_ref)];
-            class_system_string.methods = vec![
-                method!([0x20], str, [], "ToString", class_system_string_ref),
-                method!([0x20], char, [i4], "get_Chars", class_system_string_ref),
-                method!([0x20], i4, [], "get_Length", class_system_string_ref),
-                method!(str, [obj, obj], "Concat", class_system_string_ref),
-                method!(str, [obj, obj, obj], "Concat", class_system_string_ref),
-            ];
-
-            class_system_obj.method_table = class_system_obj.methods.clone();
-            class_system_int32.method_table = class_system_int32.methods.clone();
-            class_system_string.method_table = class_system_string.methods.clone();
-        }
-
-        self.standard_classes.add(
-            TypeFullPath(vec!["mscorlib", "System", "Object"]),
-            class_system_obj_ref,
-        );
-        self.standard_classes.add(
-            TypeFullPath(vec!["mscorlib", "System", "Int32"]),
-            class_system_int32_ref,
-        );
-        self.standard_classes.add(
-            TypeFullPath(vec!["mscorlib", "System", "String"]),
-            class_system_string_ref,
-        );
-    }
-
     pub fn get_table_entry<T: Into<Token>>(&self, token: T) -> Table {
         let DecodedToken(table, entry) = decode_token(token.into());
         self.metadata.metadata_stream.tables[table as usize][entry as usize - 1]
@@ -356,5 +271,88 @@ impl Image {
             }
         }
         None
+    }
+
+    fn setup_all_standard_class(&mut self) {
+        let class_system_obj_ref = ClassInfo::new_ref(
+            ResolutionScope::asm_ref("mscorlib"),
+            "System",
+            "Object",
+            vec![],
+            vec![],
+            None,
+        );
+        let class_system_int32_ref = ClassInfo::new_ref(
+            ResolutionScope::asm_ref("mscorlib"),
+            "System",
+            "Int32",
+            vec![],
+            vec![],
+            Some(class_system_obj_ref.clone()),
+        );
+        let class_system_string_ref = ClassInfo::new_ref(
+            ResolutionScope::asm_ref("mscorlib"),
+            "System",
+            "String",
+            vec![],
+            vec![],
+            Some(class_system_obj_ref.clone()),
+        );
+
+        #[rustfmt::skip]
+        macro_rules! parse_ty {
+            (void) => { Type::void_ty() };
+            (i4  ) => { Type::i4_ty() };
+            (r8  ) => { Type::r8_ty() };
+            (char) => { Type::char_ty() };
+            (obj ) => { Type::object_ty() };
+            (str ) => { Type::string_ty() };
+        }
+
+        macro_rules! method {
+            ($ret_ty:ident, [ $($param_ty:ident),* ], $f:expr, $name:expr) => {{
+                method!([0], $ret_ty, [$($param_ty),*], $f, $name)
+            }};
+            ([$flags:expr], $ret_ty:ident, [ $($param_ty:ident),* ], $name:expr, $class:expr) => {{
+                Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
+                    name: $name.to_string(),
+                    ty: Type::full_method_ty($flags, parse_ty!($ret_ty), &[$(parse_ty!($param_ty)),*]),
+                    class: $class.clone(),
+                })))
+            }}
+        }
+
+        {
+            let mut class_system_obj = class_system_obj_ref.borrow_mut();
+            let mut class_system_int32 = class_system_int32_ref.borrow_mut();
+            let mut class_system_string = class_system_string_ref.borrow_mut();
+
+            class_system_obj.methods =
+                vec![method!([0x20], str, [], "ToString", class_system_obj_ref)];
+            class_system_int32.methods =
+                vec![method!([0x20], str, [], "ToString", class_system_int32_ref)];
+            class_system_string.methods = vec![
+                method!([0x20], str, [], "ToString", class_system_string_ref),
+                method!([0x20], char, [i4], "get_Chars", class_system_string_ref),
+                method!([0x20], i4, [], "get_Length", class_system_string_ref),
+            ];
+
+            class_system_obj.method_table = class_system_obj.methods.clone();
+            class_system_int32.method_table = class_system_int32.methods.clone();
+            class_system_string.method_table = class_system_string.methods.clone();
+        }
+
+        self.standard_classes.add(
+            TypeFullPath(vec!["mscorlib", "System", "Object"]),
+            class_system_obj_ref,
+        );
+        self.standard_classes.add(
+            TypeFullPath(vec!["mscorlib", "System", "Int32"]),
+            class_system_int32_ref,
+        );
+        self.standard_classes.add(
+            TypeFullPath(vec!["mscorlib", "System", "String"]),
+            class_system_string_ref,
+        );
     }
 }
