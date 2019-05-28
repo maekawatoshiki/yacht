@@ -23,9 +23,6 @@ pub struct Image {
 
     /// Cache ``ClassInfoRef`` by token
     pub class_cache: FxHashMap<Token, ClassInfoRef>,
-
-    /// Holds all the standard classes like ``System::Object``. Will be removed in the future.
-    pub standard_classes: Holder<ClassInfoRef>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>
 }
 
@@ -41,7 +38,6 @@ impl Image {
             pe_parser,
             method_cache: FxHashMap::default(),
             class_cache: FxHashMap::default(),
-            standard_classes: Holder::new(),
         }
     }
 
@@ -54,8 +50,6 @@ impl Image {
     }
 
     pub fn setup_all_class(&mut self) {
-        self.setup_all_standard_class();
-
         let typedefs = &self.metadata.metadata_stream.tables[TableKind::TypeDef.into_num()];
         let typerefs = &self.metadata.metadata_stream.tables[TableKind::TypeRef.into_num()];
         let fields = &self.metadata.metadata_stream.tables[TableKind::Field.into_num()];
@@ -69,9 +63,7 @@ impl Image {
             let tref = retrieve!(typeref, Table::TypeRef);
             let namespace = self.get_string(tref.type_namespace).as_str();
             let name = self.get_string(tref.type_name).as_str();
-            if let Some(class) = self
-                .standard_classes
-                .get(TypeFullPath(vec!["mscorlib", namespace, name]))
+            if let Some(class) = get_mscorlib().get(TypeFullPath(vec!["mscorlib", namespace, name]))
             {
                 self.class_cache.insert(token, class.clone());
             }
@@ -172,10 +164,7 @@ impl Image {
                 parent.borrow().method_table.clone()
             }
             // If already borrowed, it means that ``class`` is System::Object.
-            None => self
-                .standard_classes
-                .get(TypeFullPath(vec!["mscorlib", "System", "Object"]))
-                .unwrap()
+            None => mscorlib_system_object()
                 .try_borrow()
                 .map(|sys_obj| sys_obj.methods.clone())
                 .unwrap_or_else(|_| class.methods.clone()),
@@ -272,33 +261,10 @@ impl Image {
         }
         None
     }
+}
 
-    fn setup_all_standard_class(&mut self) {
-        let class_system_obj_ref = ClassInfo::new_ref(
-            ResolutionScope::asm_ref("mscorlib"),
-            "System",
-            "Object",
-            vec![],
-            vec![],
-            None,
-        );
-        let class_system_int32_ref = ClassInfo::new_ref(
-            ResolutionScope::asm_ref("mscorlib"),
-            "System",
-            "Int32",
-            vec![],
-            vec![],
-            Some(class_system_obj_ref.clone()),
-        );
-        let class_system_string_ref = ClassInfo::new_ref(
-            ResolutionScope::asm_ref("mscorlib"),
-            "System",
-            "String",
-            vec![],
-            vec![],
-            Some(class_system_obj_ref.clone()),
-        );
-
+thread_local! {
+    pub static MSCORLIB: Rc<Holder<ClassInfoRef>> = {
         #[rustfmt::skip]
         macro_rules! parse_ty {
             (void) => { Type::void_ty() };
@@ -315,12 +281,21 @@ impl Image {
             }};
             ([$flags:expr], $ret_ty:ident, [ $($param_ty:ident),* ], $name:expr, $class:expr) => {{
                 Rc::new(RefCell::new(MethodInfo::MRef(MemberRefInfo {
-                    name: $name.to_string(),
+                    name: $name.to_string(), class: $class.clone(),
                     ty: Type::full_method_ty($flags, parse_ty!($ret_ty), &[$(parse_ty!($param_ty)),*]),
-                    class: $class.clone(),
                 })))
             }}
         }
+
+        macro_rules! class { ($name:ident, $parent:expr) => {{
+            ClassInfo::new_ref(
+                ResolutionScope::asm_ref("mscorlib"),
+                "System", stringify!($name), vec![], vec![], $parent,
+            )}}}
+
+        let class_system_obj_ref = class!(Object, None);
+        let class_system_int32_ref = class!(Int32, Some(class_system_obj_ref.clone()));
+        let class_system_string_ref = class!(String, Some(class_system_obj_ref.clone()));
 
         {
             let mut class_system_obj = class_system_obj_ref.borrow_mut();
@@ -342,17 +317,39 @@ impl Image {
             class_system_string.method_table = class_system_string.methods.clone();
         }
 
-        self.standard_classes.add(
+        let mut holder = Holder::new();
+
+        holder.add(
             TypeFullPath(vec!["mscorlib", "System", "Object"]),
             class_system_obj_ref,
         );
-        self.standard_classes.add(
+        holder.add(
             TypeFullPath(vec!["mscorlib", "System", "Int32"]),
             class_system_int32_ref,
         );
-        self.standard_classes.add(
+        holder.add(
             TypeFullPath(vec!["mscorlib", "System", "String"]),
             class_system_string_ref,
         );
-    }
+
+        Rc::new(holder)
+    };
+}
+
+pub fn mscorlib_system_string() -> ClassInfoRef {
+    get_mscorlib()
+        .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+        .unwrap()
+        .clone()
+}
+
+pub fn mscorlib_system_object() -> ClassInfoRef {
+    get_mscorlib()
+        .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+        .unwrap()
+        .clone()
+}
+
+pub fn get_mscorlib() -> Rc<Holder<ClassInfoRef>> {
+    MSCORLIB.with(|mscorlib| mscorlib.clone())
 }

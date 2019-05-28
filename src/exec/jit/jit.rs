@@ -411,12 +411,7 @@ impl<'a> JITCompiler<'a> {
     }
 
     unsafe fn setup_system_string(&mut self) {
-        let class_system_string_ref = self
-            .image
-            .standard_classes
-            .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
-            .unwrap()
-            .clone();
+        let class_system_string_ref = mscorlib_system_string();
         let class_system_string = class_system_string_ref.borrow();
         let method_table_ptr = self
             .class_types
@@ -778,12 +773,7 @@ impl<'a> JITCompiler<'a> {
     }
 
     unsafe fn create_new_string(&mut self, stack: &mut Vec<TypedValue>, s: Vec<u16>) {
-        let class_system_string_ref = self
-            .image
-            .standard_classes
-            .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
-            .unwrap()
-            .clone();
+        let class_system_string_ref = mscorlib_system_string();
         let class_system_string = class_system_string_ref.borrow();
         let class_string = self
             .class_types
