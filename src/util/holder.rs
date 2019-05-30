@@ -29,6 +29,23 @@ impl<T: Debug + Clone> TreeMap<T> {
         }
     }
 
+    pub fn contains_key<'a, P: Into<Vec<&'a str>>>(&self, path: P) -> bool {
+        let mut cur = self;
+        for name in path.into() {
+            match cur {
+                TreeMap::Map(map) => {
+                    if let Some(next) = map.get(name) {
+                        cur = next
+                    } else {
+                        return false;
+                    }
+                }
+                TreeMap::Value(_) => return false,
+            }
+        }
+        matches!(cur, TreeMap::Value(_))
+    }
+
     pub fn get<'a, P: Into<Vec<&'a str>>>(&self, path: P) -> Option<&T> {
         let mut cur = self;
         for name in path.into() {
@@ -50,6 +67,13 @@ impl<T: Debug + Clone> TreeMap<T> {
         }
         cur.as_value_mut()
     }
+    //
+    // pub fn get_mut_or<'a, P: Into<Vec<&'a str>>>(&mut self, path: P, default: T) -> Option<&mut T> {
+    //     if !self.contains_key(path) {
+    //         self.add(path, default);
+    //     }
+    //     self.get_mut(path)
+    // }
 
     pub fn add<'a, P: Into<Vec<&'a str>>>(&mut self, path_: P, val: T) -> Option<()> {
         let path = path_.into();

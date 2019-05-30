@@ -1,7 +1,9 @@
 // TODO: What a dirty code
 
 use crate::exec::decode::BytesToInstructions;
-use crate::metadata::{class::*, header::*, image::*, metadata::*, method::*, signature::*};
+use crate::metadata::{
+    assembly::*, class::*, header::*, image::*, metadata::*, method::*, signature::*,
+};
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
 use std::{
@@ -35,7 +37,7 @@ impl PEParser {
         })
     }
 
-    pub fn create_image(&mut self) -> Option<Image> {
+    pub fn create_assembly(&mut self) -> Option<Assembly> {
         self.read_msdos_header()?;
 
         let pe_file_header = self.read_pe_file_header()?;
@@ -86,14 +88,24 @@ impl PEParser {
         let metadata_streams =
             self.read_metadata_streams(metadata_offset, &metadata_header, &stream_headers)?;
 
-        Some(Image::new(
+        let image = Image::new(
             CLIInfo {
                 cli_header,
                 sections,
             },
             metadata_streams,
             None,
-        ))
+        );
+
+        let asm = retrieve!(
+            image.metadata.metadata_stream.tables[TableKind::Assembly.into_num()]
+                .get(0)
+                .unwrap(),
+            Table::Assembly
+        );
+        let name = image.get_string(asm.name).clone();
+
+        Some(Assembly { name, image })
     }
 
     pub fn read_method(

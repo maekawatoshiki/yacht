@@ -1,3 +1,4 @@
+pub mod assembly;
 pub mod class;
 pub mod header;
 pub mod image;

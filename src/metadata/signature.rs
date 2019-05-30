@@ -175,7 +175,8 @@ impl Type {
         let token = decompress_uint(sig).unwrap();
         let class_ref = image
             .class_cache
-            .get(&decode_typedef_or_ref_token(token).into())?;
+            .get(&decode_typedef_or_ref_token(token).into())
+            .unwrap();
         Some(Type::new(ElementType::Class(class_ref.clone())))
     }
 }

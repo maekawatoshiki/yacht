@@ -1,5 +1,5 @@
 extern crate yacht;
-use yacht::{exec::jit, metadata::image};
+use yacht::{exec::jit, metadata::assembly};
 
 extern crate clap;
 use clap::{App, Arg};
@@ -28,14 +28,14 @@ fn main() {
         None => { eprintln!("{}: {}", Colour::Red.bold().paint("error"), $msg); return }
     } }}; }
 
-    let mut image = expect!(
-        image::Image::from_file(filename),
+    let mut asm = expect!(
+        assembly::Assembly::load(filename),
         "Error occurred while loading file"
     );
-    let method = image.get_entry_method();
+    let method = asm.image.get_entry_method();
 
     unsafe {
-        let mut jit = jit::jit::JITCompiler::new(&mut image);
+        let mut jit = jit::jit::JITCompiler::new(&mut asm);
         let main = jit.generate_main(&method);
         jit.run_main(main);
     }
@@ -44,7 +44,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use yacht::{exec::jit, metadata::image};
+    use yacht::{exec::jit, metadata::assembly};
 
     #[test]
     fn exec_examples() {
@@ -55,10 +55,10 @@ mod tests {
             if !filename.ends_with(".exe") || filename.ends_with("smallpt.exe") {
                 continue;
             }
-            let mut image = image::Image::from_file(filename).unwrap();
-            let method = image.get_entry_method();
+            let mut asm = assembly::Assembly::load(filename).unwrap();
+            let method = asm.image.get_entry_method();
             unsafe {
-                let mut jit = jit::jit::JITCompiler::new(&mut image);
+                let mut jit = jit::jit::JITCompiler::new(&mut asm);
                 let main = jit.generate_main(&method);
                 jit.run_main(main);
             }

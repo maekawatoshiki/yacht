@@ -1,5 +1,7 @@
 use crate::{
-    metadata::{class::*, metadata::*, method::*, pe_parser::*, signature::*, token::*},
+    metadata::{
+        assembly::*, class::*, metadata::*, method::*, pe_parser::*, signature::*, token::*,
+    },
     util::{holder::*, name_path::*},
 };
 use rustc_hash::FxHashMap;
@@ -23,6 +25,9 @@ pub struct Image {
 
     /// Cache ``ClassInfoRef`` by token
     pub class_cache: FxHashMap<Token, ClassInfoRef>,
+
+    /// Assembly References
+    pub asm_refs: FxHashMap<String, Assembly>,
     // pub memberref_cache: FxHashMap<usize, MethodBodyRef>
 }
 
@@ -38,15 +43,21 @@ impl Image {
             pe_parser,
             method_cache: FxHashMap::default(),
             class_cache: FxHashMap::default(),
+            asm_refs: FxHashMap::default(),
         }
     }
 
-    pub fn from_file(filename: &str) -> Option<Image> {
-        let mut pe_parser = PEParser::new(filename)?;
-        let mut image = pe_parser.create_image()?;
-        image.pe_parser = Some(Rc::new(RefCell::new(pe_parser)));
-        image.setup_all_class();
-        Some(image)
+    pub fn setup_all_asmref(&mut self) {
+        let asmrefs = &self.metadata.metadata_stream.tables[TableKind::AssemblyRef.into_num()];
+        for asmref_ in asmrefs {
+            let asmref = retrieve!(asmref_, Table::AssemblyRef);
+            let name = self.get_string(asmref.name);
+            if name == "mscorlib" {
+                continue;
+            }
+            let asm = Assembly::load(format!("{}.dll", name).as_str()).unwrap();
+            self.asm_refs.insert(name.clone(), asm);
+        }
     }
 
     pub fn setup_all_class(&mut self) {
@@ -63,10 +74,27 @@ impl Image {
             let tref = retrieve!(typeref, Table::TypeRef);
             let namespace = self.get_string(tref.type_namespace).as_str();
             let name = self.get_string(tref.type_name).as_str();
-            if let Some(class) = get_mscorlib().get(TypeFullPath(vec!["mscorlib", namespace, name]))
-            {
-                self.class_cache.insert(token, class.clone());
+            let asm = retrieve!(
+                self.get_table_entry(tref.resolution_scope_table_and_entry()),
+                Table::AssemblyRef
+            );
+            let asm_name = self.get_string(asm.name);
+            if asm_name == "mscorlib" {
+                if let Some(class) =
+                    get_mscorlib().get(TypeFullPath(vec!["mscorlib", namespace, name]))
+                {
+                    self.class_cache.insert(token, class.clone());
+                }
+                continue;
             }
+            let c = self
+                .asm_refs
+                .get(asm_name)
+                .unwrap()
+                .image
+                .find_class(TypeFullPath(vec![asm_name.as_str(), namespace, name]))
+                .unwrap();
+            self.class_cache.insert(token, c.clone());
         }
 
         for (i, typedef) in typedefs.iter().enumerate() {
@@ -80,7 +108,9 @@ impl Image {
                     (td.field_list as usize - 1, td.method_list as usize - 1)
                 });
             let class_info = Rc::new(RefCell::new(ClassInfo {
-                resolution_scope: ResolutionScope::None,
+                resolution_scope: ResolutionScope::AssemblyRef {
+                    name: self.get_assembly_name().unwrap().clone(),
+                },
                 parent: None,
                 fields: vec![],
                 methods: vec![],
@@ -148,6 +178,14 @@ impl Image {
         }
 
         self.setup_all_class_method_table();
+    }
+
+    fn get_assembly_name(&self) -> Option<&String> {
+        let asm = retrieve!(
+            self.metadata.metadata_stream.tables[TableKind::Assembly.into_num()].get(0)?,
+            Table::Assembly
+        );
+        Some(self.get_string(asm.name))
     }
 
     fn setup_all_class_method_table(&mut self) {

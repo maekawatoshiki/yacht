@@ -22,8 +22,8 @@ pub struct Function {
 
 #[derive(Clone)]
 pub struct BuiltinFunctions {
-    map: Holder<Vec<Function>>,
-    helper_map: FxHashMap<String, Function>,
+    pub map: Holder<Vec<Function>>,
+    pub helper_map: FxHashMap<String, Function>,
 }
 
 impl BuiltinFunctions {
