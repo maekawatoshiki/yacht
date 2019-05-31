@@ -1,6 +1,8 @@
 extern crate yacht;
 use yacht::{exec::jit, metadata::assembly};
 
+use std::path::PathBuf;
+
 extern crate clap;
 use clap::{App, Arg};
 
@@ -18,7 +20,7 @@ fn main() {
     let app_matches = app.clone().get_matches();
 
     let filename = match app_matches.value_of("file") {
-        Some(filename) => filename,
+        Some(filename) => PathBuf::from(filename),
         None => return,
     };
 
@@ -36,7 +38,8 @@ fn main() {
 
     unsafe {
         let mut asm = asm.borrow_mut();
-        let mut jit = jit::jit::JITCompiler::new(&mut *asm);
+        let mut shared_env = jit::jit::SharedEnvironment::new();
+        let mut jit = jit::jit::JITCompiler::new(&mut *asm, &mut shared_env);
         let main = jit.generate_main(&method);
         jit.run_main(main);
     }
@@ -44,7 +47,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::PathBuf};
     use yacht::{exec::jit, metadata::assembly};
 
     #[test]
@@ -56,11 +59,12 @@ mod tests {
             if !filename.ends_with(".exe") || filename.ends_with("smallpt.exe") {
                 continue;
             }
-            let mut asm = assembly::Assembly::load(filename).unwrap();
+            let asm = assembly::Assembly::load(PathBuf::from(filename)).unwrap();
             let method = asm.borrow_mut().image.get_entry_method();
             unsafe {
                 let mut asm = asm.borrow_mut();
-                let mut jit = jit::jit::JITCompiler::new(&mut asm);
+                let mut shared_env = jit::jit::SharedEnvironment::new();
+                let mut jit = jit::jit::JITCompiler::new(&mut asm, &mut shared_env);
                 let main = jit.generate_main(&method);
                 jit.run_main(main);
             }

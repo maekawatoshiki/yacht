@@ -10,11 +10,13 @@ use std::{
     fs::File,
     io::{BufReader, Read, Seek, SeekFrom},
     iter,
+    path::PathBuf,
 };
 
 #[derive(Debug)]
 pub struct PEParser {
     reader: BufReader<File>,
+    filename: PathBuf,
 }
 
 macro_rules! try_eq {
@@ -26,14 +28,15 @@ macro_rules! try_eq {
 }
 
 impl PEParser {
-    pub fn new(filename: &str) -> Option<Self> {
-        let file = match File::open(filename) {
+    pub fn new(filename: PathBuf) -> Option<Self> {
+        let file = match File::open(&filename) {
             Ok(file) => file,
             Err(_) => return None,
         };
 
         Some(Self {
             reader: BufReader::new(file),
+            filename: filename.to_path_buf(),
         })
     }
 
@@ -94,6 +97,7 @@ impl PEParser {
                 sections,
             },
             metadata_streams,
+            self.filename.clone(),
             None,
         );
 

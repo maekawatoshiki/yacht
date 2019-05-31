@@ -139,6 +139,7 @@ impl BuiltinFunctions {
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
                 let concat = vec![
                     def_func!(        str,  [obj, obj], concat_obj_obj,        "[mscorlib]System::String.Concat(Object, Object)"),
+                    def_func!(        str,  [str, str], concat_str_str,        "[mscorlib]System::String.Concat(String, String)"),
                     def_func!(        str,  [obj, obj, obj], concat_obj_obj_obj, "[mscorlib]System::String.Concat(Object, Object, Object)")
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
                 let int32_to_string = vec![
@@ -266,6 +267,14 @@ unsafe fn convert_object_to_string(obj: *mut u64) -> String {
     String::from_utf16_lossy(&*retrieve_utf16_string_from_system_string(
         (get_virtual_to_string_method(obj))(obj),
     ))
+}
+
+#[no_mangle]
+unsafe fn concat_str_str(s1: *mut u64, s2: *mut u64) -> *mut u64 {
+    let mut s1 = String::from_utf16_lossy(&*retrieve_utf16_string_from_system_string(s1));
+    let s2 = String::from_utf16_lossy(&*retrieve_utf16_string_from_system_string(s2));
+    s1.push_str(s2.as_str());
+    new_system_string(s1)
 }
 
 #[no_mangle]

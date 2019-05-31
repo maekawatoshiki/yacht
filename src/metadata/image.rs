@@ -5,8 +5,8 @@ use crate::{
     util::{holder::*, name_path::*},
 };
 use rustc_hash::FxHashMap;
-use std::collections::hash_map;
 use std::ops::Range;
+use std::path;
 use std::{cell::RefCell, rc::Rc};
 
 pub type RVA = u32;
@@ -31,18 +31,24 @@ pub struct Image {
     /// Assembly References
     pub asm_refs: FxHashMap<String, AssemblyRef>,
 
-    pub typedef_queue: Vec<(
-        Vec<(ClassInfoRef, Range<usize>)>,
-        Vec<(ClassInfoRef, Range<usize>)>,
-        Vec<(ClassInfoRef, u16)>,
-    )>,
-    // pub memberref_cache: FxHashMap<usize, MethodBodyRef>
+    /// File name from which this image is loaded
+    pub filename: path::PathBuf,
+
+    pub setup_info: SetupInfo, // pub memberref_cache: FxHashMap<usize, MethodBodyRef>
+}
+
+#[derive(Debug, Clone)]
+pub struct SetupInfo {
+    pub methods: Vec<(ClassInfoRef, Range<usize>)>,
+    pub fields: Vec<(ClassInfoRef, Range<usize>)>,
+    pub extends: Vec<(ClassInfoRef, u16)>,
 }
 
 impl Image {
     pub fn new(
         cli_info: CLIInfo,
         metadata: MetaDataStreams,
+        filename: path::PathBuf,
         pe_parser: Option<Rc<RefCell<PEParser>>>,
     ) -> Self {
         Self {
@@ -52,7 +58,8 @@ impl Image {
             method_cache: FxHashMap::default(),
             class_cache: FxHashMap::default(),
             asm_refs: FxHashMap::default(),
-            typedef_queue: vec![],
+            filename,
+            setup_info: SetupInfo::new(),
         }
     }
 
@@ -71,22 +78,41 @@ impl Image {
         for asmref_ in asmrefs {
             let asmref = retrieve!(asmref_, Table::AssemblyRef);
             let name = self.get_string(asmref.name);
+
+            // TODO: Treat as special
             if name == "mscorlib" {
                 continue;
             }
+
+            // Already loaded
             if let Some(asm) = loaded.get(name) {
                 self.asm_refs.insert(name.clone(), asm.clone());
                 continue;
             }
-            let asm = Assembly::load_exclusive(format!("{}.dll", name).as_str(), loaded).unwrap();
+
+            let asm = Assembly::load_exclusive(
+                {
+                    let mut path = self.filename.parent().unwrap().to_path_buf();
+                    path.push(name.clone());
+                    path.set_extension("dll");
+                    path
+                },
+                loaded,
+            )
+            .unwrap();
+
+            // Register loaded one
             loaded.insert(name.clone(), asm.clone());
+
             self.asm_refs.insert(name.clone(), asm);
         }
     }
 
     pub fn setup_all_typeref(&mut self) {
-        let typerefs = &self.metadata.metadata_stream.tables[TableKind::TypeRef.into_num()];
-        for (i, typeref) in typerefs.iter().enumerate() {
+        for (i, typeref) in self.metadata.metadata_stream.tables[TableKind::TypeRef.into_num()]
+            .iter()
+            .enumerate()
+        {
             let token = encode_token(TableKind::TypeRef.into(), i as u32 + 1);
             let tref = retrieve!(typeref, Table::TypeRef);
             let namespace = self.get_string(tref.type_namespace).as_str();
@@ -96,6 +122,8 @@ impl Image {
                 Table::AssemblyRef
             );
             let asm_name = self.get_string(asm.name);
+
+            // TODO: Treat as special
             if asm_name == "mscorlib" {
                 if let Some(class) =
                     get_mscorlib().get(TypeFullPath(vec!["mscorlib", namespace, name]))
@@ -104,7 +132,8 @@ impl Image {
                 }
                 continue;
             }
-            let c = self
+
+            let class = self
                 .asm_refs
                 .get(asm_name)
                 .unwrap()
@@ -112,73 +141,70 @@ impl Image {
                 .image
                 .find_class(TypeFullPath(vec![asm_name.as_str(), namespace, name]))
                 .unwrap();
-            self.class_cache.insert(token, c.clone());
+            self.class_cache.insert(token, class.clone());
         }
     }
 
     pub fn setup_all_class(&mut self) {
-        for (methods_to_setup, fields_to_setup, extends) in self.typedef_queue.clone() {
-            for (class, range) in fields_to_setup {
-                let fields: Vec<ClassField> = self.metadata.metadata_stream.tables
-                    [TableKind::Field.into_num()][range.clone()]
-                .iter()
-                .map(|t| {
-                    let ft = retrieve!(t, Table::Field);
-                    let name = self.get_string(ft.name).clone();
-                    let mut sig = self.get_blob(ft.signature).iter();
-                    assert_eq!(sig.next().unwrap(), &0x06);
-                    let ty = Type::into_type(self, &mut sig).unwrap();
-                    ClassField { name, ty }
-                })
-                .collect();
-                class.borrow_mut().fields = fields;
-            }
-
-            let pe_parser_ref = self.pe_parser.as_ref().unwrap().clone();
-            let mut pe_parser = pe_parser_ref.borrow_mut();
-
-            for (class, range) in methods_to_setup {
-                let mut methods = vec![];
-
-                for mdef in &self.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()]
-                    [range.clone()]
-                {
-                    let mdef = retrieve!(mdef, Table::MethodDef);
-                    let method = pe_parser
-                        .read_method(self, class.clone(), mdef.rva)
-                        .unwrap();
-                    self.method_cache.insert(mdef.rva, method.clone());
-                    methods.push(method)
-                }
-
-                class.borrow_mut().methods = methods;
-            }
-
-            for (class, extends) in extends {
-                let token = decode_typedef_or_ref_token(extends as u32);
-                let typedef_or_ref = self.get_table_entry(token);
-                match typedef_or_ref {
-                    Table::TypeDef(_) => {
-                        class.borrow_mut().parent =
-                            Some(self.class_cache.get(&token.into()).unwrap().clone());
-                    }
-                    Table::TypeRef(_) => {} // TODO
-                    _ => unreachable!(),
-                }
-            }
-
-            self.setup_all_class_method_table();
+        // Set class fields
+        for (class, range) in &self.setup_info.fields {
+            let fields: Vec<ClassField> = self.metadata.metadata_stream.tables
+                [TableKind::Field.into_num()][range.clone()]
+            .iter()
+            .map(|t| {
+                let ft = retrieve!(t, Table::Field);
+                let name = self.get_string(ft.name).clone();
+                let mut sig = self.get_blob(ft.signature).iter();
+                assert_eq!(sig.next().unwrap(), &0x06);
+                let ty = Type::into_type(self, &mut sig).unwrap();
+                ClassField { name, ty }
+            })
+            .collect();
+            class.borrow_mut().fields = fields;
         }
+
+        // Set parent class
+        for (class, extends) in &self.setup_info.extends {
+            let token = decode_typedef_or_ref_token(*extends as u32);
+            let typedef_or_ref = self.get_table_entry(token);
+            match typedef_or_ref {
+                Table::TypeDef(_) => {
+                    class.borrow_mut().parent =
+                        Some(self.class_cache.get(&token.into()).unwrap().clone());
+                }
+                Table::TypeRef(_) => {} // TODO
+                _ => unreachable!(),
+            }
+        }
+
+        let pe_parser_ref = self.pe_parser.as_ref().unwrap().clone();
+        let mut pe_parser = pe_parser_ref.borrow_mut();
+
+        // Set class methods
+        for (class, range) in &self.setup_info.methods {
+            let mut methods = vec![];
+
+            for mdef in &self.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()]
+                [range.clone()]
+            {
+                let mdef = retrieve!(mdef, Table::MethodDef);
+                let method = pe_parser
+                    .read_method(self, class.clone(), mdef.rva)
+                    .unwrap();
+                self.method_cache.insert(mdef.rva, method.clone());
+                methods.push(method)
+            }
+
+            class.borrow_mut().methods = methods;
+        }
+
+        self.setup_all_class_method_table();
     }
 
-    pub fn register_all_class(&mut self) {
+    pub fn define_all_class(&mut self) {
         let typedefs = &self.metadata.metadata_stream.tables[TableKind::TypeDef.into_num()];
-        // let typerefs = &self.metadata.metadata_stream.tables[TableKind::TypeRef.into_num()];
         let fields = &self.metadata.metadata_stream.tables[TableKind::Field.into_num()];
         let methoddefs = &self.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()];
-        let mut methods_to_setup = vec![];
-        let mut fields_to_setup = vec![];
-        let mut extends = vec![];
 
         for (i, typedef) in typedefs.iter().enumerate() {
             let typedef = retrieve!(typedef, Table::TypeDef);
@@ -190,32 +216,33 @@ impl Image {
                     let td = retrieve!(table, Table::TypeDef);
                     (td.field_list as usize - 1, td.method_list as usize - 1)
                 });
-            let class_info = Rc::new(RefCell::new(ClassInfo {
-                resolution_scope: ResolutionScope::AssemblyRef {
+            let class_info = ClassInfo::new_ref(
+                ResolutionScope::AssemblyRef {
                     name: self.get_assembly_name().unwrap().clone(),
                 },
-                parent: None,
-                fields: vec![],
-                methods: vec![],
-                name: self.get_string(typedef.type_name).clone(),
-                namespace: self.get_string(typedef.type_namespace).clone(),
-                method_table: vec![],
-            }));
+                self.get_string(typedef.type_namespace),
+                self.get_string(typedef.type_name),
+                vec![],
+                vec![],
+                None,
+            );
 
             self.class_cache.insert(
                 encode_token(TableKind::TypeDef.into(), i as u32 + 1),
                 class_info.clone(),
             );
-            methods_to_setup.push((class_info.clone(), method_list_bgn..method_list_end));
-            fields_to_setup.push((class_info.clone(), field_list_bgn..field_list_end));
+
+            self.setup_info
+                .methods
+                .push((class_info.clone(), method_list_bgn..method_list_end));
+            self.setup_info
+                .fields
+                .push((class_info.clone(), field_list_bgn..field_list_end));
 
             if typedef.extends != 0 {
-                extends.push((class_info, typedef.extends))
+                self.setup_info.extends.push((class_info, typedef.extends))
             }
         }
-
-        self.typedef_queue
-            .push((methods_to_setup, fields_to_setup, extends));
     }
 
     fn get_assembly_name(&self) -> Option<&String> {
@@ -336,6 +363,16 @@ impl Image {
             }
         }
         None
+    }
+}
+
+impl SetupInfo {
+    pub fn new() -> Self {
+        Self {
+            methods: vec![],
+            fields: vec![],
+            extends: vec![],
+        }
     }
 }
 

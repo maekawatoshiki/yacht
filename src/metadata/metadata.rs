@@ -250,7 +250,7 @@ pub struct TypeRefTable {
 }
 
 impl MemberRefTable {
-    pub fn class_table_and_entry(&self) -> DecodedToken {
+    pub fn class_decoded(&self) -> DecodedToken {
         decode_member_ref_parent_token(self.class)
     }
 }

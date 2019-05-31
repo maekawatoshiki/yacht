@@ -61,25 +61,43 @@ pub struct PhiStack {
     stack: Vec<TypedValue>,
 }
 
+#[derive(Clone)]
+pub struct SharedEnvironment {
+    /// All callable methods. Searchable with ``MethodFullPath``.
+    pub methods: BuiltinFunctions,
+
+    /// All classes. Searchable with ``TypeFullPath``.
+    pub class_types: ClassTypesHolder,
+
+    /// All method tables. Searchable with their pointers.
+    pub method_table_map: FxHashMap<MethodTablePtrTy, (LLVMValueRef, Vec<LLVMValueRef>)>,
+
+    /// LLVM Context
+    pub context: LLVMContextRef,
+
+    /// LLVM Module
+    pub module: LLVMModuleRef,
+
+    /// LLVM Builder for globally use
+    pub builder: LLVMBuilderRef,
+
+    /// LLVM Pass Manager
+    pub pass_mgr: LLVMPassManagerRef,
+}
+
 pub struct JITCompiler<'a> {
     pub assembly: &'a mut Assembly,
-    pub context: LLVMContextRef,
-    pub module: LLVMModuleRef,
-    pub builder: LLVMBuilderRef,
-    pub pass_mgr: LLVMPassManagerRef,
+    pub shared_env: &'a mut SharedEnvironment,
     pub generating: Option<LLVMValueRef>,
     pub generated: FxHashMap<RVA, LLVMValueRef>,
     pub basic_blocks: FxHashMap<usize, BasicBlockInfo>,
     pub phi_stack: FxHashMap<usize, Vec<PhiStack>>, // destination,
-    pub env: Environment,
+    pub env: CodeEnvironment,
     pub compile_queue: VecDeque<(LLVMValueRef, MethodInfoRef)>,
-    pub builtin_functions: BuiltinFunctions,
-    pub class_types: ClassTypesHolder,
-    pub method_table_map: FxHashMap<MethodTablePtrTy, (LLVMValueRef, Vec<LLVMValueRef>)>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Environment {
+pub struct CodeEnvironment {
     pub arguments: FxHashMap<usize, TypedValue>,
     pub locals: FxHashMap<usize, TypedValue>,
 }
@@ -90,41 +108,22 @@ pub struct ClassTypesHolder {
 }
 
 impl<'a> JITCompiler<'a> {
-    pub unsafe fn new(assembly: &'a mut Assembly) -> Self {
+    pub unsafe fn new(assembly: &'a mut Assembly, shared_env: &'a mut SharedEnvironment) -> Self {
         llvm::target::LLVM_InitializeNativeTarget();
         llvm::target::LLVM_InitializeNativeAsmPrinter();
         llvm::target::LLVM_InitializeNativeAsmParser();
         llvm::target::LLVM_InitializeAllTargetMCs();
         llvm::execution_engine::LLVMLinkInMCJIT();
 
-        let context = LLVMContextCreate();
-        let module =
-            LLVMModuleCreateWithNameInContext(CString::new("yacht").unwrap().as_ptr(), context);
-        let builder = LLVMCreateBuilderInContext(context);
-        let pass_mgr = LLVMCreatePassManager();
-
-        llvm::transforms::scalar::LLVMAddReassociatePass(pass_mgr);
-        llvm::transforms::scalar::LLVMAddGVNPass(pass_mgr);
-        llvm::transforms::scalar::LLVMAddInstructionCombiningPass(pass_mgr);
-        llvm::transforms::scalar::LLVMAddPromoteMemoryToRegisterPass(pass_mgr);
-        llvm::transforms::scalar::LLVMAddTailCallEliminationPass(pass_mgr);
-        llvm::transforms::scalar::LLVMAddJumpThreadingPass(pass_mgr);
-
         let mut self_ = Self {
             assembly,
-            context,
-            module,
-            builder,
-            pass_mgr,
+            shared_env,
             generating: None,
             generated: FxHashMap::default(),
             basic_blocks: FxHashMap::default(),
             phi_stack: FxHashMap::default(),
-            env: Environment::new(),
+            env: CodeEnvironment::new(),
             compile_queue: VecDeque::new(),
-            class_types: ClassTypesHolder::new(context),
-            builtin_functions: BuiltinFunctions::new(context, module),
-            method_table_map: FxHashMap::default(),
         };
 
         self_.setup_system_string();
@@ -132,39 +131,19 @@ impl<'a> JITCompiler<'a> {
         self_
     }
 
-    pub unsafe fn new_with(
-        context: LLVMContextRef,
-        module: LLVMModuleRef,
-        class_types: ClassTypesHolder,
-        builtin_functions: BuiltinFunctions,
-        method_table_map: FxHashMap<MethodTablePtrTy, (LLVMValueRef, Vec<LLVMValueRef>)>,
+    pub unsafe fn new_with_no_mscorlib_init(
         assembly: &'a mut Assembly,
+        shared_env: &'a mut SharedEnvironment,
     ) -> Self {
-        let builder = LLVMCreateBuilderInContext(context);
-        let pass_mgr = LLVMCreatePassManager();
-
-        llvm::transforms::scalar::LLVMAddReassociatePass(pass_mgr);
-        llvm::transforms::scalar::LLVMAddGVNPass(pass_mgr);
-        llvm::transforms::scalar::LLVMAddInstructionCombiningPass(pass_mgr);
-        llvm::transforms::scalar::LLVMAddPromoteMemoryToRegisterPass(pass_mgr);
-        llvm::transforms::scalar::LLVMAddTailCallEliminationPass(pass_mgr);
-        llvm::transforms::scalar::LLVMAddJumpThreadingPass(pass_mgr);
-
         Self {
             assembly,
-            context,
-            module,
-            builder,
-            pass_mgr,
+            shared_env,
             generating: None,
             generated: FxHashMap::default(),
             basic_blocks: FxHashMap::default(),
             phi_stack: FxHashMap::default(),
-            env: Environment::new(),
+            env: CodeEnvironment::new(),
             compile_queue: VecDeque::new(),
-            class_types,
-            builtin_functions,
-            method_table_map,
         }
     }
 
@@ -173,14 +152,14 @@ impl<'a> JITCompiler<'a> {
         let mut error = 0 as *mut i8;
         if llvm::execution_engine::LLVMCreateExecutionEngineForModule(
             &mut ee,
-            self.module,
+            self.shared_env.module,
             &mut error,
         ) != 0
         {
             panic!("llvm error: failed to initialize execute engine")
         }
 
-        for f in self.builtin_functions.list_all_function() {
+        for f in self.shared_env.methods.list_all_function() {
             if f.function as usize != 0 {
                 llvm::execution_engine::LLVMAddGlobalMapping(ee, f.llvm_function, f.function);
             }
@@ -189,37 +168,41 @@ impl<'a> JITCompiler<'a> {
         llvm::execution_engine::LLVMRunFunction(ee, main, 0, vec![].as_mut_ptr());
     }
 
-    pub unsafe fn generate_all_classes_and_methods(&mut self) {
+    pub unsafe fn define_all_class(&mut self) {
         let classes = self
             .assembly
             .image
             .class_cache
             .iter()
-            .map(|(_, class)| class.clone())
-            .collect::<Vec<ClassInfoRef>>();
-
-        println!("++>>> {}", self.assembly.name);
+            .filter_map(|(_tok, class)| {
+                let class = class.borrow();
+                // ``class_cache`` may contain classes belonging to another assembly. Here exclude
+                // them.
+                match class.resolution_scope {
+                    // TODO: Support all possible ResolutionScope
+                    ResolutionScope::AssemblyRef { ref name } if name == &self.assembly.name => {
+                        Some(class.clone())
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Vec<ClassInfo>>();
 
         for class in classes {
-            let class = class.borrow();
-            match class.resolution_scope {
-                ResolutionScope::AssemblyRef { ref name } if name == &self.assembly.name => {}
-                _ => continue,
-            }
-            self.get_class_type(&class);
-            self.ensure_all_class_methods_compiled(
-                self.class_types.get_method_table_ptr(&*class).unwrap(),
-                &class.method_table,
-            );
+            self.get_llvm_class_type(&class);
+            self.ensure_all_class_methods_compiled(&class);
         }
+    }
 
-        for (_, m) in self.assembly.image.method_cache.clone() {
-            let minfo = m.borrow();
+    pub unsafe fn define_all_method(&mut self) {
+        for (_, minforef) in self.assembly.image.method_cache.clone() {
+            let minfo = minforef.borrow();
             let mdef = minfo.as_mdef();
             let f = self.get_function_by_rva(mdef.rva);
             let class = mdef.class.borrow();
-            self.builtin_functions.map.add(
-                ((&*class).into(): TypeFullPath).with_method_name(mdef.name.as_str()),
+            let method_path = ((&*class).into(): TypeFullPath).with_method_name(mdef.name.as_str());
+            self.shared_env.methods.map.add(
+                method_path,
                 vec![Function {
                     llvm_function: f,
                     function: 0 as *mut ::std::ffi::c_void,
@@ -229,57 +212,45 @@ impl<'a> JITCompiler<'a> {
         }
     }
 
-    pub unsafe fn generate_queued(&mut self) {
+    pub unsafe fn generate_queued_methods(&mut self) {
         while let Some((func, method)) = self.compile_queue.pop_front() {
             self.generate_func(func, &method);
         }
     }
 
-    pub unsafe fn generate_main(&mut self, method_ref: &MethodInfoRef) -> LLVMValueRef {
+    pub unsafe fn generate_all_class_and_method(&mut self) {
         let mut asms = FxHashMap::default();
         self.assembly
             .image
             .collect_all_reachable_assemblies(&mut asms);
-        let mut q = vec![];
+
+        let mut compile_info = vec![];
+
         for (_name, asmref) in &asms {
-            let mut asmref = asmref.borrow_mut();
-            let mut compiler = JITCompiler::new_with(
-                self.context,
-                self.module,
-                self.class_types.clone(),
-                self.builtin_functions.clone(),
-                self.method_table_map.clone(),
-                &mut *asmref,
-            );
-            compiler.generate_all_classes_and_methods();
-            self.builtin_functions = compiler.builtin_functions;
-            self.class_types = compiler.class_types;
-            self.method_table_map = compiler.method_table_map;
-            q.push((compiler.compile_queue.clone(), self.generated.clone()));
-        }
-        for ((que, generated), (_name, asmref)) in q.into_iter().zip(asms.iter()) {
-            let mut asmref = asmref.borrow_mut();
-            let mut compiler = JITCompiler::new_with(
-                self.context,
-                self.module,
-                self.class_types.clone(),
-                self.builtin_functions.clone(),
-                self.method_table_map.clone(),
-                &mut *asmref,
-            );
-            compiler.compile_queue = que;
-            compiler.generated = generated;
-            compiler.generate_queued();
-            self.builtin_functions = compiler.builtin_functions;
-            self.class_types = compiler.class_types;
-            self.method_table_map = compiler.method_table_map;
+            let mut asm = asmref.borrow_mut();
+            let mut compiler =
+                JITCompiler::new_with_no_mscorlib_init(&mut *asm, &mut self.shared_env);
+            compiler.define_all_class();
+            compiler.define_all_method();
+            compile_info.push((compiler.compile_queue.clone(), compiler.generated.clone()));
         }
 
-        println!("----------");
+        for ((que, generated), (_name, asmref)) in compile_info.into_iter().zip(asms.iter()) {
+            let mut asmref = asmref.borrow_mut();
+            let mut compiler =
+                JITCompiler::new_with_no_mscorlib_init(&mut *asmref, &mut self.shared_env);
+            compiler.compile_queue = que;
+            compiler.generated = generated;
+            compiler.generate_queued_methods();
+        }
+    }
+
+    pub unsafe fn generate_main(&mut self, method_ref: &MethodInfoRef) -> LLVMValueRef {
+        self.generate_all_class_and_method();
 
         self.basic_blocks.clear();
         self.phi_stack.clear();
-        self.env = Environment::new();
+        self.env = CodeEnvironment::new();
 
         let method_info = method_ref.borrow();
         let method = method_info.as_mdef();
@@ -288,28 +259,27 @@ impl<'a> JITCompiler<'a> {
         let (ret_ty, mut params_ty): (LLVMTypeRef, Vec<LLVMTypeRef>) =
             { (Type::new(ElementType::Void).to_llvmty(self), vec![]) };
         let func_ty = LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
-        let func_name = format!("yacht-Main");
         let func = LLVMAddFunction(
-            self.module,
-            CString::new(func_name.as_str()).unwrap().as_ptr(),
+            self.shared_env.module,
+            CString::new("yacht-Main").unwrap().as_ptr(),
             func_ty,
         );
 
         self.generating = Some(func);
 
         let bb_before_entry = LLVMAppendBasicBlockInContext(
-            self.context,
+            self.shared_env.context,
             func,
             CString::new("initialize").unwrap().as_ptr(),
         );
 
         let bb_entry = LLVMAppendBasicBlockInContext(
-            self.context,
+            self.shared_env.context,
             func,
             CString::new("entry").unwrap().as_ptr(),
         );
 
-        LLVMPositionBuilderAtEnd(self.builder, bb_entry);
+        LLVMPositionBuilderAtEnd(self.shared_env.builder, bb_entry);
 
         // Declare locals
         for (i, ty) in method.locals_ty.iter().enumerate() {
@@ -336,17 +306,13 @@ impl<'a> JITCompiler<'a> {
             self.compile_block(&mut basic_blocks, i, vec![]).unwrap();
         }
 
-        // Compile the functions in the queue
-
-        while let Some((func, method)) = self.compile_queue.pop_front() {
-            self.generate_func(func, &method);
-        }
+        self.generate_queued_methods();
 
         // Set all the class methods to the appropriate method_table
 
-        LLVMPositionBuilderAtEnd(self.builder, bb_before_entry);
+        LLVMPositionBuilderAtEnd(self.shared_env.builder, bb_before_entry);
 
-        for (_, (llvm_method_table, methods)) in &self.method_table_map {
+        for (_, (llvm_method_table, methods)) in &self.shared_env.method_table_map {
             if methods.len() == 0 {
                 continue;
             }
@@ -361,7 +327,7 @@ impl<'a> JITCompiler<'a> {
             }
         }
 
-        LLVMBuildBr(self.builder, bb_entry);
+        LLVMBuildBr(self.shared_env.builder, bb_entry);
 
         // Append ``ret void`` to the incomplete basic blocks
 
@@ -369,28 +335,28 @@ impl<'a> JITCompiler<'a> {
 
         while iter_bb != ptr::null_mut() {
             if LLVMIsATerminatorInst(LLVMGetLastInstruction(iter_bb)) == ptr::null_mut() {
-                let terminator_builder = LLVMCreateBuilderInContext(self.context);
+                let terminator_builder = LLVMCreateBuilderInContext(self.shared_env.context);
                 LLVMPositionBuilderAtEnd(terminator_builder, iter_bb);
                 LLVMBuildRetVoid(terminator_builder);
             }
             iter_bb = LLVMGetNextBasicBlock(iter_bb);
         }
 
-        when_debug!(LLVMDumpModule(self.module));
+        when_debug!(LLVMDumpModule(self.shared_env.module));
 
         llvm::analysis::LLVMVerifyFunction(
             func,
             llvm::analysis::LLVMVerifierFailureAction::LLVMAbortProcessAction,
         );
 
-        LLVMRunPassManager(self.pass_mgr, self.module);
+        LLVMRunPassManager(self.shared_env.pass_mgr, self.shared_env.module);
 
         func
     }
 
     unsafe fn generate_func(&mut self, func: LLVMValueRef, method_ref: &MethodInfoRef) {
         self.generating = Some(func);
-        self.env = Environment::new();
+        self.env = CodeEnvironment::new();
 
         let method_info = method_ref.borrow();
         let method = method_info.as_mdef();
@@ -398,16 +364,16 @@ impl<'a> JITCompiler<'a> {
         let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let ret_ty = LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(func)));
         let bb_entry = LLVMAppendBasicBlockInContext(
-            self.context,
+            self.shared_env.context,
             func,
             CString::new("entry").unwrap().as_ptr(),
         );
 
-        LLVMPositionBuilderAtEnd(self.builder, bb_entry);
+        LLVMPositionBuilderAtEnd(self.shared_env.builder, bb_entry);
 
         let shift = if method_ty.has_this() {
             LLVMBuildStore(
-                self.builder,
+                self.shared_env.builder,
                 LLVMGetParam(func, 0),
                 self.get_argument(
                     0,
@@ -421,7 +387,7 @@ impl<'a> JITCompiler<'a> {
 
         for (i, ty) in method_ty.params.iter().enumerate() {
             LLVMBuildStore(
-                self.builder,
+                self.shared_env.builder,
                 LLVMGetParam(func, (i + shift) as u32),
                 self.get_argument(i + shift, Some(&ty)),
             );
@@ -450,19 +416,19 @@ impl<'a> JITCompiler<'a> {
 
         let last_block = basic_blocks.last().unwrap();
         let bb_last = (*self.basic_blocks.get(&last_block.start).unwrap()).retrieve();
-        LLVMPositionBuilderAtEnd(self.builder, bb_last);
-        if cur_bb_has_no_terminator(self.builder) {
+        LLVMPositionBuilderAtEnd(self.shared_env.builder, bb_last);
+        if cur_bb_has_no_terminator(self.shared_env.builder) {
             if LLVMGetTypeKind(ret_ty) == llvm::LLVMTypeKind::LLVMVoidTypeKind {
-                LLVMBuildRetVoid(self.builder);
+                LLVMBuildRetVoid(self.shared_env.builder);
             } else {
-                LLVMBuildRet(self.builder, LLVMConstNull(ret_ty));
+                LLVMBuildRet(self.shared_env.builder, LLVMConstNull(ret_ty));
             }
         }
 
         let mut iter_bb = LLVMGetFirstBasicBlock(func);
         while iter_bb != ptr::null_mut() {
             if LLVMIsATerminatorInst(LLVMGetLastInstruction(iter_bb)) == ptr::null_mut() {
-                let terminator_builder = LLVMCreateBuilderInContext(self.context);
+                let terminator_builder = LLVMCreateBuilderInContext(self.shared_env.context);
                 LLVMPositionBuilderAtEnd(terminator_builder, iter_bb);
                 if LLVMGetTypeKind(ret_ty) == llvm::LLVMTypeKind::LLVMVoidTypeKind {
                     LLVMBuildRetVoid(terminator_builder);
@@ -491,7 +457,7 @@ impl<'a> JITCompiler<'a> {
         }
 
         let func = self.generating.unwrap();
-        let builder = LLVMCreateBuilderInContext(self.context);
+        let builder = LLVMCreateBuilderInContext(self.shared_env.context);
         let entry_bb = LLVMGetEntryBasicBlock(func);
         let first_inst = LLVMGetFirstInstruction(entry_bb);
 
@@ -516,7 +482,7 @@ impl<'a> JITCompiler<'a> {
         }
 
         let func = self.generating.unwrap();
-        let builder = LLVMCreateBuilderInContext(self.context);
+        let builder = LLVMCreateBuilderInContext(self.shared_env.context);
         let entry_bb = LLVMGetEntryBasicBlock(func);
         let first_inst = LLVMGetFirstInstruction(entry_bb);
 
@@ -538,11 +504,7 @@ impl<'a> JITCompiler<'a> {
     unsafe fn setup_system_string(&mut self) {
         let class_system_string_ref = mscorlib_system_string();
         let class_system_string = class_system_string_ref.borrow();
-        let method_table_ptr = self
-            .class_types
-            .get_method_table_ptr(&*class_system_string)
-            .unwrap();
-        self.ensure_all_class_methods_compiled(method_table_ptr, &class_system_string.method_table);
+        let (method_table_ptr, _) = self.ensure_all_class_methods_compiled(&class_system_string);
         STRING_METHOD_TABLE_PTR.with(|smp| *smp.borrow_mut() = Some(method_table_ptr));
     }
 
@@ -573,7 +535,7 @@ impl<'a> JITCompiler<'a> {
         cur_block_mut!().generated = true;
 
         let bb = self.basic_blocks.get_mut(&cur_block!().start).unwrap();
-        LLVMPositionBuilderAtEnd(self.builder, bb.set_positioned().retrieve());
+        LLVMPositionBuilderAtEnd(self.shared_env.builder, bb.set_positioned().retrieve());
 
         let phi_stack = self.build_phi_stack(cur_block!().start, init_stack);
         let stack = self.compile_bytecode(cur_block!(), phi_stack)?;
@@ -602,9 +564,9 @@ impl<'a> JITCompiler<'a> {
                     .entry(*destination)
                     .or_insert(vec![])
                     .push(PhiStack { src_bb, stack });
-                if cur_bb_has_no_terminator(self.builder) {
+                if cur_bb_has_no_terminator(self.shared_env.builder) {
                     let bb = self.get_basic_block(*destination).retrieve();
-                    LLVMBuildBr(self.builder, bb);
+                    LLVMBuildBr(self.shared_env.builder, bb);
                 }
                 Ok(*destination)
             }
@@ -623,7 +585,7 @@ impl<'a> JITCompiler<'a> {
             // Firstly, build llvm phi which needs a type of all conceivable values.
             let src_bb = phi_stacks[0].src_bb;
             for TypedValue { val, ty } in &phi_stacks[0].stack {
-                let phi = LLVMBuildPhi(self.builder, LLVMTypeOf(*val), cstr0!());
+                let phi = LLVMBuildPhi(self.shared_env.builder, LLVMTypeOf(*val), cstr0!());
                 LLVMAddIncoming(phi, vec![*val].as_mut_ptr(), vec![src_bb].as_mut_ptr(), 1);
                 stack.push(TypedValue::new(ty.clone(), phi));
             }
@@ -651,9 +613,9 @@ impl<'a> JITCompiler<'a> {
             let val1 = stack.pop().unwrap();
             stack.push(match val1.ty.base {
                 ElementType::Char | ElementType::I4 | ElementType::U4 => TypedValue::new(val1.ty,
-                                                  concat_idents!(LLVMBuild, $iop)(self.builder, val1.val, val2.val, cstr0!())),
+                                                  concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val1.val, val2.val, cstr0!())),
                 ElementType::R8 => TypedValue::new(val1.ty,
-                                                  concat_idents!(LLVMBuild, $fop)(self.builder, val1.val, val2.val, cstr0!())),
+                                                  concat_idents!(LLVMBuild, $fop)(self.shared_env.builder, val1.val, val2.val, cstr0!())),
                 _ => unimplemented!()
             })
         }}}
@@ -662,9 +624,9 @@ impl<'a> JITCompiler<'a> {
             let val = stack.pop().unwrap();
             stack.push(match val.ty.base {
                 ElementType::Char | ElementType::I4 | ElementType::U4 => TypedValue::new(val.ty,
-                                                  concat_idents!(LLVMBuild, $iop)(self.builder, val.val, cstr0!())),
+                                                  concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val.val, cstr0!())),
                 ElementType::R8 => TypedValue::new(val.ty,
-                                                  concat_idents!(LLVMBuild, $fop)(self.builder, val.val, cstr0!())),
+                                                  concat_idents!(LLVMBuild, $fop)(self.shared_env.builder, val.val, cstr0!())),
                 _ => unimplemented!()
             })
         }}}
@@ -684,13 +646,13 @@ impl<'a> JITCompiler<'a> {
         macro_rules! ldloc { ($n:expr) => {
             stack.push(TypedValue::new(
                 self.get_local_ty($n),
-                LLVMBuildLoad(self.builder, self.get_local($n, None), cstr0!()),
+                LLVMBuildLoad(self.shared_env.builder, self.get_local($n, None), cstr0!()),
             ))
         }}
         #[rustfmt::skip]
         macro_rules! stloc { ($n:expr) => {{
             let val = self.get_local($n, None);
-            LLVMBuildStore(self.builder,
+            LLVMBuildStore(self.shared_env.builder,
                 self.typecast(stack.pop().unwrap().val,
                     LLVMGetElementType(LLVMTypeOf(val))), val);
         }}; }
@@ -698,13 +660,13 @@ impl<'a> JITCompiler<'a> {
         macro_rules! ldarg { ($n:expr) => {
             stack.push(TypedValue::new(
                 self.get_argument_ty($n),
-                LLVMBuildLoad(self.builder, self.get_argument($n, None), cstr0!()),
+                LLVMBuildLoad(self.shared_env.builder, self.get_argument($n, None), cstr0!()),
             ))
         }}
         #[rustfmt::skip]
         macro_rules! starg { ($n:expr) => {{
             let val = self.get_argument($n, None);
-            LLVMBuildStore(self.builder,
+            LLVMBuildStore(self.shared_env.builder,
                 self.typecast(stack.pop().unwrap().val,
                     LLVMGetElementType(LLVMTypeOf(val))), val);
         }}; }
@@ -718,11 +680,6 @@ impl<'a> JITCompiler<'a> {
                     &mut stack,
                     self.assembly.image.get_user_string(*us_offset).clone(),
                 ),
-                //     Type::string_ty(),
-                //     self.llvm_ptr(Box::into_raw(Box::new(
-                //         self.assembly.image.get_user_string(*us_offset).clone(),
-                //     )) as *mut u8),
-                // )),
                 Instruction::Ldc_I4_M1 => push_i4!(0 - 1),
                 Instruction::Ldc_I4_0 => push_i4!(0),
                 Instruction::Ldc_I4_1 => push_i4!(1),
@@ -790,16 +747,16 @@ impl<'a> JITCompiler<'a> {
                     let ret_ty =
                         LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(self.generating.unwrap())));
                     if LLVMGetTypeKind(ret_ty) == llvm::LLVMTypeKind::LLVMVoidTypeKind {
-                        LLVMBuildRetVoid(self.builder);
+                        LLVMBuildRetVoid(self.shared_env.builder);
                     } else {
                         let val = stack.pop().unwrap().val;
-                        LLVMBuildRet(self.builder, self.typecast(val, ret_ty));
+                        LLVMBuildRet(self.shared_env.builder, self.typecast(val, ret_ty));
                     }
                 }
                 Instruction::Brfalse { .. } | Instruction::Brtrue { .. } => {
                     let val1 = stack.pop().unwrap();
                     let cond_val = LLVMBuildICmp(
-                        self.builder,
+                        self.shared_env.builder,
                         match instr {
                             Instruction::Brfalse { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
                             Instruction::Brtrue { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
@@ -812,7 +769,7 @@ impl<'a> JITCompiler<'a> {
                     let destinations = block.kind.get_conditional_jump_destinations();
                     let bb_then = self.get_basic_block(destinations[0]).retrieve();
                     let bb_else = self.get_basic_block(destinations[1]).retrieve();
-                    LLVMBuildCondBr(self.builder, cond_val, bb_then, bb_else);
+                    LLVMBuildCondBr(self.shared_env.builder, cond_val, bb_then, bb_else);
                 }
                 Instruction::Bge { .. }
                 | Instruction::Bge_un { .. }
@@ -826,7 +783,7 @@ impl<'a> JITCompiler<'a> {
                     let val1 = stack.pop().unwrap();
                     let cond_val = match val1.ty.base {
                         ElementType::Char | ElementType::I4 | ElementType::U4 => LLVMBuildICmp(
-                            self.builder,
+                            self.shared_env.builder,
                             match instr {
                                 Instruction::Bge { .. } => llvm::LLVMIntPredicate::LLVMIntSGE,
                                 Instruction::Bge_un { .. } => llvm::LLVMIntPredicate::LLVMIntUGE,
@@ -843,7 +800,7 @@ impl<'a> JITCompiler<'a> {
                             cstr0!(),
                         ),
                         ElementType::R8 => LLVMBuildFCmp(
-                            self.builder,
+                            self.shared_env.builder,
                             match instr {
                                 Instruction::Bge { .. } => llvm::LLVMRealPredicate::LLVMRealOGE,
                                 Instruction::Bge_un { .. } => llvm::LLVMRealPredicate::LLVMRealOGE,
@@ -864,13 +821,13 @@ impl<'a> JITCompiler<'a> {
                     let destinations = block.kind.get_conditional_jump_destinations();
                     let bb_then = self.get_basic_block(destinations[0]).retrieve();
                     let bb_else = self.get_basic_block(destinations[1]).retrieve();
-                    LLVMBuildCondBr(self.builder, cond_val, bb_then, bb_else);
+                    LLVMBuildCondBr(self.shared_env.builder, cond_val, bb_then, bb_else);
                 }
                 Instruction::Br { .. } => {
                     let destination = block.kind.get_unconditional_jump_destination();
                     let bb_br = self.get_basic_block(destination).retrieve();
-                    if cur_bb_has_no_terminator(self.builder) {
-                        LLVMBuildBr(self.builder, bb_br);
+                    if cur_bb_has_no_terminator(self.shared_env.builder) {
+                        LLVMBuildBr(self.shared_env.builder, bb_br);
                     }
                 }
                 Instruction::Clt | Instruction::Cgt | Instruction::Ceq => {
@@ -878,7 +835,7 @@ impl<'a> JITCompiler<'a> {
                     let val1 = stack.pop().unwrap();
                     let cond_val = self.typecast(
                         LLVMBuildICmp(
-                            self.builder,
+                            self.shared_env.builder,
                             match instr {
                                 Instruction::Cgt { .. } => llvm::LLVMIntPredicate::LLVMIntSGT,
                                 Instruction::Clt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
@@ -889,7 +846,7 @@ impl<'a> JITCompiler<'a> {
                             val2.val,
                             cstr0!(),
                         ),
-                        LLVMInt32TypeInContext(self.context),
+                        LLVMInt32TypeInContext(self.shared_env.context),
                     );
                     stack.push(TypedValue::new(Type::i4_ty(), cond_val));
                 }
@@ -903,25 +860,15 @@ impl<'a> JITCompiler<'a> {
         let class_system_string_ref = mscorlib_system_string();
         let class_system_string = class_system_string_ref.borrow();
         let class_string = self
+            .shared_env
             .class_types
             .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
             .unwrap();
         let new_string = self.typecast(
-            self.call_function(
-                self.builtin_functions
-                    .get_helper_function("memory_alloc")
-                    .unwrap()
-                    .llvm_function,
-                vec![self.get_size_of_llvm_class_type(class_string)],
-            ),
+            self.call_memory_alloc(self.get_size_of_llvm_class_type(class_string)),
             class_string,
         );
-        let method_table = self.ensure_all_class_methods_compiled(
-            self.class_types
-                .get_method_table_ptr(&*class_system_string)
-                .unwrap(),
-            &class_system_string.method_table,
-        );
+        let (_, method_table) = self.ensure_all_class_methods_compiled(&*class_system_string);
         self.store2element(
             new_string,
             vec![self.llvm_int32(0), self.llvm_int32(0)],
@@ -961,12 +908,12 @@ impl<'a> JITCompiler<'a> {
             .collect::<Vec<LLVMTypeRef>>();
 
         if method_sig.has_this() {
-            params_ty.insert(0, self.get_class_type(&method.class.borrow()))
+            params_ty.insert(0, self.get_llvm_class_type(&method.class.borrow()))
         }
 
         let func_ty = LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
         let func = LLVMAddFunction(
-            self.module,
+            self.shared_env.module,
             CString::new(method.name.as_str()).unwrap().as_ptr(),
             func_ty,
         );
@@ -1026,8 +973,8 @@ impl<'a> JITCompiler<'a> {
 
         match self.assembly.image.get_table_entry(token) {
             Table::MemberRef(mrt) => {
-                let token = mrt.class_table_and_entry();
-                let class = &self.assembly.image.get_table_entry(token);
+                let class_token = mrt.class_decoded();
+                let class = &self.assembly.image.get_table_entry(class_token);
                 match class {
                     Table::TypeRef(trt) => {
                         let type_path = self.assembly.image.get_path_from_type_ref_table(trt);
@@ -1037,7 +984,8 @@ impl<'a> JITCompiler<'a> {
                             .image
                             .get_method_ref_type_from_signature(mrt.signature);
                         if let Some(f) = self
-                            .builtin_functions
+                            .shared_env
+                            .methods
                             .get_method(type_path.with_method_name(&name), &ty)
                         {
                             let method_sig = ty.as_fnptr().unwrap();
@@ -1049,7 +997,7 @@ impl<'a> JITCompiler<'a> {
                                     &self
                                         .assembly
                                         .image
-                                        .get_class(token.into(): Token)
+                                        .get_class(class_token.into(): Token)
                                         .unwrap()
                                         .clone(),
                                     method_sig,
@@ -1158,7 +1106,7 @@ impl<'a> JITCompiler<'a> {
             self.load_element(
                 array,
                 vec![LLVMBuildAdd(
-                    self.builder,
+                    self.shared_env.builder,
                     index,
                     self.llvm_int32(4),
                     cstr0!(),
@@ -1186,7 +1134,7 @@ impl<'a> JITCompiler<'a> {
         self.store2element(
             array,
             vec![LLVMBuildAdd(
-                self.builder,
+                self.shared_env.builder,
                 index,
                 self.llvm_int32(4),
                 cstr0!(),
@@ -1198,7 +1146,7 @@ impl<'a> JITCompiler<'a> {
     unsafe fn gen_instr_ldlen(&mut self, stack: &mut Vec<TypedValue>) {
         let array = self.typecast(
             stack.pop().unwrap().val,
-            LLVMPointerType(LLVMInt32TypeInContext(self.context), 0),
+            LLVMPointerType(LLVMInt32TypeInContext(self.shared_env.context), 0),
         );
         let index = self.load_element(array, vec![self.llvm_int32(0)]);
         stack.push(TypedValue::new(Type::i4_ty(), index));
@@ -1208,7 +1156,7 @@ impl<'a> JITCompiler<'a> {
         let value = stack.pop().unwrap().val;
         stack.push(TypedValue::new(
             Type::i4_ty(),
-            self.typecast(value, LLVMInt32TypeInContext(self.context)),
+            self.typecast(value, LLVMInt32TypeInContext(self.shared_env.context)),
         ))
     }
 
@@ -1216,7 +1164,7 @@ impl<'a> JITCompiler<'a> {
         let value = stack.pop().unwrap().val;
         stack.push(TypedValue::new(
             Type::r8_ty(),
-            self.typecast(value, LLVMDoubleTypeInContext(self.context)),
+            self.typecast(value, LLVMDoubleTypeInContext(self.shared_env.context)),
         ))
     }
 
@@ -1225,9 +1173,9 @@ impl<'a> JITCompiler<'a> {
         stack.push(TypedValue::new(
             Type::r8_ty(),
             LLVMBuildUIToFP(
-                self.builder,
+                self.shared_env.builder,
                 value,
-                LLVMDoubleTypeInContext(self.context),
+                LLVMDoubleTypeInContext(self.shared_env.context),
                 cstr0!(),
             ),
         ))
@@ -1247,21 +1195,12 @@ impl<'a> JITCompiler<'a> {
                     .unwrap()
                     .clone();
                 let class = class_ref.borrow();
-                let llvm_class = self.class_types.get(path).unwrap();
+                let llvm_class = self.shared_env.class_types.get(path).unwrap();
                 let new_obj = self.typecast(
-                    self.call_function(
-                        self.builtin_functions
-                            .get_helper_function("memory_alloc")
-                            .unwrap()
-                            .llvm_function,
-                        vec![self.get_size_of_llvm_class_type(llvm_class)],
-                    ),
+                    self.call_memory_alloc(self.get_size_of_llvm_class_type(llvm_class)),
                     llvm_class,
                 );
-                let method_table = self.ensure_all_class_methods_compiled(
-                    self.class_types.get_method_table_ptr(&*class).unwrap(),
-                    &class.method_table,
-                );
+                let (_, method_table) = self.ensure_all_class_methods_compiled(&*class);
                 self.store2element(
                     new_obj,
                     vec![self.llvm_int32(0), self.llvm_int32(0)],
@@ -1294,7 +1233,8 @@ impl<'a> JITCompiler<'a> {
             let new_arr = compiler.typecast(
                 compiler.call_function(
                     compiler
-                        .builtin_functions
+                        .shared_env
+                        .methods
                         .get_helper_function("new_szarray")
                         .unwrap()
                         .llvm_function,
@@ -1325,7 +1265,8 @@ impl<'a> JITCompiler<'a> {
             let new_arr = compiler.typecast(
                 compiler.call_function(
                     compiler
-                        .builtin_functions
+                        .shared_env
+                        .methods
                         .get_helper_function("new_szarray")
                         .unwrap()
                         .llvm_function,
@@ -1351,33 +1292,28 @@ impl<'a> JITCompiler<'a> {
                 let class = self
                     .assembly
                     .image
-                    .get_class(mrt.class_table_and_entry())
+                    .get_class(mrt.class_decoded())
                     .unwrap()
                     .clone();
-                let name = self.assembly.image.get_string(mrt.name);
                 let class_borrowed = class.borrow();
+                let method_name = self.assembly.image.get_string(mrt.name);
                 let type_path = (&*class_borrowed).into(): TypeFullPath;
-                let ty = self
+                let method_ty = self
                     .assembly
                     .image
                     .get_method_ref_type_from_signature(mrt.signature);
                 let (func, method_sig) = if let Some(f) = self
-                    .builtin_functions
-                    .get_method(type_path.clone().with_method_name(name), &ty)
+                    .shared_env
+                    .methods
+                    .get_method(type_path.clone().with_method_name(method_name), &method_ty)
                 {
                     (f.llvm_function, f.ty.as_fnptr().unwrap().clone())
                 } else {
                     panic!();
                 };
-                let llvm_class_ty = self.get_class_type(&*class_borrowed);
+                let llvm_class_ty = self.get_llvm_class_type(&*class_borrowed);
                 let new_obj = self.typecast(
-                    self.call_function(
-                        self.builtin_functions
-                            .get_helper_function("memory_alloc")
-                            .unwrap()
-                            .llvm_function,
-                        vec![self.get_size_of_llvm_class_type(llvm_class_ty)],
-                    ),
+                    self.call_memory_alloc(self.get_size_of_llvm_class_type(llvm_class_ty)),
                     llvm_class_ty,
                 );
                 let mut args = get_arg_vals_from_stack(stack, method_sig.params.len(), false);
@@ -1385,11 +1321,7 @@ impl<'a> JITCompiler<'a> {
 
                 self.call_function(func, args);
 
-                let class_ = class.borrow();
-                let method_table = self.ensure_all_class_methods_compiled(
-                    self.class_types.get_method_table_ptr(&*class_).unwrap(),
-                    &class_.method_table,
-                );
+                let (_, method_table) = self.ensure_all_class_methods_compiled(&*class_borrowed);
 
                 self.store2element(
                     new_obj,
@@ -1404,15 +1336,9 @@ impl<'a> JITCompiler<'a> {
                 let method_info = method_ref.borrow();
                 let method = method_info.as_mdef();
                 let method_sig = method.ty.as_fnptr().unwrap();
-                let llvm_class_ty = self.get_class_type(&method.class.borrow());
+                let llvm_class_ty = self.get_llvm_class_type(&method.class.borrow());
                 let new_obj = self.typecast(
-                    self.call_function(
-                        self.builtin_functions
-                            .get_helper_function("memory_alloc")
-                            .unwrap()
-                            .llvm_function,
-                        vec![self.get_size_of_llvm_class_type(llvm_class_ty)],
-                    ),
+                    self.call_memory_alloc(self.get_size_of_llvm_class_type(llvm_class_ty)),
                     llvm_class_ty,
                 );
                 let mut args = get_arg_vals_from_stack(stack, method_sig.params.len(), false);
@@ -1422,10 +1348,7 @@ impl<'a> JITCompiler<'a> {
                 self.call_function(func, args);
 
                 let class = method.class.borrow();
-                let method_table = self.ensure_all_class_methods_compiled(
-                    self.class_types.get_method_table_ptr(&*class).unwrap(),
-                    &class.method_table,
-                );
+                let (_, method_table) = self.ensure_all_class_methods_compiled(&*class);
 
                 self.store2element(
                     new_obj,
@@ -1453,11 +1376,22 @@ impl<'a> JITCompiler<'a> {
             .map(|(i, arg)| self.typecast(*arg, params_ty[i]))
             .collect();
         LLVMBuildCall(
-            self.builder,
+            self.shared_env.builder,
             callee,
             conv_args.as_mut_ptr(),
             conv_args.len() as u32,
             cstr0!(),
+        )
+    }
+
+    unsafe fn call_memory_alloc(&self, len: LLVMValueRef) -> LLVMValueRef {
+        self.call_function(
+            self.shared_env
+                .methods
+                .get_helper_function("memory_alloc")
+                .unwrap()
+                .llvm_function,
+            vec![len],
         )
     }
 
@@ -1469,21 +1403,21 @@ impl<'a> JITCompiler<'a> {
     }
 
     // TODO: &ClassInfo -> Into<TypeFullPath>
-    unsafe fn get_class_type(&mut self, class: &ClassInfo) -> LLVMTypeRef {
+    unsafe fn get_llvm_class_type(&mut self, class: &ClassInfo) -> LLVMTypeRef {
         // Return already created one
-        if let Some(ty) = self.class_types.get(class) {
+        if let Some(ty) = self.shared_env.class_types.get(class) {
             return ty;
         }
 
         // Create new class
 
         let class_ty = LLVMStructCreateNamed(
-            self.context,
+            self.shared_env.context,
             CString::new(class.name.as_str()).unwrap().as_ptr(),
         );
         let class_ptr_ty = LLVMPointerType(class_ty, 0);
 
-        self.class_types.add(class, class_ptr_ty);
+        self.shared_env.class_types.add(class, class_ptr_ty);
 
         let mut fields_ty = class
             .fields
@@ -1494,7 +1428,10 @@ impl<'a> JITCompiler<'a> {
         // method_table always occupies the first field
         fields_ty.insert(
             0,
-            LLVMPointerType(LLVMPointerType(LLVMInt8TypeInContext(self.context), 0), 0),
+            LLVMPointerType(
+                LLVMPointerType(LLVMInt8TypeInContext(self.shared_env.context), 0),
+                0,
+            ),
         );
 
         LLVMStructSetBody(class_ty, fields_ty.as_mut_ptr(), fields_ty.len() as u32, 0);
@@ -1509,7 +1446,7 @@ impl<'a> JITCompiler<'a> {
                 vec![self.llvm_int32(1)].as_mut_ptr(),
                 1,
             ),
-            LLVMInt32TypeInContext(self.context),
+            LLVMInt32TypeInContext(self.shared_env.context),
         )
     }
 
@@ -1526,53 +1463,59 @@ impl<'a> JITCompiler<'a> {
                     let val_bw = LLVMGetIntTypeWidth(v_ty);
                     let to_bw = LLVMGetIntTypeWidth(to);
                     if val_bw < to_bw {
-                        return LLVMBuildZExtOrBitCast(self.builder, val, to, cstr0!());
+                        return LLVMBuildZExtOrBitCast(self.shared_env.builder, val, to, cstr0!());
                     }
                 }
                 llvm::LLVMTypeKind::LLVMDoubleTypeKind => {
-                    return LLVMBuildSIToFP(self.builder, val, to, cstr0!());
+                    return LLVMBuildSIToFP(self.shared_env.builder, val, to, cstr0!());
                 }
                 _ => {}
             },
             llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
-                return LLVMBuildFPToSI(self.builder, val, to, cstr0!());
+                return LLVMBuildFPToSI(self.shared_env.builder, val, to, cstr0!());
             }
             llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
             llvm::LLVMTypeKind::LLVMPointerTypeKind => match LLVMGetTypeKind(to) {
                 llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
-                    return LLVMBuildPtrToInt(self.builder, val, to, cstr0!());
+                    return LLVMBuildPtrToInt(self.shared_env.builder, val, to, cstr0!());
                 }
                 _ => {}
             },
             _ => {}
         }
 
-        LLVMBuildTruncOrBitCast(self.builder, val, to, cstr0!())
+        LLVMBuildTruncOrBitCast(self.shared_env.builder, val, to, cstr0!())
     }
 
     unsafe fn ensure_all_class_methods_compiled(
         &mut self,
-        method_table_ptr: MethodTablePtrTy,
-        method_table: &Vec<MethodInfoRef>,
-    ) -> LLVMValueRef {
-        if let Some((llvm_method_table, _)) = self.method_table_map.get(&method_table_ptr) {
-            return *llvm_method_table;
+        class: &ClassInfo,
+        // method_table_ptr: MethodTablePtrTy, method_table: &Vec<MethodInfoRef>,
+    ) -> (MethodTablePtrTy, LLVMValueRef) {
+        let method_table_ptr = self
+            .shared_env
+            .class_types
+            .get_method_table_ptr(class)
+            .unwrap();
+
+        if let Some((llvm_method_table, _)) =
+            self.shared_env.method_table_map.get(&method_table_ptr)
+        {
+            return (method_table_ptr, *llvm_method_table);
         }
 
+        // let method_table = class.method_table;
         let llvm_method_table = self.llvm_ptr(method_table_ptr as *mut u8);
-        let mut vmethods = vec![];
+        let mut methods = vec![];
 
-        println!("name: {}", self.assembly.name);
-        for vmethod in method_table {
-            match &*vmethod.borrow() {
-                MethodInfo::MDef(m) => {
-                    println!("   {:?} {}", m.class.borrow().methods, m.name);
-                    vmethods.push(self.get_function_by_rva(m.rva))
-                }
+        for m in &class.method_table {
+            match &*m.borrow() {
+                MethodInfo::MDef(m) => methods.push(self.get_function_by_rva(m.rva)),
                 MethodInfo::MRef(m) => {
                     let class = m.class.borrow();
-                    vmethods.push(
-                        self.builtin_functions
+                    methods.push(
+                        self.shared_env
+                            .methods
                             .get_method(
                                 ((&*class).into(): TypeFullPath).with_method_name(m.name.as_str()),
                                 &m.ty,
@@ -1584,21 +1527,22 @@ impl<'a> JITCompiler<'a> {
             }
         }
 
-        self.method_table_map
-            .insert(method_table_ptr, (llvm_method_table, vmethods));
+        self.shared_env
+            .method_table_map
+            .insert(method_table_ptr, (llvm_method_table, methods));
 
-        llvm_method_table
+        (method_table_ptr, llvm_method_table)
     }
 
     unsafe fn load_element(&self, obj: LLVMValueRef, mut idx: Vec<LLVMValueRef>) -> LLVMValueRef {
         let gep = LLVMBuildGEP(
-            self.builder,
+            self.shared_env.builder,
             obj,
             idx.as_mut_ptr(),
             idx.len() as u32,
             cstr0!(),
         );
-        LLVMBuildLoad(self.builder, gep, cstr0!())
+        LLVMBuildLoad(self.shared_env.builder, gep, cstr0!())
     }
 
     unsafe fn store2element(
@@ -1608,29 +1552,29 @@ impl<'a> JITCompiler<'a> {
         val: LLVMValueRef,
     ) {
         let gep = LLVMBuildGEP(
-            self.builder,
+            self.shared_env.builder,
             obj,
             idx.as_mut_ptr(),
             idx.len() as u32,
             cstr0!(),
         );
         LLVMBuildStore(
-            self.builder,
+            self.shared_env.builder,
             self.typecast(val, LLVMGetElementType(LLVMTypeOf(gep))),
             gep,
         );
     }
 
     unsafe fn llvm_int32(&self, n: u64) -> LLVMValueRef {
-        llvm_const_int32(self.context, n)
+        llvm_const_int32(self.shared_env.context, n)
     }
 
     unsafe fn llvm_real(&self, f: f64) -> LLVMValueRef {
-        llvm_const_real(self.context, f)
+        llvm_const_real(self.shared_env.context, f)
     }
 
     unsafe fn llvm_ptr(&self, ptr: *mut u8) -> LLVMValueRef {
-        llvm_const_ptr(self.context, ptr)
+        llvm_const_ptr(self.shared_env.context, ptr)
     }
 }
 
@@ -1644,7 +1588,7 @@ pub trait CastIntoLLVMType {
 
 impl CastIntoLLVMType for Type {
     unsafe fn to_llvmty<'a>(&self, compiler: &mut JITCompiler<'a>) -> LLVMTypeRef {
-        let ctx = compiler.context;
+        let ctx = compiler.shared_env.context;
         match self.base {
             ElementType::Void => LLVMVoidTypeInContext(ctx),
             ElementType::Boolean => LLVMInt8TypeInContext(ctx),
@@ -1653,6 +1597,7 @@ impl CastIntoLLVMType for Type {
             ElementType::U4 => LLVMInt32TypeInContext(ctx),
             ElementType::R8 => LLVMDoubleTypeInContext(ctx),
             ElementType::String => compiler
+                .shared_env
                 .class_types
                 .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
                 .unwrap(),
@@ -1661,7 +1606,7 @@ impl CastIntoLLVMType for Type {
             }
             ElementType::Class(ref class) => {
                 let class = &class.borrow();
-                compiler.get_class_type(class)
+                compiler.get_llvm_class_type(class)
             }
             ElementType::Object => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
             ElementType::FnPtr(_) => unimplemented!(),
@@ -1692,11 +1637,40 @@ impl BasicBlockInfo {
     }
 }
 
-impl Environment {
+impl CodeEnvironment {
     pub fn new() -> Self {
-        Environment {
+        CodeEnvironment {
             arguments: FxHashMap::default(),
             locals: FxHashMap::default(),
+        }
+    }
+}
+
+impl SharedEnvironment {
+    pub fn new() -> Self {
+        unsafe {
+            let context = LLVMContextCreate();
+            let module =
+                LLVMModuleCreateWithNameInContext(CString::new("yacht").unwrap().as_ptr(), context);
+            let builder = LLVMCreateBuilderInContext(context);
+            let pass_mgr = LLVMCreatePassManager();
+
+            llvm::transforms::scalar::LLVMAddReassociatePass(pass_mgr);
+            llvm::transforms::scalar::LLVMAddGVNPass(pass_mgr);
+            llvm::transforms::scalar::LLVMAddInstructionCombiningPass(pass_mgr);
+            llvm::transforms::scalar::LLVMAddPromoteMemoryToRegisterPass(pass_mgr);
+            llvm::transforms::scalar::LLVMAddTailCallEliminationPass(pass_mgr);
+            llvm::transforms::scalar::LLVMAddJumpThreadingPass(pass_mgr);
+
+            SharedEnvironment {
+                context,
+                module,
+                builder,
+                pass_mgr,
+                methods: BuiltinFunctions::new(context, module),
+                class_types: ClassTypesHolder::new(context),
+                method_table_map: FxHashMap::default(),
+            }
         }
     }
 }
