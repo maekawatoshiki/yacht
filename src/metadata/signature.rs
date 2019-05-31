@@ -177,6 +177,12 @@ impl Type {
             .class_cache
             .get(&decode_typedef_or_ref_token(token).into())
             .unwrap();
+        // let token = decompress_uint(sig).unwrap();
+        // let class_ref = image
+        //     .class_cache
+        //     .entry(decode_typedef_or_ref_token(token).into())
+        //     .or_insert_with(|| ClassInfo::new_ref_empty())
+        //     .clone();
         Some(Type::new(ElementType::Class(class_ref.clone())))
     }
 }

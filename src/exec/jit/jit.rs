@@ -137,6 +137,7 @@ impl<'a> JITCompiler<'a> {
         module: LLVMModuleRef,
         class_types: ClassTypesHolder,
         builtin_functions: BuiltinFunctions,
+        method_table_map: FxHashMap<MethodTablePtrTy, (LLVMValueRef, Vec<LLVMValueRef>)>,
         assembly: &'a mut Assembly,
     ) -> Self {
         let builder = LLVMCreateBuilderInContext(context);
@@ -163,7 +164,7 @@ impl<'a> JITCompiler<'a> {
             compile_queue: VecDeque::new(),
             class_types,
             builtin_functions,
-            method_table_map: FxHashMap::default(),
+            method_table_map,
         }
     }
 
@@ -197,8 +198,14 @@ impl<'a> JITCompiler<'a> {
             .map(|(_, class)| class.clone())
             .collect::<Vec<ClassInfoRef>>();
 
+        println!("++>>> {}", self.assembly.name);
+
         for class in classes {
             let class = class.borrow();
+            match class.resolution_scope {
+                ResolutionScope::AssemblyRef { ref name } if name == &self.assembly.name => {}
+                _ => continue,
+            }
             self.get_class_type(&class);
             self.ensure_all_class_methods_compiled(
                 self.class_types.get_method_table_ptr(&*class).unwrap(),
@@ -220,29 +227,55 @@ impl<'a> JITCompiler<'a> {
                 }],
             )
         }
+    }
 
-        println!("{:?}", self.builtin_functions.map);
-
+    pub unsafe fn generate_queued(&mut self) {
         while let Some((func, method)) = self.compile_queue.pop_front() {
             self.generate_func(func, &method);
         }
     }
 
     pub unsafe fn generate_main(&mut self, method_ref: &MethodInfoRef) -> LLVMValueRef {
-        for (_name, asmref) in self.assembly.image.asm_refs.iter_mut() {
+        let mut asms = FxHashMap::default();
+        self.assembly
+            .image
+            .collect_all_reachable_assemblies(&mut asms);
+        let mut q = vec![];
+        for (_name, asmref) in &asms {
+            let mut asmref = asmref.borrow_mut();
             let mut compiler = JITCompiler::new_with(
                 self.context,
                 self.module,
                 self.class_types.clone(),
                 self.builtin_functions.clone(),
-                asmref,
+                self.method_table_map.clone(),
+                &mut *asmref,
             );
             compiler.generate_all_classes_and_methods();
             self.builtin_functions = compiler.builtin_functions;
             self.class_types = compiler.class_types;
             self.method_table_map = compiler.method_table_map;
-            assert!(self.compile_queue.is_empty());
+            q.push((compiler.compile_queue.clone(), self.generated.clone()));
         }
+        for ((que, generated), (_name, asmref)) in q.into_iter().zip(asms.iter()) {
+            let mut asmref = asmref.borrow_mut();
+            let mut compiler = JITCompiler::new_with(
+                self.context,
+                self.module,
+                self.class_types.clone(),
+                self.builtin_functions.clone(),
+                self.method_table_map.clone(),
+                &mut *asmref,
+            );
+            compiler.compile_queue = que;
+            compiler.generated = generated;
+            compiler.generate_queued();
+            self.builtin_functions = compiler.builtin_functions;
+            self.class_types = compiler.class_types;
+            self.method_table_map = compiler.method_table_map;
+        }
+
+        println!("----------");
 
         self.basic_blocks.clear();
         self.phi_stack.clear();
@@ -1529,10 +1562,13 @@ impl<'a> JITCompiler<'a> {
         let llvm_method_table = self.llvm_ptr(method_table_ptr as *mut u8);
         let mut vmethods = vec![];
 
-        println!("name: {} - {:?}", self.assembly.name, method_table);
+        println!("name: {}", self.assembly.name);
         for vmethod in method_table {
             match &*vmethod.borrow() {
-                MethodInfo::MDef(m) => vmethods.push(self.get_function_by_rva(m.rva)),
+                MethodInfo::MDef(m) => {
+                    println!("   {:?} {}", m.class.borrow().methods, m.name);
+                    vmethods.push(self.get_function_by_rva(m.rva))
+                }
                 MethodInfo::MRef(m) => {
                     let class = m.class.borrow();
                     vmethods.push(

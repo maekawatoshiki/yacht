@@ -64,6 +64,18 @@ impl ClassInfo {
             method_table: vec![],
         }))
     }
+
+    pub fn new_ref_empty() -> ClassInfoRef {
+        Rc::new(RefCell::new(Self {
+            resolution_scope: ResolutionScope::None,
+            name: "".to_string(),
+            namespace: "".to_string(),
+            fields: vec![],
+            methods: vec![],
+            parent: None,
+            method_table: vec![],
+        }))
+    }
 }
 
 impl ResolutionScope {

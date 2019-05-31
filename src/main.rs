@@ -28,14 +28,15 @@ fn main() {
         None => { eprintln!("{}: {}", Colour::Red.bold().paint("error"), $msg); return }
     } }}; }
 
-    let mut asm = expect!(
+    let asm = expect!(
         assembly::Assembly::load(filename),
         "Error occurred while loading file"
     );
-    let method = asm.image.get_entry_method();
+    let method = asm.borrow_mut().image.get_entry_method();
 
     unsafe {
-        let mut jit = jit::jit::JITCompiler::new(&mut asm);
+        let mut asm = asm.borrow_mut();
+        let mut jit = jit::jit::JITCompiler::new(&mut *asm);
         let main = jit.generate_main(&method);
         jit.run_main(main);
     }
@@ -56,8 +57,9 @@ mod tests {
                 continue;
             }
             let mut asm = assembly::Assembly::load(filename).unwrap();
-            let method = asm.image.get_entry_method();
+            let method = asm.borrow_mut().image.get_entry_method();
             unsafe {
+                let mut asm = asm.borrow_mut();
                 let mut jit = jit::jit::JITCompiler::new(&mut asm);
                 let main = jit.generate_main(&method);
                 jit.run_main(main);
