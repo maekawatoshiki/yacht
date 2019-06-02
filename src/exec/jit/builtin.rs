@@ -72,16 +72,18 @@ impl BuiltinFunctions {
                     (char) => { LLVMInt32TypeInContext(ctx) };
                     (str ) => { LLVMPointerType(LLVMInt8TypeInContext(ctx), 0) };
                     (obj ) => { LLVMPointerType(LLVMInt8TypeInContext(ctx), 0) };
+                    (obja) => { LLVMPointerType(LLVMInt8TypeInContext(ctx), 0) };
                     (ptr ) => { LLVMPointerType(LLVMInt8TypeInContext(ctx), 0) };
                 }
 
                 macro_rules! parse_ty {
-                    (void) => { Type::void_ty() };
-                    (i4  ) => { Type::i4_ty() };
-                    (r8  ) => { Type::r8_ty() };
-                    (char) => { Type::char_ty() };
-                    (obj ) => { Type::object_ty() };
-                    (str ) => { Type::string_ty() };
+                    (void)  => { Type::void_ty() };
+                    (i4  )  => { Type::i4_ty() };
+                    (r8  )  => { Type::r8_ty() };
+                    (char)  => { Type::char_ty() };
+                    (obj )  => { Type::object_ty() };
+                    (obja)  => { Type::object_szarr_ty() };
+                    (str )  => { Type::string_ty() };
                 }
 
                 macro_rules! def_func {
@@ -138,6 +140,7 @@ impl BuiltinFunctions {
                     def_func!([0x20], char, [i4],       get_chars_i4,          "[mscorlib]System::String.get_Chars(int32)")
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
                 let concat = vec![
+                    def_func!(        str,  [obja],     concat_obj_arr,        "[mscorlib]System::String.Concat(Object[])"),
                     def_func!(        str,  [obj, obj], concat_obj_obj,        "[mscorlib]System::String.Concat(Object, Object)"),
                     def_func!(        str,  [str, str], concat_str_str,        "[mscorlib]System::String.Concat(String, String)"),
                     def_func!(        str,  [obj, obj, obj], concat_obj_obj_obj, "[mscorlib]System::String.Concat(Object, Object, Object)")
@@ -275,6 +278,19 @@ unsafe fn concat_str_str(s1: *mut u64, s2: *mut u64) -> *mut u64 {
     let s2 = String::from_utf16_lossy(&*retrieve_utf16_string_from_system_string(s2));
     s1.push_str(s2.as_str());
     new_system_string(s1)
+}
+
+#[no_mangle]
+unsafe fn concat_obj_arr(objs: *mut u64) -> *mut u64 {
+    let len = *objs;
+    let objs = objs.add(1) as *mut u64;
+    let mut res = "".to_string();
+    for i in 0..len {
+        let system_object = *objs.add(i as usize) as *mut u64;
+        let s = convert_object_to_string(system_object);
+        res.push_str(s.as_str());
+    }
+    new_system_string(res)
 }
 
 #[no_mangle]
@@ -417,7 +433,7 @@ pub fn memory_alloc(len: u32) -> *mut u8 {
 
 #[no_mangle]
 pub fn new_szarray(elem_sz: u32, len: u32) -> *mut u8 {
-    let ptr = unsafe { GC_malloc(elem_sz * len + 4) };
-    unsafe { *(ptr as *mut u32).add(0) = len };
+    let ptr = unsafe { GC_malloc(elem_sz * len + 8) };
+    unsafe { *(ptr as *mut u64) = len as u64 };
     ptr
 }

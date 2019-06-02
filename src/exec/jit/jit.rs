@@ -1107,8 +1107,8 @@ impl<'a> JITCompiler<'a> {
                 array,
                 vec![LLVMBuildAdd(
                     self.shared_env.builder,
+                    self.llvm_int32(1),
                     index,
-                    self.llvm_int32(4),
                     cstr0!(),
                 )],
             ),
@@ -1135,8 +1135,8 @@ impl<'a> JITCompiler<'a> {
             array,
             vec![LLVMBuildAdd(
                 self.shared_env.builder,
+                self.llvm_int32(1),
                 index,
-                self.llvm_int32(4),
                 cstr0!(),
             )],
             value,
@@ -1227,6 +1227,7 @@ impl<'a> JITCompiler<'a> {
             let (szarr_ty, sz) = match ty {
                 "Int32" => (Type::i4_szarr_ty(), 4),
                 "Boolean" => (Type::boolean_szarr_ty(), 1),
+                "Object" => (Type::object_szarr_ty(), 8),
                 _ => unimplemented!(),
             };
             let llvm_szarr_ty = szarr_ty.to_llvmty(compiler);
@@ -1468,6 +1469,9 @@ impl<'a> JITCompiler<'a> {
                 }
                 llvm::LLVMTypeKind::LLVMDoubleTypeKind => {
                     return LLVMBuildSIToFP(self.shared_env.builder, val, to, cstr0!());
+                }
+                llvm::LLVMTypeKind::LLVMPointerTypeKind => {
+                    return LLVMBuildIntToPtr(self.shared_env.builder, val, to, cstr0!());
                 }
                 _ => {}
             },

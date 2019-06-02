@@ -105,6 +105,12 @@ impl Type {
         })))
     }
 
+    pub fn object_szarr_ty() -> Self {
+        Self::new(ElementType::SzArray(Box::new(SzArrayInfo {
+            elem_ty: Type::object_ty(),
+        })))
+    }
+
     pub fn szarr_ty(elem_ty: Type) -> Self {
         Self::new(ElementType::SzArray(Box::new(SzArrayInfo { elem_ty })))
     }

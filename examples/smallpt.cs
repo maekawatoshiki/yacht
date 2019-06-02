@@ -141,6 +141,7 @@ internal static class Program {
       var x = i % w;
       var y = h - i / w - 1;
       var color = new Vec(0,0,0);
+      Console.Write("\rRendering " + ((int)100.0*i/(w*h-1)) + "%");
       for (int sy = 0; sy < 2; sy++) { // 2x2 subpixel rows
         for (int sx = 0; sx < 2; sx++) { // 2x2 subpixel cols
           Vec r = new Vec(0,0,0);
@@ -157,9 +158,7 @@ internal static class Program {
       c[i] = color;
     }
     
-    Console.WriteLine("P3");
-    Console.Write(w); Console.Write(' ');
-    Console.Write(h); Console.WriteLine(" 255");
+    Console.WriteLine("\nP3" + w + " " + h + " 255");
     for (int i = 0; i < w * h; i++) {
       Console.Write(toInt(c[i].x)); Console.Write(' ');
       Console.Write(toInt(c[i].y)); Console.Write(' ');
