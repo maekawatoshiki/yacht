@@ -97,7 +97,7 @@ public class Calc {
     var parser = new Parser("1+2*3+4");
     var node = parser.Parse();
 
-    Console.Write("RPN:");
+    Console.Write("S expr:");
     node.Dump();
     
     Console.Write("\nEval: ");

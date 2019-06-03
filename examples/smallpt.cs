@@ -158,7 +158,7 @@ internal static class Program {
       c[i] = color;
     }
     
-    Console.WriteLine("\nP3" + w + " " + h + " 255");
+    Console.WriteLine("\nP3 " + w + " " + h + " 255");
     for (int i = 0; i < w * h; i++) {
       Console.Write(toInt(c[i].x)); Console.Write(' ');
       Console.Write(toInt(c[i].y)); Console.Write(' ');
