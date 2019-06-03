@@ -15,13 +15,17 @@ impl Assembly {
         let mut pe_parser = PEParser::new(filename)?;
         let asmref = Rc::new(RefCell::new(pe_parser.create_assembly()?));
         let mut loaded = FxHashMap::default();
+
         loaded.insert(asmref.borrow().name.clone(), asmref.clone());
 
-        asmref.borrow_mut().image.pe_parser = Some(Rc::new(RefCell::new(pe_parser)));
-        asmref.borrow_mut().image.setup_all_asmref(&mut loaded);
-        asmref.borrow_mut().image.define_all_class();
-        asmref.borrow_mut().image.setup_all_typeref();
-        asmref.borrow_mut().image.setup_all_class();
+        {
+            let mut asm = asmref.borrow_mut();
+            asm.image.pe_parser = Some(Rc::new(RefCell::new(pe_parser)));
+            asm.image.setup_all_asmref(&mut loaded);
+            asm.image.define_all_class();
+            asm.image.setup_all_typeref();
+            asm.image.setup_all_class();
+        }
 
         for (_, asm) in &loaded {
             let mut ok = asm.borrow_mut();
@@ -38,11 +42,15 @@ impl Assembly {
     ) -> Option<AssemblyRef> {
         let mut pe_parser = PEParser::new(filename)?;
         let asmref = Rc::new(RefCell::new(pe_parser.create_assembly()?));
+
         loaded.insert(asmref.borrow().name.clone(), asmref.clone());
 
-        asmref.borrow_mut().image.pe_parser = Some(Rc::new(RefCell::new(pe_parser)));
-        asmref.borrow_mut().image.setup_all_asmref(loaded);
-        asmref.borrow_mut().image.define_all_class();
+        {
+            let mut asm = asmref.borrow_mut();
+            asm.image.pe_parser = Some(Rc::new(RefCell::new(pe_parser)));
+            asm.image.setup_all_asmref(loaded);
+            asm.image.define_all_class();
+        }
 
         Some(asmref)
     }

@@ -2,7 +2,7 @@ use crate::{
     metadata::{
         assembly::*, class::*, metadata::*, method::*, pe_parser::*, signature::*, token::*,
     },
-    util::{holder::*, name_path::*},
+    util::{name_path::*, resolver::*},
 };
 use rustc_hash::FxHashMap;
 use std::ops::Range;
@@ -74,8 +74,7 @@ impl Image {
     }
 
     pub fn setup_all_asmref(&mut self, loaded: &mut FxHashMap<String, AssemblyRef>) {
-        let asmrefs = &self.metadata.metadata_stream.tables[TableKind::AssemblyRef.into_num()];
-        for asmref_ in asmrefs {
+        for asmref_ in self.metadata.get_table(TableKind::AssemblyRef) {
             let asmref = retrieve!(asmref_, Table::AssemblyRef);
             let name = self.get_string(asmref.name);
 
@@ -101,7 +100,6 @@ impl Image {
             )
             .unwrap();
 
-            // Register loaded one
             loaded.insert(name.clone(), asm.clone());
 
             self.asm_refs.insert(name.clone(), asm);
@@ -109,7 +107,9 @@ impl Image {
     }
 
     pub fn setup_all_typeref(&mut self) {
-        for (i, typeref) in self.metadata.metadata_stream.tables[TableKind::TypeRef.into_num()]
+        for (i, typeref) in self
+            .metadata
+            .get_table(TableKind::TypeRef)
             .iter()
             .enumerate()
         {
@@ -118,15 +118,15 @@ impl Image {
             let namespace = self.get_string(tref.type_namespace).as_str();
             let name = self.get_string(tref.type_name).as_str();
             let asm = retrieve!(
-                self.get_table_entry(tref.resolution_scope_table_and_entry()),
+                self.metadata
+                    .get_table_entry(tref.resolution_scope_decoded()),
                 Table::AssemblyRef
             );
             let asm_name = self.get_string(asm.name);
 
             // TODO: Treat as special
             if asm_name == "mscorlib" {
-                if let Some(class) =
-                    get_mscorlib().get(TypeFullPath(vec!["mscorlib", namespace, name]))
+                if let Some(class) = get_mscorlib().get(TypePath(vec!["mscorlib", namespace, name]))
                 {
                     self.class_cache.insert(token, class.clone());
                 }
@@ -139,7 +139,7 @@ impl Image {
                 .unwrap()
                 .borrow()
                 .image
-                .find_class(TypeFullPath(vec![asm_name.as_str(), namespace, name]))
+                .find_class(TypePath(vec![asm_name.as_str(), namespace, name]))
                 .unwrap();
             self.class_cache.insert(token, class.clone());
         }
@@ -148,25 +148,24 @@ impl Image {
     pub fn setup_all_class(&mut self) {
         // Set class fields
         for (class, range) in &self.setup_info.fields {
-            let fields: Vec<ClassField> = self.metadata.metadata_stream.tables
-                [TableKind::Field.into_num()][range.clone()]
-            .iter()
-            .map(|t| {
-                let ft = retrieve!(t, Table::Field);
-                let name = self.get_string(ft.name).clone();
-                let mut sig = self.get_blob(ft.signature).iter();
-                assert_eq!(sig.next().unwrap(), &0x06);
-                let ty = Type::into_type(self, &mut sig).unwrap();
-                ClassField { name, ty }
-            })
-            .collect();
+            let fields: Vec<ClassField> = self.metadata.get_table(TableKind::Field)[range.clone()]
+                .iter()
+                .map(|t| {
+                    let ft = retrieve!(t, Table::Field);
+                    let name = self.get_string(ft.name).clone();
+                    let mut sig = self.get_blob(ft.signature).iter();
+                    assert_eq!(sig.next().unwrap(), &0x06);
+                    let ty = Type::into_type(self, &mut sig).unwrap();
+                    ClassField { name, ty }
+                })
+                .collect();
             class.borrow_mut().fields = fields;
         }
 
         // Set parent class
         for (class, extends) in &self.setup_info.extends {
             let token = decode_typedef_or_ref_token(*extends as u32);
-            let typedef_or_ref = self.get_table_entry(token);
+            let typedef_or_ref = self.metadata.get_table_entry(token);
             match typedef_or_ref {
                 Table::TypeDef(_) => {
                     class.borrow_mut().parent =
@@ -184,9 +183,7 @@ impl Image {
         for (class, range) in &self.setup_info.methods {
             let mut methods = vec![];
 
-            for mdef in &self.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()]
-                [range.clone()]
-            {
+            for mdef in &self.metadata.get_table(TableKind::MethodDef)[range.clone()] {
                 let mdef = retrieve!(mdef, Table::MethodDef);
                 let method = pe_parser
                     .read_method(self, class.clone(), mdef.rva)
@@ -202,9 +199,9 @@ impl Image {
     }
 
     pub fn define_all_class(&mut self) {
-        let typedefs = &self.metadata.metadata_stream.tables[TableKind::TypeDef.into_num()];
-        let fields = &self.metadata.metadata_stream.tables[TableKind::Field.into_num()];
-        let methoddefs = &self.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()];
+        let typedefs = self.metadata.get_table(TableKind::TypeDef);
+        let fields = self.metadata.get_table(TableKind::Field);
+        let methoddefs = self.metadata.get_table(TableKind::MethodDef);
 
         for (i, typedef) in typedefs.iter().enumerate() {
             let typedef = retrieve!(typedef, Table::TypeDef);
@@ -247,7 +244,7 @@ impl Image {
 
     fn get_assembly_name(&self) -> Option<&String> {
         let asm = retrieve!(
-            self.metadata.metadata_stream.tables[TableKind::Assembly.into_num()].get(0)?,
+            self.metadata.get_table(TableKind::Assembly).get(0)?,
             Table::Assembly
         );
         Some(self.get_string(asm.name))
@@ -290,11 +287,6 @@ impl Image {
         class.method_table = method_table;
     }
 
-    pub fn get_table_entry<T: Into<Token>>(&self, token: T) -> Table {
-        let DecodedToken(table, entry) = decode_token(token.into());
-        self.metadata.metadata_stream.tables[table as usize][entry as usize - 1]
-    }
-
     pub fn get_class<T: Into<Token>>(&self, token: T) -> Option<&ClassInfoRef> {
         self.class_cache.get(&token.into())
     }
@@ -308,7 +300,9 @@ impl Image {
     }
 
     pub fn get_entry_method(&mut self) -> MethodInfoRef {
-        let method_or_file = self.get_table_entry(self.cli_info.cli_header.entry_point_token);
+        let method_or_file = self
+            .metadata
+            .get_table_entry(self.cli_info.cli_header.entry_point_token);
         let mdef = match method_or_file {
             Table::MethodDef(t) => t,
             // TOOD: File
@@ -322,7 +316,7 @@ impl Image {
     }
 
     pub fn get_method_def_table_by_rva(&self, rva: u32) -> Option<&MethodDefTable> {
-        for method_def in &self.metadata.metadata_stream.tables[TableKind::MethodDef.into_num()] {
+        for method_def in self.metadata.get_table(TableKind::MethodDef) {
             match method_def {
                 Table::MethodDef(mdt) if mdt.rva == rva => return Some(mdt),
                 Table::MethodDef(_) => continue,
@@ -339,13 +333,14 @@ impl Image {
     pub fn get_path_from_type_ref_table<'a>(
         &'a self,
         type_ref_table: &TypeRefTable,
-    ) -> TypeFullPath<'a> {
-        let token = type_ref_table.resolution_scope_table_and_entry();
-        let assembly_ref_table = retrieve!(self.get_table_entry(token), Table::AssemblyRef);
+    ) -> TypePath<'a> {
+        let token = type_ref_table.resolution_scope_decoded();
+        let assembly_ref_table =
+            retrieve!(self.metadata.get_table_entry(token), Table::AssemblyRef);
         let asm_ref_name = self.get_string(assembly_ref_table.name).as_str();
         let ty_namespace = self.get_string(type_ref_table.type_namespace).as_str();
         let ty_name = self.get_string(type_ref_table.type_name).as_str();
-        TypeFullPath(vec![asm_ref_name, ty_namespace, ty_name])
+        TypePath(vec![asm_ref_name, ty_namespace, ty_name])
     }
 
     pub fn get_method_ref_type_from_signature(&self, signature: u16) -> Type {
@@ -355,10 +350,10 @@ impl Image {
             .unwrap()
     }
 
-    pub fn find_class<'a, P: Into<TypeFullPath<'a>>>(&self, path_: P) -> Option<ClassInfoRef> {
+    pub fn find_class<'a, P: Into<TypePath<'a>>>(&self, path_: P) -> Option<ClassInfoRef> {
         let path = path_.into();
         for (_, info) in &self.class_cache {
-            if (&*info.borrow()).into(): TypeFullPath == path {
+            if (&*info.borrow()).into(): TypePath == path {
                 return Some(info.clone());
             }
         }
@@ -377,7 +372,7 @@ impl SetupInfo {
 }
 
 thread_local! {
-    pub static MSCORLIB: Rc<Holder<ClassInfoRef>> = {
+    pub static MSCORLIB: Rc<NameResolver<ClassInfoRef>> = {
         #[rustfmt::skip]
         macro_rules! parse_ty {
             (void) => { Type::void_ty() };
@@ -430,39 +425,39 @@ thread_local! {
             class_system_string.method_table = class_system_string.methods.clone();
         }
 
-        let mut holder = Holder::new();
+        let mut resolver = NameResolver::new();
 
-        holder.add(
-            TypeFullPath(vec!["mscorlib", "System", "Object"]),
+        resolver.add(
+            TypePath(vec!["mscorlib", "System", "Object"]),
             class_system_obj_ref,
         );
-        holder.add(
-            TypeFullPath(vec!["mscorlib", "System", "Int32"]),
+        resolver.add(
+            TypePath(vec!["mscorlib", "System", "Int32"]),
             class_system_int32_ref,
         );
-        holder.add(
-            TypeFullPath(vec!["mscorlib", "System", "String"]),
+        resolver.add(
+            TypePath(vec!["mscorlib", "System", "String"]),
             class_system_string_ref,
         );
 
-        Rc::new(holder)
+        Rc::new(resolver)
     };
 }
 
 pub fn mscorlib_system_string() -> ClassInfoRef {
     get_mscorlib()
-        .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+        .get(TypePath(vec!["mscorlib", "System", "String"]))
         .unwrap()
         .clone()
 }
 
 pub fn mscorlib_system_object() -> ClassInfoRef {
     get_mscorlib()
-        .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+        .get(TypePath(vec!["mscorlib", "System", "String"]))
         .unwrap()
         .clone()
 }
 
-pub fn get_mscorlib() -> Rc<Holder<ClassInfoRef>> {
+pub fn get_mscorlib() -> Rc<NameResolver<ClassInfoRef>> {
     MSCORLIB.with(|mscorlib| mscorlib.clone())
 }

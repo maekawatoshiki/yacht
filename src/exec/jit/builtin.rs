@@ -3,7 +3,7 @@
 use crate::{
     exec::jit::jit::*,
     metadata::signature::*,
-    util::{holder::*, name_path::*},
+    util::{name_path::*, resolver::*},
 };
 use llvm::{core::*, prelude::*};
 use rustc_hash::FxHashMap;
@@ -22,7 +22,7 @@ pub struct Function {
 
 #[derive(Clone)]
 pub struct BuiltinFunctions {
-    pub map: Holder<Vec<Function>>,
+    pub map: NameResolver<Vec<Function>>,
     pub helper_map: FxHashMap<String, Function>,
 }
 
@@ -155,32 +155,28 @@ impl BuiltinFunctions {
                     def_func!([0x20], str,  [],         string_to_string,      "[mscorlib]System::String.ToString()"),
                 ].into_iter().map(|(ty, function, llvm_function)| Function { ty, function, llvm_function }).collect();
 
-                let mut holder = Holder::new();
+                let mut resolver = NameResolver::new();
 
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "Console", "WriteLine" ]), write_line      );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "Console", "Write"     ]), write           );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "Object",  "ToString"  ]), obj_to_string   );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "Int32",   "ToString"  ]), int32_to_string );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "String",  "get_Chars" ]), get_chars       );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "String",  "get_Length"]), get_length      );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "String",  "ToString"  ]), string_to_string);
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "String",  "Concat"    ]), concat          );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "Math",    "Sqrt"      ]), sqrt            );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "Math",    "Sin"       ]), sin             );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "Math",    "Cos"       ]), cos             );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "Math",    "Abs"       ]), abs             );
-                holder.add(MethodFullPath(vec!["mscorlib", "System", "Math",    "Pow"       ]), pow             );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "Console", "WriteLine" ]), write_line      );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "Console", "Write"     ]), write           );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "Object",  "ToString"  ]), obj_to_string   );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "Int32",   "ToString"  ]), int32_to_string );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "String",  "get_Chars" ]), get_chars       );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "String",  "get_Length"]), get_length      );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "String",  "ToString"  ]), string_to_string);
+                resolver.add(MethodPath(vec!["mscorlib", "System", "String",  "Concat"    ]), concat          );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "Math",    "Sqrt"      ]), sqrt            );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "Math",    "Sin"       ]), sin             );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "Math",    "Cos"       ]), cos             );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "Math",    "Abs"       ]), abs             );
+                resolver.add(MethodPath(vec!["mscorlib", "System", "Math",    "Pow"       ]), pow             );
 
-                holder
+                resolver
             },
         }
     }
 
-    pub fn get_method<'a, T: Into<MethodFullPath<'a>>>(
-        &self,
-        path: T,
-        ty: &Type,
-    ) -> Option<&Function> {
+    pub fn get_method<'a, T: Into<MethodPath<'a>>>(&self, path: T, ty: &Type) -> Option<&Function> {
         let methods = self.map.get(path.into())?;
         methods.iter().find(|f| &f.ty == ty)
     }

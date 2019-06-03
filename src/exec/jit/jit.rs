@@ -4,7 +4,7 @@ use crate::{
         jit::{builtin::*, cfg::*},
     },
     metadata::{assembly::*, class::*, image::*, metadata::*, method::*, signature::*, token::*},
-    util::{holder::*, name_path::*},
+    util::{name_path::*, resolver::*},
 };
 use llvm;
 use llvm::{core::*, prelude::*};
@@ -63,11 +63,11 @@ pub struct PhiStack {
 
 #[derive(Clone)]
 pub struct SharedEnvironment {
-    /// All callable methods. Searchable with ``MethodFullPath``.
+    /// All callable methods. Searchable with ``MethodPath``.
     pub methods: BuiltinFunctions,
 
-    /// All classes. Searchable with ``TypeFullPath``.
-    pub class_types: ClassTypesHolder,
+    /// All classes. Searchable with ``TypePath``.
+    pub class_types: ClassTypesNameResolver,
 
     /// All method tables. Searchable with their pointers.
     pub method_table_map: FxHashMap<MethodTablePtrTy, (LLVMValueRef, Vec<LLVMValueRef>)>,
@@ -103,8 +103,8 @@ pub struct CodeEnvironment {
 }
 
 #[derive(Debug, Clone)]
-pub struct ClassTypesHolder {
-    base: Holder<(LLVMTypeRef, MethodTablePtrTy)>,
+pub struct ClassTypesNameResolver {
+    base: NameResolver<(LLVMTypeRef, MethodTablePtrTy)>,
 }
 
 impl<'a> JITCompiler<'a> {
@@ -200,7 +200,7 @@ impl<'a> JITCompiler<'a> {
             let mdef = minfo.as_mdef();
             let f = self.get_function_by_rva(mdef.rva);
             let class = mdef.class.borrow();
-            let method_path = ((&*class).into(): TypeFullPath).with_method_name(mdef.name.as_str());
+            let method_path = ((&*class).into(): TypePath).with_method_name(mdef.name.as_str());
             self.shared_env.methods.map.add(
                 method_path,
                 vec![Function {
@@ -862,7 +862,7 @@ impl<'a> JITCompiler<'a> {
         let class_string = self
             .shared_env
             .class_types
-            .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+            .get(TypePath(vec!["mscorlib", "System", "String"]))
             .unwrap();
         let new_string = self.typecast(
             self.call_memory_alloc(self.get_size_of_llvm_class_type(class_string)),
@@ -971,10 +971,10 @@ impl<'a> JITCompiler<'a> {
             }
         };
 
-        match self.assembly.image.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token) {
             Table::MemberRef(mrt) => {
-                let class_token = mrt.class_decoded();
-                let class = &self.assembly.image.get_table_entry(class_token);
+                let class_token = mrt.class2token();
+                let class = &self.assembly.image.metadata.get_table_entry(class_token);
                 match class {
                     Table::TypeRef(trt) => {
                         let type_path = self.assembly.image.get_path_from_type_ref_table(trt);
@@ -994,12 +994,7 @@ impl<'a> JITCompiler<'a> {
                                     self,
                                     stack,
                                     &name,
-                                    &self
-                                        .assembly
-                                        .image
-                                        .get_class(class_token.into(): Token)
-                                        .unwrap()
-                                        .clone(),
+                                    &self.assembly.image.get_class(class_token).unwrap().clone(),
                                     method_sig,
                                     LLVMTypeOf(f.llvm_function),
                                 );
@@ -1029,14 +1024,14 @@ impl<'a> JITCompiler<'a> {
                     call(self, stack, func, method_sig);
                 }
             }
-            e => unimplemented!("call: unimplemented: {:?}", e),
+            e => unimplemented!("{:?}", e),
         }
     }
 
     unsafe fn gen_instr_stfld(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let val = stack.pop().unwrap();
         let obj = stack.pop().unwrap();
-        match self.assembly.image.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token) {
             Table::Field(f) => {
                 let name = self.assembly.image.get_string(f.name);
                 let class = &obj.ty.as_class().unwrap().borrow();
@@ -1054,7 +1049,7 @@ impl<'a> JITCompiler<'a> {
 
     unsafe fn gen_instr_ldfld(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let obj = stack.pop().unwrap();
-        match self.assembly.image.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token) {
             Table::Field(f) => {
                 let name = self.assembly.image.get_string(f.name);
                 let class = &obj.ty.as_class().unwrap().borrow();
@@ -1183,7 +1178,7 @@ impl<'a> JITCompiler<'a> {
 
     unsafe fn gen_instr_box(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let val = stack.pop().unwrap().val;
-        match self.assembly.image.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token) {
             Table::TypeRef(trt) => {
                 // TODO: Refactor
                 let path = self.assembly.image.get_path_from_type_ref_table(&trt);
@@ -1219,7 +1214,7 @@ impl<'a> JITCompiler<'a> {
             len: LLVMValueRef,
             trt: &TypeRefTable,
         ) -> TypedValue {
-            let TypeFullPath(path) = compiler.assembly.image.get_path_from_type_ref_table(trt);
+            let TypePath(path) = compiler.assembly.image.get_path_from_type_ref_table(trt);
             let ty = match (path[0], path[1], path[2]) {
                 ("mscorlib", "System", ty) => ty,
                 _ => unimplemented!(),
@@ -1280,7 +1275,7 @@ impl<'a> JITCompiler<'a> {
 
         let len = stack.pop().unwrap().val;
 
-        match self.assembly.image.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token) {
             Table::TypeRef(trt) => stack.push(newarr_typeref(self, len, &trt)),
             Table::TypeDef(_) => stack.push(newarr_typedef(self, len, token)),
             e => unimplemented!("newarr: unimplemented: {:?}", e),
@@ -1288,7 +1283,7 @@ impl<'a> JITCompiler<'a> {
     }
 
     unsafe fn gen_instr_newobj(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
-        match self.assembly.image.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token) {
             Table::MemberRef(mrt) => {
                 let class = self
                     .assembly
@@ -1298,7 +1293,7 @@ impl<'a> JITCompiler<'a> {
                     .clone();
                 let class_borrowed = class.borrow();
                 let method_name = self.assembly.image.get_string(mrt.name);
-                let type_path = (&*class_borrowed).into(): TypeFullPath;
+                let type_path = (&*class_borrowed).into(): TypePath;
                 let method_ty = self
                     .assembly
                     .image
@@ -1403,7 +1398,7 @@ impl<'a> JITCompiler<'a> {
             .or_insert_with(|| BasicBlockInfo::Unpositioned(LLVMAppendBasicBlock(func, cstr0!())))
     }
 
-    // TODO: &ClassInfo -> Into<TypeFullPath>
+    // TODO: &ClassInfo -> Into<TypePath>
     unsafe fn get_llvm_class_type(&mut self, class: &ClassInfo) -> LLVMTypeRef {
         // Return already created one
         if let Some(ty) = self.shared_env.class_types.get(class) {
@@ -1521,7 +1516,7 @@ impl<'a> JITCompiler<'a> {
                         self.shared_env
                             .methods
                             .get_method(
-                                ((&*class).into(): TypeFullPath).with_method_name(m.name.as_str()),
+                                ((&*class).into(): TypePath).with_method_name(m.name.as_str()),
                                 &m.ty,
                             )
                             .unwrap()
@@ -1603,7 +1598,7 @@ impl CastIntoLLVMType for Type {
             ElementType::String => compiler
                 .shared_env
                 .class_types
-                .get(TypeFullPath(vec!["mscorlib", "System", "String"]))
+                .get(TypePath(vec!["mscorlib", "System", "String"]))
                 .unwrap(),
             ElementType::SzArray(ref szarr) => {
                 LLVMPointerType(szarr.elem_ty.to_llvmty(compiler), 0)
@@ -1672,7 +1667,7 @@ impl SharedEnvironment {
                 builder,
                 pass_mgr,
                 methods: BuiltinFunctions::new(context, module),
-                class_types: ClassTypesHolder::new(context),
+                class_types: ClassTypesNameResolver::new(context),
                 method_table_map: FxHashMap::default(),
             }
         }
@@ -1685,7 +1680,7 @@ impl TypedValue {
     }
 }
 
-impl ClassTypesHolder {
+impl ClassTypesNameResolver {
     pub unsafe fn new(ctx: LLVMContextRef) -> Self {
         // TODO: Refactor
 
@@ -1730,23 +1725,23 @@ impl ClassTypesHolder {
 
         Self {
             base: {
-                let mut holder = Holder::new();
-                holder.add(
-                    TypeFullPath(vec!["mscorlib", "System", "Object"]),
+                let mut resolver = NameResolver::new();
+                resolver.add(
+                    TypePath(vec!["mscorlib", "System", "Object"]),
                     (
                         LLVMPointerType(system_object, 0),
                         raw_memory!(MethodTableElementTy, 1),
                     ),
                 );
-                holder.add(
-                    TypeFullPath(vec!["mscorlib", "System", "Int32"]),
+                resolver.add(
+                    TypePath(vec!["mscorlib", "System", "Int32"]),
                     (
                         LLVMPointerType(system_int32, 0),
                         raw_memory!(MethodTableElementTy, 1),
                     ),
                 );
-                holder.add(
-                    TypeFullPath(vec!["mscorlib", "System", "String"]),
+                resolver.add(
+                    TypePath(vec!["mscorlib", "System", "String"]),
                     (
                         LLVMPointerType(system_string, 0),
                         raw_memory!(
@@ -1756,16 +1751,16 @@ impl ClassTypesHolder {
                         ),
                     ),
                 );
-                holder
+                resolver
             },
         }
     }
 
-    pub fn get<'a, T: Into<TypeFullPath<'a>>>(&self, path: T) -> Option<LLVMTypeRef> {
+    pub fn get<'a, T: Into<TypePath<'a>>>(&self, path: T) -> Option<LLVMTypeRef> {
         Some((*self.base.get(path.into())?).0)
     }
 
-    pub fn get_method_table_ptr<'a, T: Into<TypeFullPath<'a>>>(
+    pub fn get_method_table_ptr<'a, T: Into<TypePath<'a>>>(
         &self,
         path: T,
     ) -> Option<MethodTablePtrTy> {
@@ -1774,7 +1769,7 @@ impl ClassTypesHolder {
 
     pub fn add(&mut self, class: &ClassInfo, ty: LLVMTypeRef) {
         self.base.add(
-            class.into(): TypeFullPath,
+            class.into(): TypePath,
             (
                 ty,
                 raw_memory!(MethodTableElementTy, class.method_table.len()),

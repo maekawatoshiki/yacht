@@ -46,6 +46,17 @@ pub struct MetaDataStreams {
     pub guid: String,
 }
 
+impl MetaDataStreams {
+    pub fn get_table<T: Into<usize>>(&self, table_kind: T) -> &Vec<Table> {
+        &self.metadata_stream.tables[table_kind.into()]
+    }
+
+    pub fn get_table_entry<T: Into<Token>>(&self, token: T) -> Table {
+        let DecodedToken(table, entry) = decode_token(token.into());
+        self.get_table(table as usize)[entry as usize - 1]
+    }
+}
+
 pub const NUM_TABLES: usize = 45;
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -253,10 +264,14 @@ impl MemberRefTable {
     pub fn class_decoded(&self) -> DecodedToken {
         decode_member_ref_parent_token(self.class)
     }
+
+    pub fn class2token(&self) -> Token {
+        self.class_decoded().into()
+    }
 }
 
 impl TypeRefTable {
-    pub fn resolution_scope_table_and_entry(&self) -> DecodedToken {
+    pub fn resolution_scope_decoded(&self) -> DecodedToken {
         decode_resolution_scope_token(self.resolution_scope)
     }
 }
@@ -363,6 +378,12 @@ impl TableKind {
 impl Into<u32> for TableKind {
     fn into(self) -> u32 {
         self.into_num() as u32
+    }
+}
+
+impl Into<usize> for TableKind {
+    fn into(self) -> usize {
+        self.into_num()
     }
 }
 

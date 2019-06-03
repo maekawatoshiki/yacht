@@ -112,13 +112,13 @@ impl<T: Debug + Clone> TreeMap<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Holder<T: Debug + Clone> {
+pub struct NameResolver<T: Debug + Clone> {
     map: TreeMap<T>,
 }
 
-impl<T: Debug + Clone> Holder<T> {
+impl<T: Debug + Clone> NameResolver<T> {
     pub fn new() -> Self {
-        Holder {
+        NameResolver {
             map: TreeMap::Map(FxHashMap::default()),
         }
     }

@@ -183,7 +183,7 @@ impl PEParser {
                 let locals_ty = if local_var_sig_tok == 0 {
                     vec![]
                 } else {
-                    match image.get_table_entry(local_var_sig_tok) {
+                    match image.metadata.get_table_entry(local_var_sig_tok) {
                         Table::StandAloneSig(sast) => {
                             let mut blob = image
                                 .metadata
