@@ -1,5 +1,3 @@
-// This program may take a few minutes.
-
 using System;
 
 public class Random {  
@@ -106,13 +104,23 @@ internal static class Program {
         : radiance(spheres, reflRay, depth, random) * Re + radiance(spheres, new Ray(x, tdir), depth, random) * Tr);
   }
   private static void Main() {
-    int w = 300, h = 300, samps = 40; 
+    int w = 100, h = 100, samps = 40;
     Ray cam = new Ray(new Vec(50, 52, 295.6), new Vec(0, -0.042612, -1).norm()); // cam pos, dir
     Vec cx = new Vec(w * .5135 / h, 0, 0), cy = (cx % cam.d).norm() * .5135; 
     var c = new Vec[w*h];
     var random = new Random(12345);
     
-    Sphere[] spheres = new Sphere[9];
+    Sphere[] spheres = new Sphere[] {
+      new Sphere(1e5, new Vec( 1e5+1,40.8,81.6), new Vec(0,0,0),new Vec(.75,.75,.25),0), //Left
+      new Sphere(1e5, new Vec(-1e5+99,40.8,81.6),new Vec(0,0,0),new Vec(.25,.25,.75),0), //Rght
+      new Sphere(1e5, new Vec(50,40.8, 1e5),     new Vec(0,0,0),new Vec(.75,.75,.75),0), //Back
+      new Sphere(1e5, new Vec(50,40.8,-1e5+170), new Vec(0,0,0),new Vec(.75,.75,.75),1), //Frnt
+      new Sphere(1e5, new Vec(50, 1e5, 81.6),    new Vec(0,0,0),new Vec(.75,.75,.75),0), //Botm
+      new Sphere(1e5, new Vec(50,-1e5+81.6,81.6),new Vec(0,0,0),new Vec(.75,.75,.75),0), //Top
+      new Sphere(16.5,new Vec(27,16.5,47),       new Vec(0,0,0),new Vec(1,1,1)*.999, 1), //Mirr
+      new Sphere(16.5,new Vec(73,16.5,78),       new Vec(0,0,0),new Vec(1,1,1)*.999, 2), //Glas
+      new Sphere(600, new Vec(50,681.6-.27,81.6),new Vec(12,12,12),  new Vec(0,0,0), 0), //Lite
+    };
 
     // wada (http://www.kevinbeason.com/smallpt/extraScenes.txt)
     // double R=60;
@@ -126,16 +134,6 @@ internal static class Program {
     // spheres[4] = new Sphere(60,  new Vec(50,40.8,62)+new Vec(0,-1,0)*D, new Vec(0, 0, 0),(new Vec(.3,.3,1))*.999, 1); //blue
     // spheres[5] = new Sphere(60,  new Vec(50,40.8,62)+new Vec(0,0,-1)*D, new Vec(0, 0, 0),(new Vec(.53,.53,.53))*.999, 1); //back
     // spheres[6] = new Sphere(60,  new Vec(50,40.8,62)+new Vec(0,0,1)*D, new Vec(0, 0, 0), (new Vec(1,1,1))*.999, 2); //front
-
-    spheres[0] = new Sphere(1e5, new Vec( 1e5+1,40.8,81.6), new Vec(0,0,0),new Vec(.75,.75,.25),0); //Left
-    spheres[1] = new Sphere(1e5, new Vec(-1e5+99,40.8,81.6),new Vec(0,0,0),new Vec(.25,.25,.75),0); //Rght
-    spheres[2] = new Sphere(1e5, new Vec(50,40.8, 1e5),     new Vec(0,0,0),new Vec(.75,.75,.75),1); //Back
-    spheres[3] = new Sphere(1e5, new Vec(50,40.8,-1e5+170), new Vec(0,0,0),new Vec(.75,.75,.75),1); //Frnt
-    spheres[4] = new Sphere(1e5, new Vec(50, 1e5, 81.6),    new Vec(0,0,0),new Vec(.75,.75,.75),0); //Botm
-    spheres[5] = new Sphere(1e5, new Vec(50,-1e5+81.6,81.6),new Vec(0,0,0),new Vec(.75,.75,.75),0); //Top
-    spheres[6] = new Sphere(16.5,new Vec(27,16.5,47),       new Vec(0,0,0),new Vec(1,1,1)*.999, 1); //Mirr
-    spheres[7] = new Sphere(16.5,new Vec(73,16.5,78),       new Vec(0,0,0),new Vec(1,1,1)*.999, 2); //Glas
-    spheres[8] = new Sphere(600, new Vec(50,681.6-.27,81.6),new Vec(12,12,12),  new Vec(0,0,0), 0); //Lite
 
     for (int i = 0; i < (w * h); i++) {
       var x = i % w;
