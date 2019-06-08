@@ -51,9 +51,16 @@ impl MetaDataStreams {
         &self.metadata_stream.tables[table_kind.into()]
     }
 
-    pub fn get_table_entry<T: Into<Token>>(&self, token: T) -> Table {
+    pub fn get_table_entry<T: Into<Token>>(&self, token: T) -> Option<Table> {
         let DecodedToken(table, entry) = decode_token(token.into());
-        self.get_table(table as usize)[entry as usize - 1]
+
+        if entry == 0 {
+            return None;
+        }
+
+        self.get_table(table as usize)
+            .get(entry as usize - 1)
+            .map(|t| *t)
     }
 }
 

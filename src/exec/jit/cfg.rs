@@ -6,7 +6,6 @@ pub struct BasicBlock {
     pub code: Vec<Instruction>,
     pub start: usize,
     pub kind: BrKind,
-    pub generated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -87,7 +86,6 @@ impl CFGMaker {
                     code: code[$range].to_vec(),
                     start: $range.start,
                     kind: $kind,
-                    generated: false,
                 });
             }};
         }

@@ -4,7 +4,7 @@ use yacht::{exec::jit, metadata::assembly};
 use std::path::PathBuf;
 
 extern crate clap;
-use clap::{App, Arg};
+use clap::{App, AppSettings, Arg};
 
 extern crate ansi_term;
 use ansi_term::Colour;
@@ -16,7 +16,8 @@ fn main() {
         .version(VERSION_STR)
         .author("uint256_t")
         .about("An ECMA-335 implementation written in Rust")
-        .arg(Arg::with_name("file").help("Input file name").index(1));
+        .arg(Arg::with_name("file").help("Input file name").index(1))
+        .setting(AppSettings::ArgRequiredElseHelp);
     let app_matches = app.clone().get_matches();
 
     let filename = match app_matches.value_of("file") {
@@ -32,16 +33,19 @@ fn main() {
 
     let asm = expect!(
         assembly::Assembly::load(filename),
-        "Error occurred while loading file"
+        "An error occurred while loading file"
     );
-    let method = asm.borrow_mut().image.get_entry_method();
+    let entry_method = expect!(
+        asm.borrow_mut().image.get_entry_method(),
+        "Entry method not found"
+    );
 
     unsafe {
         let mut asm = asm.borrow_mut();
         let mut shared_env = jit::jit::SharedEnvironment::new();
         let mut jit = jit::jit::JITCompiler::new(&mut *asm, &mut shared_env);
-        let main = jit.generate_main(&method);
-        jit.run_main(main);
+        let main = jit.generate_method_as_main(&entry_method);
+        jit.run_method(main);
     }
 }
 
@@ -60,13 +64,13 @@ mod tests {
                 continue;
             }
             let asm = assembly::Assembly::load(PathBuf::from(filename)).unwrap();
-            let method = asm.borrow_mut().image.get_entry_method();
+            let method = asm.borrow_mut().image.get_entry_method().unwrap();
             unsafe {
                 let mut asm = asm.borrow_mut();
                 let mut shared_env = jit::jit::SharedEnvironment::new();
                 let mut jit = jit::jit::JITCompiler::new(&mut asm, &mut shared_env);
-                let main = jit.generate_main(&method);
-                jit.run_main(main);
+                let main = jit.generate_method_as_main(&method);
+                jit.run_method(main);
             }
         }
     }

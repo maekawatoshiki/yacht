@@ -26,8 +26,8 @@ impl<'a> BytesToInstructions<'a> {
                 il_instr::LDNULL => iseq.push(Instruction::Ldnull),
                 il_instr::LDSTR => {
                     let token = self.read_u32()?;
-                    assert!(token & 0xff000000 == 0x70000000);
-                    let us_offset = token & 0x00ffffff;
+                    assert!(token & 0xff00_0000 == 0x7000_0000);
+                    let us_offset = token & 0x00ff_ffff;
                     iseq.push(Instruction::Ldstr(us_offset))
                 }
                 il_instr::CALL => iseq.push(Instruction::Call(Token(self.read_u32()?))),

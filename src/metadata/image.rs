@@ -34,7 +34,7 @@ pub struct Image {
     /// File name from which this image is loaded
     pub filename: path::PathBuf,
 
-    pub setup_info: SetupInfo, // pub memberref_cache: FxHashMap<usize, MethodBodyRef>
+    pub setup_info: SetupInfo,
 }
 
 #[derive(Debug, Clone)]
@@ -64,11 +64,11 @@ impl Image {
     }
 
     pub fn collect_all_reachable_assemblies(&self, asms: &mut FxHashMap<String, AssemblyRef>) {
-        for (name, asm) in self.asm_refs.clone() {
-            if asms.contains_key(&name) {
+        for (name, asm) in &self.asm_refs {
+            if asms.contains_key(name) {
                 continue;
             }
-            asms.insert(name, asm.clone());
+            asms.insert(name.clone(), asm.clone());
             asm.borrow().image.collect_all_reachable_assemblies(asms);
         }
     }
@@ -119,7 +119,8 @@ impl Image {
             let name = self.get_string(tref.type_name).as_str();
             let asm = retrieve!(
                 self.metadata
-                    .get_table_entry(tref.resolution_scope_decoded()),
+                    .get_table_entry(tref.resolution_scope_decoded())
+                    .unwrap(),
                 Table::AssemblyRef
             );
             let asm_name = self.get_string(asm.name);
@@ -141,11 +142,16 @@ impl Image {
                 .image
                 .find_class(TypePath(vec![asm_name.as_str(), namespace, name]))
                 .unwrap();
+
             self.class_cache.insert(token, class.clone());
         }
     }
 
     pub fn setup_all_class(&mut self) {
+        if self.setup_info.empty() {
+            return;
+        }
+
         // Set class fields
         for (class, range) in &self.setup_info.fields {
             let fields: Vec<ClassField> = self.metadata.get_table(TableKind::Field)[range.clone()]
@@ -165,11 +171,10 @@ impl Image {
         // Set parent class
         for (class, extends) in &self.setup_info.extends {
             let token = decode_typedef_or_ref_token(*extends as u32);
-            let typedef_or_ref = self.metadata.get_table_entry(token);
+            let typedef_or_ref = self.metadata.get_table_entry(token).unwrap();
             match typedef_or_ref {
                 Table::TypeDef(_) => {
-                    class.borrow_mut().parent =
-                        Some(self.class_cache.get(&token.into()).unwrap().clone());
+                    class.borrow_mut().parent = Some(self.get_class(token).unwrap().clone());
                 }
                 Table::TypeRef(_) => {} // TODO
                 _ => unreachable!(),
@@ -196,6 +201,8 @@ impl Image {
         }
 
         self.setup_all_class_method_table();
+
+        self.setup_info.clear();
     }
 
     pub fn define_all_class(&mut self) {
@@ -299,20 +306,20 @@ impl Image {
         self.metadata.user_strings.get(&n.into()).unwrap()
     }
 
-    pub fn get_entry_method(&mut self) -> MethodInfoRef {
+    pub fn get_entry_method(&mut self) -> Option<MethodInfoRef> {
         let method_or_file = self
             .metadata
-            .get_table_entry(self.cli_info.cli_header.entry_point_token);
+            .get_table_entry(self.cli_info.cli_header.entry_point_token)?;
         let mdef = match method_or_file {
             Table::MethodDef(t) => t,
             // TOOD: File
-            _ => unimplemented!(),
+            _ => return None,
         };
         self.get_method_by_rva(mdef.rva)
     }
 
-    pub fn get_method_by_rva(&self, rva: u32) -> MethodInfoRef {
-        self.method_cache.get(&rva).unwrap().clone()
+    pub fn get_method_by_rva(&self, rva: u32) -> Option<MethodInfoRef> {
+        self.method_cache.get(&rva).map(|m| m.clone())
     }
 
     pub fn get_method_def_table_by_rva(&self, rva: u32) -> Option<&MethodDefTable> {
@@ -335,8 +342,10 @@ impl Image {
         type_ref_table: &TypeRefTable,
     ) -> TypePath<'a> {
         let token = type_ref_table.resolution_scope_decoded();
-        let assembly_ref_table =
-            retrieve!(self.metadata.get_table_entry(token), Table::AssemblyRef);
+        let assembly_ref_table = retrieve!(
+            self.metadata.get_table_entry(token).unwrap(),
+            Table::AssemblyRef
+        );
         let asm_ref_name = self.get_string(assembly_ref_table.name).as_str();
         let ty_namespace = self.get_string(type_ref_table.type_namespace).as_str();
         let ty_name = self.get_string(type_ref_table.type_name).as_str();
@@ -368,6 +377,16 @@ impl SetupInfo {
             fields: vec![],
             extends: vec![],
         }
+    }
+
+    pub fn empty(&self) -> bool {
+        self.methods.len() == 0 && self.fields.len() == 0 && self.extends.len() == 0
+    }
+
+    pub fn clear(&mut self) {
+        self.methods.clear();
+        self.fields.clear();
+        self.extends.clear();
     }
 }
 

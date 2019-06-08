@@ -29,13 +29,11 @@ macro_rules! try_eq {
 
 impl PEParser {
     pub fn new(filename: PathBuf) -> Option<Self> {
-        let file = match File::open(&filename) {
-            Ok(file) => file,
-            Err(_) => return None,
-        };
-
         Some(Self {
-            reader: BufReader::new(file),
+            reader: BufReader::new(match File::open(&filename) {
+                Ok(file) => file,
+                Err(_) => return None,
+            }),
             filename: filename.to_path_buf(),
         })
     }
@@ -58,12 +56,12 @@ impl PEParser {
             sections.push(section);
         }
 
-        let text_section = || -> Option<SectionHeader> {
+        let text_section = || -> Option<&SectionHeader> {
             for section in &sections {
                 if section.name != ".text" {
                     continue;
                 }
-                return Some(section.clone());
+                return Some(section);
             }
             None
         }()?;
@@ -149,7 +147,7 @@ impl PEParser {
             (
                 *impl_flags,
                 *flags,
-                image.metadata.strings.get(&(*name as u32)).unwrap().clone(),
+                image.get_string(*name).clone(),
                 SignatureParser::new(sig)
                     .parse_method_def_sig(image)
                     .unwrap(),
@@ -180,10 +178,8 @@ impl PEParser {
                 local_var_sig_tok,
                 ..
             } => {
-                let locals_ty = if local_var_sig_tok == 0 {
-                    vec![]
-                } else {
-                    match image.metadata.get_table_entry(local_var_sig_tok) {
+                let locals_ty = match image.metadata.get_table_entry(local_var_sig_tok) {
+                    Some(sig) => match sig {
                         Table::StandAloneSig(sast) => {
                             let mut blob = image
                                 .metadata
@@ -199,7 +195,8 @@ impl PEParser {
                                 .collect()
                         }
                         _ => unimplemented!(),
-                    }
+                    },
+                    None => vec![],
                 };
 
                 let mut raw_body = vec![0u8; code_size as usize];
@@ -223,14 +220,14 @@ impl PEParser {
 
     fn read_method_header_type(&mut self) -> Option<MethodHeaderType> {
         let first = self.read_u8()?;
-        match first & 0b00000011 {
+        match first & 0b11 {
             TINY_FORMAT => Some(MethodHeaderType::TinyFormat {
                 bytes: first as usize >> 2,
             }),
             FAT_FORMAT => {
                 // TODO: More flags
                 let flags_size = self.read_u8()?;
-                let size = flags_size & 0b0000_1111;
+                let size = flags_size & 0b1111;
                 let max_stack = self.read_u16()?;
                 let code_size = self.read_u32()?;
                 let local_var_sig_tok = self.read_u32()?;
@@ -670,15 +667,15 @@ impl PEParser {
     // Return (length, read bytes)
     fn read_blob_length(&mut self) -> Option<(u32, u32)> {
         let first = self.read_u8()? as u32;
-        if first & 0b10000000 == 0 {
-            Some((first & 0b01111111, 1))
-        } else if first & 0b10000000 > 0 {
-            Some((((first & 0b01111111) << 8) + self.read_u8()? as u32, 2))
-        } else if first & 0b11000000 > 0 {
+        if first & 0b1000_0000 == 0 {
+            Some((first & 0b0111_1111, 1))
+        } else if first & 0b1000_0000 > 0 {
+            Some((((first & 0b0111_1111) << 8) + self.read_u8()? as u32, 2))
+        } else if first & 0b1100_0000 > 0 {
             let x = self.read_u8()? as u32;
             let y = self.read_u8()? as u32;
             let z = self.read_u8()? as u32;
-            Some((((first & 0b00111111) << 24) + (x << 16) + (y << 8) + z, 4))
+            Some((((first & 0b0011_1111) << 24) + (x << 16) + (y << 8) + z, 4))
         } else {
             return None;
         }

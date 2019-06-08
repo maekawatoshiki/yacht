@@ -26,14 +26,11 @@ macro_rules! cstr0 {
     };
 }
 
-macro_rules! raw_memory {
-    ($elem_ty:ty, $len:expr) => {{
-        Box::into_raw(vec![0 as $elem_ty; $len].into_boxed_slice()) as *mut $elem_ty
-    }};
+fn alloc_raw_method_table(len: usize) -> MethodTablePtrTy {
+    Box::into_raw(vec![0 as *mut ::std::ffi::c_void; len].into_boxed_slice()) as MethodTablePtrTy
 }
 
-pub type MethodTableElementTy = *mut ::std::ffi::c_void;
-pub type MethodTablePtrTy = *mut MethodTableElementTy;
+pub type MethodTablePtrTy = *mut *mut ::std::ffi::c_void;
 
 pub type CResult<T> = Result<T, Error>;
 
@@ -63,8 +60,8 @@ pub struct PhiStack {
 
 #[derive(Clone)]
 pub struct SharedEnvironment {
-    /// All callable methods. Searchable with ``MethodPath``.
-    pub methods: BuiltinFunctions,
+    /// Builtin methods and methods belonging to the other assemblies. Searchable with ``MethodPath``.
+    pub methods: BuiltinFunctions, // ``BuiltinFunction`` is bad name. Should be like 'MethodMap'
 
     /// All classes. Searchable with ``TypePath``.
     pub class_types: ClassTypesNameResolver,
@@ -85,15 +82,20 @@ pub struct SharedEnvironment {
     pub pass_mgr: LLVMPassManagerRef,
 }
 
+#[derive(Clone)]
+pub struct AssemblyUniqueEnvironment {
+    pub generated: FxHashMap<RVA, LLVMValueRef>,
+    pub compile_queue: VecDeque<(LLVMValueRef, MethodInfoRef)>,
+}
+
 pub struct JITCompiler<'a> {
     pub assembly: &'a mut Assembly,
     pub shared_env: &'a mut SharedEnvironment,
+    pub asm_env: AssemblyUniqueEnvironment,
+    pub env: CodeEnvironment,
     pub generating: Option<LLVMValueRef>,
-    pub generated: FxHashMap<RVA, LLVMValueRef>,
     pub basic_blocks: FxHashMap<usize, BasicBlockInfo>,
     pub phi_stack: FxHashMap<usize, Vec<PhiStack>>, // destination,
-    pub env: CodeEnvironment,
-    pub compile_queue: VecDeque<(LLVMValueRef, MethodInfoRef)>,
 }
 
 #[derive(Debug, Clone)]
@@ -118,12 +120,11 @@ impl<'a> JITCompiler<'a> {
         let mut self_ = Self {
             assembly,
             shared_env,
+            env: CodeEnvironment::new(),
+            asm_env: AssemblyUniqueEnvironment::new(),
             generating: None,
-            generated: FxHashMap::default(),
             basic_blocks: FxHashMap::default(),
             phi_stack: FxHashMap::default(),
-            env: CodeEnvironment::new(),
-            compile_queue: VecDeque::new(),
         };
 
         self_.setup_system_string();
@@ -131,23 +132,28 @@ impl<'a> JITCompiler<'a> {
         self_
     }
 
-    pub unsafe fn new_with_no_mscorlib_init(
+    pub unsafe fn new_without_mscorlib_init(
         assembly: &'a mut Assembly,
         shared_env: &'a mut SharedEnvironment,
     ) -> Self {
         Self {
             assembly,
             shared_env,
+            env: CodeEnvironment::new(),
+            asm_env: AssemblyUniqueEnvironment::new(),
             generating: None,
-            generated: FxHashMap::default(),
             basic_blocks: FxHashMap::default(),
             phi_stack: FxHashMap::default(),
-            env: CodeEnvironment::new(),
-            compile_queue: VecDeque::new(),
         }
     }
 
-    pub unsafe fn run_main(&mut self, main: LLVMValueRef) {
+    pub fn with_asm_env(mut self, asm_env: AssemblyUniqueEnvironment) -> Self {
+        self.asm_env = asm_env;
+        self
+    }
+
+    // TODO: Should take arguments for ``method``
+    pub unsafe fn run_method(&mut self, method: LLVMValueRef) {
         let mut ee = 0 as llvm::execution_engine::LLVMExecutionEngineRef;
         let mut error = 0 as *mut i8;
         if llvm::execution_engine::LLVMCreateExecutionEngineForModule(
@@ -165,87 +171,10 @@ impl<'a> JITCompiler<'a> {
             }
         }
 
-        llvm::execution_engine::LLVMRunFunction(ee, main, 0, vec![].as_mut_ptr());
+        llvm::execution_engine::LLVMRunFunction(ee, method, 0, vec![].as_mut_ptr());
     }
 
-    pub unsafe fn define_all_class(&mut self) {
-        let classes = self
-            .assembly
-            .image
-            .class_cache
-            .iter()
-            .filter_map(|(_tok, class)| {
-                let class = class.borrow();
-                // ``class_cache`` may contain classes belonging to another assembly. Here exclude
-                // them.
-                match class.resolution_scope {
-                    // TODO: Support all possible ResolutionScope
-                    ResolutionScope::AssemblyRef { ref name } if name == &self.assembly.name => {
-                        Some(class.clone())
-                    }
-                    _ => None,
-                }
-            })
-            .collect::<Vec<ClassInfo>>();
-
-        for class in classes {
-            self.get_llvm_class_type(&class);
-            self.ensure_all_class_methods_compiled(&class);
-        }
-    }
-
-    pub unsafe fn define_all_method(&mut self) {
-        for (_, minforef) in self.assembly.image.method_cache.clone() {
-            let minfo = minforef.borrow();
-            let mdef = minfo.as_mdef();
-            let f = self.get_function_by_rva(mdef.rva);
-            let class = mdef.class.borrow();
-            let method_path = ((&*class).into(): TypePath).with_method_name(mdef.name.as_str());
-            self.shared_env.methods.map.add(
-                method_path,
-                vec![Function {
-                    llvm_function: f,
-                    function: 0 as *mut ::std::ffi::c_void,
-                    ty: mdef.ty.clone(),
-                }],
-            )
-        }
-    }
-
-    pub unsafe fn generate_queued_methods(&mut self) {
-        while let Some((func, method)) = self.compile_queue.pop_front() {
-            self.generate_func(func, &method);
-        }
-    }
-
-    pub unsafe fn generate_all_class_and_method(&mut self) {
-        let mut asms = FxHashMap::default();
-        self.assembly
-            .image
-            .collect_all_reachable_assemblies(&mut asms);
-
-        let mut compile_info = vec![];
-
-        for (_name, asmref) in &asms {
-            let mut asm = asmref.borrow_mut();
-            let mut compiler =
-                JITCompiler::new_with_no_mscorlib_init(&mut *asm, &mut self.shared_env);
-            compiler.define_all_class();
-            compiler.define_all_method();
-            compile_info.push((compiler.compile_queue.clone(), compiler.generated.clone()));
-        }
-
-        for ((que, generated), (_name, asmref)) in compile_info.into_iter().zip(asms.iter()) {
-            let mut asmref = asmref.borrow_mut();
-            let mut compiler =
-                JITCompiler::new_with_no_mscorlib_init(&mut *asmref, &mut self.shared_env);
-            compiler.compile_queue = que;
-            compiler.generated = generated;
-            compiler.generate_queued_methods();
-        }
-    }
-
-    pub unsafe fn generate_main(&mut self, method_ref: &MethodInfoRef) -> LLVMValueRef {
+    pub unsafe fn generate_method_as_main(&mut self, method_ref: &MethodInfoRef) -> LLVMValueRef {
         self.generate_all_class_and_method();
 
         self.basic_blocks.clear();
@@ -255,7 +184,7 @@ impl<'a> JITCompiler<'a> {
         let method_info = method_ref.borrow();
         let method = method_info.as_mdef();
 
-        let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
+        let basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let (ret_ty, mut params_ty): (LLVMTypeRef, Vec<LLVMTypeRef>) =
             { (Type::new(ElementType::Void).to_llvmty(self), vec![]) };
         let func_ty = LLVMFunctionType(ret_ty, params_ty.as_mut_ptr(), params_ty.len() as u32, 0);
@@ -279,19 +208,16 @@ impl<'a> JITCompiler<'a> {
             CString::new("entry").unwrap().as_ptr(),
         );
 
-        LLVMPositionBuilderAtEnd(self.shared_env.builder, bb_entry);
+        self.basic_blocks
+            .insert(0, BasicBlockInfo::Unpositioned(bb_entry));
 
         // Declare locals
         for (i, ty) in method.locals_ty.iter().enumerate() {
             self.get_local(i, Some(&ty));
         }
 
-        // Entry block is positioned
-        self.basic_blocks
-            .insert(0, BasicBlockInfo::Positioned(bb_entry));
-
-        // Other blocks are not positioned
         for block in &basic_blocks {
+            // Exclude entry block (whose .start == 0) since it's already inserted
             if block.start > 0 {
                 self.basic_blocks.insert(
                     block.start,
@@ -303,7 +229,7 @@ impl<'a> JITCompiler<'a> {
         // Compile all the basic blocks
 
         for i in 0..basic_blocks.len() {
-            self.compile_block(&mut basic_blocks, i, vec![]).unwrap();
+            self.compile_block(&basic_blocks, i, &vec![]).unwrap();
         }
 
         self.generate_queued_methods();
@@ -361,7 +287,7 @@ impl<'a> JITCompiler<'a> {
         let method_info = method_ref.borrow();
         let method = method_info.as_mdef();
         let method_ty = method.ty.as_fnptr().unwrap();
-        let mut basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
+        let basic_blocks = CFGMaker::new().make_basic_blocks(&method.body);
         let ret_ty = LLVMGetElementType(LLVMGetReturnType(LLVMTypeOf(func)));
         let bb_entry = LLVMAppendBasicBlockInContext(
             self.shared_env.context,
@@ -369,6 +295,8 @@ impl<'a> JITCompiler<'a> {
             CString::new("entry").unwrap().as_ptr(),
         );
 
+        self.basic_blocks
+            .insert(0, BasicBlockInfo::Unpositioned(bb_entry));
         LLVMPositionBuilderAtEnd(self.shared_env.builder, bb_entry);
 
         let shift = if method_ty.has_this() {
@@ -398,11 +326,9 @@ impl<'a> JITCompiler<'a> {
             self.get_local(i, Some(&ty));
         }
 
-        self.basic_blocks
-            .insert(0, BasicBlockInfo::Positioned(bb_entry));
-
         for block in &basic_blocks {
             if block.start > 0 {
+                // Exclude entry block (whose .start == 0) since it's already inserted
                 self.basic_blocks.insert(
                     block.start,
                     BasicBlockInfo::Unpositioned(LLVMAppendBasicBlock(func, cstr0!())),
@@ -411,7 +337,7 @@ impl<'a> JITCompiler<'a> {
         }
 
         for i in 0..basic_blocks.len() {
-            self.compile_block(&mut basic_blocks, i, vec![]).unwrap();
+            self.compile_block(&basic_blocks, i, &vec![]).unwrap();
         }
 
         let last_block = basic_blocks.last().unwrap();
@@ -443,12 +369,93 @@ impl<'a> JITCompiler<'a> {
         self.phi_stack.clear();
     }
 
-    unsafe fn get_local_ty(&mut self, id: usize) -> Type {
-        self.env.locals.get(&id).unwrap().ty.clone()
+    pub unsafe fn define_all_class(&mut self) {
+        let classes = self
+            .assembly
+            .image
+            .class_cache
+            .iter()
+            .filter_map(|(_tok, class)| {
+                let class = class.borrow();
+                // ``class_cache`` may contain classes belonging to another assembly. Here exclude
+                // them.
+                match class.resolution_scope {
+                    // TODO: Support all possible ResolutionScope
+                    ResolutionScope::AssemblyRef { ref name } if name == &self.assembly.name => {
+                        Some(class.clone())
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Vec<ClassInfo>>();
+
+        for class in classes {
+            self.get_llvm_class_type(&class); // define llvm class(structure)
+            self.ensure_all_class_methods_compiled(&class);
+        }
     }
 
-    unsafe fn get_argument_ty(&mut self, id: usize) -> Type {
-        self.env.arguments.get(&id).unwrap().ty.clone()
+    pub unsafe fn define_all_method(&mut self) {
+        let methods = self
+            .assembly
+            .image
+            .method_cache
+            .iter()
+            .map(|(_, minforef)| minforef.borrow().as_mdef().clone())
+            .collect::<Vec<MethodDefInfo>>();
+
+        for m in methods {
+            let llvm_function = self.get_function_by_rva(m.rva);
+            let class = m.class.borrow();
+            let method_path = ((&*class).into(): TypePath).with_method_name(m.name.as_str());
+            self.shared_env.methods.map.add(
+                method_path,
+                vec![Function {
+                    llvm_function,
+                    function: 0 as *mut ::std::ffi::c_void,
+                    ty: m.ty,
+                }],
+            )
+        }
+    }
+
+    pub unsafe fn generate_all_class_and_method(&mut self) {
+        let mut asm_envs = vec![];
+        let mut asms = FxHashMap::default();
+
+        self.assembly
+            .image
+            .collect_all_reachable_assemblies(&mut asms);
+
+        for (_name, asmref) in &asms {
+            let mut asm = asmref.borrow_mut();
+            let mut compiler =
+                JITCompiler::new_without_mscorlib_init(&mut *asm, &mut self.shared_env);
+            compiler.define_all_class();
+            compiler.define_all_method();
+            asm_envs.push(compiler.asm_env.clone());
+        }
+
+        for (asm_env, (_name, asmref)) in asm_envs.into_iter().zip(asms.iter()) {
+            let mut asmref = asmref.borrow_mut();
+            JITCompiler::new_without_mscorlib_init(&mut *asmref, &mut self.shared_env)
+                .with_asm_env(asm_env)
+                .generate_queued_methods();
+        }
+    }
+
+    pub unsafe fn generate_queued_methods(&mut self) {
+        while let Some((func, method)) = self.asm_env.compile_queue.pop_front() {
+            self.generate_func(func, &method);
+        }
+    }
+
+    unsafe fn get_local_ty(&mut self, id: usize) -> &Type {
+        &self.env.locals.get(&id).unwrap().ty
+    }
+
+    unsafe fn get_argument_ty(&mut self, id: usize) -> &Type {
+        &self.env.arguments.get(&id).unwrap().ty
     }
 
     unsafe fn get_local(&mut self, id: usize, ty: Option<&Type>) -> LLVMValueRef {
@@ -473,6 +480,7 @@ impl<'a> JITCompiler<'a> {
         self.env
             .locals
             .insert(id, TypedValue::new(ty.unwrap().clone(), var));
+
         var
     }
 
@@ -498,6 +506,7 @@ impl<'a> JITCompiler<'a> {
         self.env
             .arguments
             .insert(id, TypedValue::new(ty.unwrap().clone(), var));
+
         var
     }
 
@@ -511,14 +520,12 @@ impl<'a> JITCompiler<'a> {
     // Returns destination
     unsafe fn compile_block(
         &mut self,
-        blocks: &mut [BasicBlock],
+        blocks: &[BasicBlock],
         idx: usize,
-        init_stack: Vec<TypedValue>,
+        init_stack: &Vec<TypedValue>,
     ) -> CResult<usize> {
         #[rustfmt::skip]
         macro_rules! cur_block { () => {{ &blocks[idx] }}; };
-        #[rustfmt::skip]
-        macro_rules! cur_block_mut { () => {{ &mut blocks[idx] }}; };
 
         fn find_block(start: usize, blocks: &[BasicBlock]) -> Option<usize> {
             blocks
@@ -528,13 +535,13 @@ impl<'a> JITCompiler<'a> {
                 .map_or(None, |(i, _)| Some(i))
         }
 
-        if cur_block!().generated {
+        let bb = self.basic_blocks.get_mut(&cur_block!().start).unwrap();
+
+        if bb.is_positioned() {
+            // this block is already generated
             return Ok(0);
         }
 
-        cur_block_mut!().generated = true;
-
-        let bb = self.basic_blocks.get_mut(&cur_block!().start).unwrap();
         LLVMPositionBuilderAtEnd(self.shared_env.builder, bb.set_positioned().retrieve());
 
         let phi_stack = self.build_phi_stack(cur_block!().start, init_stack);
@@ -543,9 +550,9 @@ impl<'a> JITCompiler<'a> {
         match &cur_block!().kind {
             BrKind::ConditionalJmp { destinations } => {
                 let mut d = 0;
-                for dst in destinations.clone() {
-                    let i = find_block(dst, blocks).unwrap();
-                    d = self.compile_block(blocks, i, stack.clone())?;
+                for dst in destinations {
+                    let i = find_block(*dst, blocks).unwrap();
+                    d = self.compile_block(blocks, i, &stack)?;
                     // TODO: All ``d`` must be the same
                 }
                 Ok(d)
@@ -577,8 +584,10 @@ impl<'a> JITCompiler<'a> {
     unsafe fn build_phi_stack(
         &mut self,
         start: usize,
-        mut stack: Vec<TypedValue>,
+        init_stack: &Vec<TypedValue>,
     ) -> Vec<TypedValue> {
+        let mut stack = init_stack.clone();
+
         if let Some(phi_stacks) = self.phi_stack.get(&start) {
             let init_stack_size = stack.len();
 
@@ -645,7 +654,7 @@ impl<'a> JITCompiler<'a> {
         #[rustfmt::skip]
         macro_rules! ldloc { ($n:expr) => {
             stack.push(TypedValue::new(
-                self.get_local_ty($n),
+                self.get_local_ty($n).clone(),
                 LLVMBuildLoad(self.shared_env.builder, self.get_local($n, None), cstr0!()),
             ))
         }}
@@ -659,7 +668,7 @@ impl<'a> JITCompiler<'a> {
         #[rustfmt::skip]
         macro_rules! ldarg { ($n:expr) => {
             stack.push(TypedValue::new(
-                self.get_argument_ty($n),
+                self.get_argument_ty($n).clone(),
                 LLVMBuildLoad(self.shared_env.builder, self.get_argument($n, None), cstr0!()),
             ))
         }}
@@ -891,11 +900,11 @@ impl<'a> JITCompiler<'a> {
     }
 
     unsafe fn get_function_by_rva(&mut self, rva: u32) -> LLVMValueRef {
-        if let Some(f) = self.generated.get(&rva) {
+        if let Some(f) = self.asm_env.generated.get(&rva) {
             return *f;
         }
 
-        let method_ref = self.assembly.image.get_method_by_rva(rva);
+        let method_ref = self.assembly.image.get_method_by_rva(rva).unwrap();
         let method_info = method_ref.borrow();
         let method = method_info.as_mdef();
         let method_sig = method.ty.as_fnptr().unwrap();
@@ -918,8 +927,10 @@ impl<'a> JITCompiler<'a> {
             func_ty,
         );
 
-        self.generated.insert(rva, func);
-        self.compile_queue.push_back((func, method_ref.clone()));
+        self.asm_env.generated.insert(rva, func);
+        self.asm_env
+            .compile_queue
+            .push_back((func, method_ref.clone()));
 
         func
     }
@@ -971,10 +982,15 @@ impl<'a> JITCompiler<'a> {
             }
         };
 
-        match self.assembly.image.metadata.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token).unwrap() {
             Table::MemberRef(mrt) => {
                 let class_token = mrt.class2token();
-                let class = &self.assembly.image.metadata.get_table_entry(class_token);
+                let class = &self
+                    .assembly
+                    .image
+                    .metadata
+                    .get_table_entry(class_token)
+                    .unwrap();
                 match class {
                     Table::TypeRef(trt) => {
                         let type_path = self.assembly.image.get_path_from_type_ref_table(trt);
@@ -1008,7 +1024,7 @@ impl<'a> JITCompiler<'a> {
             }
             Table::MethodDef(mdt) => {
                 let func = self.get_function_by_rva(mdt.rva);
-                let method_ref = self.assembly.image.get_method_by_rva(mdt.rva);
+                let method_ref = self.assembly.image.get_method_by_rva(mdt.rva).unwrap();
                 let method = method_ref.borrow();
                 let method_sig = method.as_mdef().ty.as_fnptr().unwrap();
                 if is_virtual {
@@ -1031,7 +1047,7 @@ impl<'a> JITCompiler<'a> {
     unsafe fn gen_instr_stfld(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let val = stack.pop().unwrap();
         let obj = stack.pop().unwrap();
-        match self.assembly.image.metadata.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token).unwrap() {
             Table::Field(f) => {
                 let name = self.assembly.image.get_string(f.name);
                 let class = &obj.ty.as_class().unwrap().borrow();
@@ -1049,7 +1065,7 @@ impl<'a> JITCompiler<'a> {
 
     unsafe fn gen_instr_ldfld(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let obj = stack.pop().unwrap();
-        match self.assembly.image.metadata.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token).unwrap() {
             Table::Field(f) => {
                 let name = self.assembly.image.get_string(f.name);
                 let class = &obj.ty.as_class().unwrap().borrow();
@@ -1178,17 +1194,11 @@ impl<'a> JITCompiler<'a> {
 
     unsafe fn gen_instr_box(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let val = stack.pop().unwrap().val;
-        match self.assembly.image.metadata.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token).unwrap() {
             Table::TypeRef(trt) => {
                 // TODO: Refactor
                 let path = self.assembly.image.get_path_from_type_ref_table(&trt);
-                let class_ref = self
-                    .assembly
-                    .image
-                    .class_cache
-                    .get(&token.into())
-                    .unwrap()
-                    .clone();
+                let class_ref = self.assembly.image.get_class(token).unwrap().clone();
                 let class = class_ref.borrow();
                 let llvm_class = self.shared_env.class_types.get(path).unwrap();
                 let new_obj = self.typecast(
@@ -1247,16 +1257,10 @@ impl<'a> JITCompiler<'a> {
             token: Token,
         ) -> TypedValue {
             let elem_ty = Type::new(ElementType::Class(
-                compiler
-                    .assembly
-                    .image
-                    .class_cache
-                    .get(&token)
-                    .unwrap()
-                    .clone(),
+                compiler.assembly.image.get_class(token).unwrap().clone(),
             ));
-            let szarr_ty = Type::szarr_ty(elem_ty.clone());
             let llvm_elem_ty = elem_ty.to_llvmty(compiler);
+            let szarr_ty = Type::szarr_ty(elem_ty);
             let llvm_szarr_ty = szarr_ty.to_llvmty(compiler);
             let new_arr = compiler.typecast(
                 compiler.call_function(
@@ -1275,7 +1279,7 @@ impl<'a> JITCompiler<'a> {
 
         let len = stack.pop().unwrap().val;
 
-        match self.assembly.image.metadata.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token).unwrap() {
             Table::TypeRef(trt) => stack.push(newarr_typeref(self, len, &trt)),
             Table::TypeDef(_) => stack.push(newarr_typedef(self, len, token)),
             e => unimplemented!("newarr: unimplemented: {:?}", e),
@@ -1283,7 +1287,7 @@ impl<'a> JITCompiler<'a> {
     }
 
     unsafe fn gen_instr_newobj(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
-        match self.assembly.image.metadata.get_table_entry(token) {
+        match self.assembly.image.metadata.get_table_entry(token).unwrap() {
             Table::MemberRef(mrt) => {
                 let class = self
                     .assembly
@@ -1301,7 +1305,7 @@ impl<'a> JITCompiler<'a> {
                 let (func, method_sig) = if let Some(f) = self
                     .shared_env
                     .methods
-                    .get_method(type_path.clone().with_method_name(method_name), &method_ty)
+                    .get_method(type_path.with_method_name(method_name), &method_ty)
                 {
                     (f.llvm_function, f.ty.as_fnptr().unwrap().clone())
                 } else {
@@ -1328,7 +1332,7 @@ impl<'a> JITCompiler<'a> {
                 stack.push(TypedValue::new(Type::class_ty(class.clone()), new_obj))
             } // TODO
             Table::MethodDef(mdt) => {
-                let method_ref = self.assembly.image.get_method_by_rva(mdt.rva);
+                let method_ref = self.assembly.image.get_method_by_rva(mdt.rva).unwrap();
                 let method_info = method_ref.borrow();
                 let method = method_info.as_mdef();
                 let method_sig = method.ty.as_fnptr().unwrap();
@@ -1365,12 +1369,15 @@ impl<'a> JITCompiler<'a> {
         let callee_ty = LLVMGetElementType(LLVMTypeOf(callee));
         let params_count = LLVMCountParamTypes(callee_ty) as usize;
         let mut params_ty = vec![0 as LLVMTypeRef; params_count];
+
         LLVMGetParamTypes(callee_ty, params_ty.as_mut_ptr());
+
         let mut conv_args: Vec<LLVMValueRef> = args
             .iter()
             .enumerate()
             .map(|(i, arg)| self.typecast(*arg, params_ty[i]))
             .collect();
+
         LLVMBuildCall(
             self.shared_env.builder,
             callee,
@@ -1623,7 +1630,7 @@ impl BasicBlockInfo {
     pub fn set_positioned(&mut self) -> &Self {
         match self {
             BasicBlockInfo::Unpositioned(bb) => *self = BasicBlockInfo::Positioned(*bb),
-            _ => {}
+            BasicBlockInfo::Positioned(_) => {}
         };
         self
     }
@@ -1631,7 +1638,7 @@ impl BasicBlockInfo {
     pub fn is_positioned(&self) -> bool {
         match self {
             BasicBlockInfo::Positioned(_) => true,
-            _ => false,
+            BasicBlockInfo::Unpositioned(_) => false,
         }
     }
 }
@@ -1670,6 +1677,15 @@ impl SharedEnvironment {
                 class_types: ClassTypesNameResolver::new(context),
                 method_table_map: FxHashMap::default(),
             }
+        }
+    }
+}
+
+impl AssemblyUniqueEnvironment {
+    pub fn new() -> Self {
+        AssemblyUniqueEnvironment {
+            generated: FxHashMap::default(),
+            compile_queue: VecDeque::new(),
         }
     }
 }
@@ -1728,26 +1744,19 @@ impl ClassTypesNameResolver {
                 let mut resolver = NameResolver::new();
                 resolver.add(
                     TypePath(vec!["mscorlib", "System", "Object"]),
-                    (
-                        LLVMPointerType(system_object, 0),
-                        raw_memory!(MethodTableElementTy, 1),
-                    ),
+                    (LLVMPointerType(system_object, 0), alloc_raw_method_table(1)),
                 );
                 resolver.add(
                     TypePath(vec!["mscorlib", "System", "Int32"]),
-                    (
-                        LLVMPointerType(system_int32, 0),
-                        raw_memory!(MethodTableElementTy, 1),
-                    ),
+                    (LLVMPointerType(system_int32, 0), alloc_raw_method_table(1)),
                 );
                 resolver.add(
                     TypePath(vec!["mscorlib", "System", "String"]),
                     (
                         LLVMPointerType(system_string, 0),
-                        raw_memory!(
-                            MethodTableElementTy,
+                        alloc_raw_method_table(
                             // TODO: 3 means ToString, get_Chars, get_Length
-                            3
+                            3,
                         ),
                     ),
                 );
@@ -1770,10 +1779,7 @@ impl ClassTypesNameResolver {
     pub fn add(&mut self, class: &ClassInfo, ty: LLVMTypeRef) {
         self.base.add(
             class.into(): TypePath,
-            (
-                ty,
-                raw_memory!(MethodTableElementTy, class.method_table.len()),
-            ),
+            (ty, alloc_raw_method_table(class.method_table.len())),
         );
     }
 }
