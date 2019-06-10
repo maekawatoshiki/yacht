@@ -5,7 +5,6 @@ use crate::{
     util::{name_path::*, resolver::*},
 };
 use rustc_hash::FxHashMap;
-use std::ops::Range;
 use std::path;
 use std::{cell::RefCell, rc::Rc};
 
@@ -33,15 +32,6 @@ pub struct Image {
 
     /// File name from which this image is loaded
     pub filename: path::PathBuf,
-
-    pub setup_info: SetupInfo,
-}
-
-#[derive(Debug, Clone)]
-pub struct SetupInfo {
-    pub methods: Vec<(ClassInfoRef, Range<usize>)>,
-    pub fields: Vec<(ClassInfoRef, Range<usize>)>,
-    pub extends: Vec<(ClassInfoRef, u16)>,
 }
 
 impl Image {
@@ -59,7 +49,6 @@ impl Image {
             class_cache: FxHashMap::default(),
             asm_refs: FxHashMap::default(),
             filename,
-            setup_info: SetupInfo::new(),
         }
     }
 
@@ -148,13 +137,35 @@ impl Image {
     }
 
     pub fn setup_all_class(&mut self) {
-        if self.setup_info.empty() {
-            return;
-        }
+        let typedefs = self.metadata.get_table(TableKind::TypeDef);
+        let fields = self.metadata.get_table(TableKind::Field);
+        let methoddefs = self.metadata.get_table(TableKind::MethodDef);
 
-        // Set class fields
-        for (class, range) in &self.setup_info.fields {
-            let fields: Vec<ClassField> = self.metadata.get_table(TableKind::Field)[range.clone()]
+        for (i, typedef) in typedefs.iter().enumerate() {
+            let typedef = retrieve!(typedef, Table::TypeDef);
+            let next_typedef = typedefs.get(i + 1);
+            let (field_range, method_range) = {
+                let field_start = typedef.field_list as usize - 1;
+                let method_start = typedef.method_list as usize - 1;
+                next_typedef.map_or(
+                    (field_start..fields.len(), method_start..methoddefs.len()),
+                    |table| {
+                        let td = retrieve!(table, Table::TypeDef);
+                        (
+                            field_start..(td.field_list as usize - 1),
+                            method_start..(td.method_list as usize - 1),
+                        )
+                    },
+                )
+            };
+
+            let class = self
+                .get_class(encode_token(TableKind::TypeDef.into(), i as u32 + 1))
+                .unwrap()
+                .clone();
+
+            // Set class fields
+            class.borrow_mut().fields = self.metadata.get_table(TableKind::Field)[field_range]
                 .iter()
                 .map(|t| {
                     let ft = retrieve!(t, Table::Field);
@@ -165,30 +176,13 @@ impl Image {
                     ClassField { name, ty }
                 })
                 .collect();
-            class.borrow_mut().fields = fields;
-        }
 
-        // Set parent class
-        for (class, extends) in &self.setup_info.extends {
-            let token = decode_typedef_or_ref_token(*extends as u32);
-            let typedef_or_ref = self.metadata.get_table_entry(token).unwrap();
-            match typedef_or_ref {
-                Table::TypeDef(_) => {
-                    class.borrow_mut().parent = Some(self.get_class(token).unwrap().clone());
-                }
-                Table::TypeRef(_) => {} // TODO
-                _ => unreachable!(),
-            }
-        }
+            let pe_parser_ref = self.pe_parser.as_ref().unwrap().clone();
+            let mut pe_parser = pe_parser_ref.borrow_mut();
 
-        let pe_parser_ref = self.pe_parser.as_ref().unwrap().clone();
-        let mut pe_parser = pe_parser_ref.borrow_mut();
-
-        // Set class methods
-        for (class, range) in &self.setup_info.methods {
+            // Set class methods
             let mut methods = vec![];
-
-            for mdef in &self.metadata.get_table(TableKind::MethodDef)[range.clone()] {
+            for mdef in &self.metadata.get_table(TableKind::MethodDef)[method_range] {
                 let mdef = retrieve!(mdef, Table::MethodDef);
                 let method = pe_parser
                     .read_method(self, class.clone(), mdef.rva)
@@ -196,30 +190,33 @@ impl Image {
                 self.method_cache.insert(mdef.rva, method.clone());
                 methods.push(method)
             }
-
             class.borrow_mut().methods = methods;
+
+            // Set parent class
+            if typedef.extends != 0 {
+                let token = decode_typedef_or_ref_token(typedef.extends as u32);
+                let typedef_or_ref = self.metadata.get_table_entry(token).unwrap();
+                match typedef_or_ref {
+                    Table::TypeDef(_) => {
+                        class.borrow_mut().parent = Some(self.get_class(token).unwrap().clone());
+                    }
+                    Table::TypeRef(_) => {} // TODO
+                    _ => unreachable!(),
+                }
+            }
         }
 
         self.setup_all_class_method_table();
-
-        self.setup_info.clear();
     }
 
     pub fn define_all_class(&mut self) {
-        let typedefs = self.metadata.get_table(TableKind::TypeDef);
-        let fields = self.metadata.get_table(TableKind::Field);
-        let methoddefs = self.metadata.get_table(TableKind::MethodDef);
-
-        for (i, typedef) in typedefs.iter().enumerate() {
+        for (i, typedef) in self
+            .metadata
+            .get_table(TableKind::TypeDef)
+            .iter()
+            .enumerate()
+        {
             let typedef = retrieve!(typedef, Table::TypeDef);
-            let next_typedef = typedefs.get(i + 1);
-            let field_list_bgn = typedef.field_list as usize - 1;
-            let method_list_bgn = typedef.method_list as usize - 1;
-            let (field_list_end, method_list_end) =
-                next_typedef.map_or((fields.len(), methoddefs.len()), |table| {
-                    let td = retrieve!(table, Table::TypeDef);
-                    (td.field_list as usize - 1, td.method_list as usize - 1)
-                });
             let class_info = ClassInfo::new_ref(
                 ResolutionScope::AssemblyRef {
                     name: self.get_assembly_name().unwrap().clone(),
@@ -230,22 +227,10 @@ impl Image {
                 vec![],
                 None,
             );
-
             self.class_cache.insert(
                 encode_token(TableKind::TypeDef.into(), i as u32 + 1),
                 class_info.clone(),
             );
-
-            self.setup_info
-                .methods
-                .push((class_info.clone(), method_list_bgn..method_list_end));
-            self.setup_info
-                .fields
-                .push((class_info.clone(), field_list_bgn..field_list_end));
-
-            if typedef.extends != 0 {
-                self.setup_info.extends.push((class_info, typedef.extends))
-            }
         }
     }
 
@@ -367,26 +352,6 @@ impl Image {
             }
         }
         None
-    }
-}
-
-impl SetupInfo {
-    pub fn new() -> Self {
-        Self {
-            methods: vec![],
-            fields: vec![],
-            extends: vec![],
-        }
-    }
-
-    pub fn empty(&self) -> bool {
-        self.methods.len() == 0 && self.fields.len() == 0 && self.extends.len() == 0
-    }
-
-    pub fn clear(&mut self) {
-        self.methods.clear();
-        self.fields.clear();
-        self.extends.clear();
     }
 }
 
