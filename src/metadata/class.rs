@@ -3,7 +3,7 @@ use std::{cell::RefCell, fmt, rc::Rc};
 
 pub type ClassInfoRef = Rc<RefCell<ClassInfo>>;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct ClassInfo {
     pub resolution_scope: ResolutionScope,
     pub name: String,
@@ -24,6 +24,14 @@ pub struct ClassField {
 pub enum ResolutionScope {
     AssemblyRef { name: String },
     None, // TODO
+}
+
+impl PartialEq for ClassInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.resolution_scope == other.resolution_scope
+            && self.name == other.name
+            && self.namespace == other.namespace
+    }
 }
 
 impl ClassInfo {

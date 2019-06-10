@@ -74,7 +74,7 @@ impl Image {
 
             // Already loaded
             if let Some(asm) = loaded.get(name) {
-                self.asm_refs.insert(name.clone(), asm.clone());
+                self.asm_refs.insert(name.to_string(), asm.clone());
                 continue;
             }
 
@@ -89,9 +89,9 @@ impl Image {
             )
             .unwrap();
 
-            loaded.insert(name.clone(), asm.clone());
+            loaded.insert(name.to_string(), asm.clone());
 
-            self.asm_refs.insert(name.clone(), asm);
+            self.asm_refs.insert(name.to_string(), asm);
         }
     }
 
@@ -104,8 +104,8 @@ impl Image {
         {
             let token = encode_token(TableKind::TypeRef.into(), i as u32 + 1);
             let tref = retrieve!(typeref, Table::TypeRef);
-            let namespace = self.get_string(tref.type_namespace).as_str();
-            let name = self.get_string(tref.type_name).as_str();
+            let namespace = self.get_string(tref.type_namespace);
+            let name = self.get_string(tref.type_name);
             let asm = retrieve!(
                 self.metadata
                     .get_table_entry(tref.resolution_scope_decoded())
@@ -129,7 +129,7 @@ impl Image {
                 .unwrap()
                 .borrow()
                 .image
-                .find_class(TypePath(vec![asm_name.as_str(), namespace, name]))
+                .find_class(TypePath(vec![asm_name, namespace, name]))
                 .unwrap();
 
             self.class_cache.insert(token, class.clone());
@@ -169,7 +169,7 @@ impl Image {
                 .iter()
                 .map(|t| {
                     let ft = retrieve!(t, Table::Field);
-                    let name = self.get_string(ft.name).clone();
+                    let name = self.get_string(ft.name).to_string();
                     let mut sig = self.get_blob(ft.signature).iter();
                     assert_eq!(sig.next().unwrap(), &0x06);
                     let ty = Type::into_type(self, &mut sig).unwrap();
@@ -184,9 +184,7 @@ impl Image {
             let mut methods = vec![];
             for mdef in &self.metadata.get_table(TableKind::MethodDef)[method_range] {
                 let mdef = retrieve!(mdef, Table::MethodDef);
-                let method = pe_parser
-                    .read_method(self, class.clone(), mdef.rva)
-                    .unwrap();
+                let method = pe_parser.read_method(self, &class, mdef.rva).unwrap();
                 self.method_cache.insert(mdef.rva, method.clone());
                 methods.push(method)
             }
@@ -219,7 +217,7 @@ impl Image {
             let typedef = retrieve!(typedef, Table::TypeDef);
             let class_info = ClassInfo::new_ref(
                 ResolutionScope::AssemblyRef {
-                    name: self.get_assembly_name().unwrap().clone(),
+                    name: self.get_assembly_name().unwrap().to_string(),
                 },
                 self.get_string(typedef.type_namespace),
                 self.get_string(typedef.type_name),
@@ -234,7 +232,7 @@ impl Image {
         }
     }
 
-    fn get_assembly_name(&self) -> Option<&String> {
+    fn get_assembly_name(&self) -> Option<&str> {
         let asm = retrieve!(
             self.metadata.get_table(TableKind::Assembly).get(0)?,
             Table::Assembly
@@ -283,8 +281,8 @@ impl Image {
         self.class_cache.get(&token.into())
     }
 
-    pub fn get_string<T: Into<u32>>(&self, n: T) -> &String {
-        self.metadata.strings.get(&n.into()).unwrap()
+    pub fn get_string<T: Into<u32>>(&self, n: T) -> &str {
+        self.metadata.strings.get(&n.into()).unwrap().as_str()
     }
 
     pub fn get_user_string<T: Into<u32>>(&self, n: T) -> &Vec<u16> {
@@ -331,9 +329,9 @@ impl Image {
             self.metadata.get_table_entry(token).unwrap(),
             Table::AssemblyRef
         );
-        let asm_ref_name = self.get_string(assembly_ref_table.name).as_str();
-        let ty_namespace = self.get_string(type_ref_table.type_namespace).as_str();
-        let ty_name = self.get_string(type_ref_table.type_name).as_str();
+        let asm_ref_name = self.get_string(assembly_ref_table.name);
+        let ty_namespace = self.get_string(type_ref_table.type_namespace);
+        let ty_name = self.get_string(type_ref_table.type_name);
         TypePath(vec![asm_ref_name, ty_namespace, ty_name])
     }
 

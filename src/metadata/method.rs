@@ -78,10 +78,10 @@ impl MethodInfo {
         }
     }
 
-    pub fn get_name(&self) -> &String {
+    pub fn get_name(&self) -> &str {
         match self {
-            MethodInfo::MDef(ref m) => &m.name,
-            MethodInfo::MRef(ref m) => &m.name,
+            MethodInfo::MDef(ref m) => m.name.as_str(),
+            MethodInfo::MRef(ref m) => m.name.as_str(),
         }
     }
 

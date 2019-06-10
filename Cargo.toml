@@ -9,6 +9,7 @@ clap = "2.32.0"
 ansi_term = "0.9.0"
 rustc-hash = "1.0.1"
 llvm-sys = "60.0.0"
+id-arena = "2.2.1"
 
 [profile.dev]
 codegen-units = 16

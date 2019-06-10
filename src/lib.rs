@@ -6,5 +6,6 @@ pub mod exec;
 pub mod metadata;
 pub mod util;
 
+extern crate id_arena;
 extern crate llvm_sys as llvm;
 extern crate rustc_hash;

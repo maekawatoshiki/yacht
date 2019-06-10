@@ -105,7 +105,7 @@ impl PEParser {
                 .unwrap(),
             Table::Assembly
         );
-        let name = image.get_string(asm.name).clone();
+        let name = image.get_string(asm.name).to_string();
 
         Some(Assembly { name, image })
     }
@@ -113,7 +113,7 @@ impl PEParser {
     pub fn read_method(
         &mut self,
         image: &Image,
-        class: ClassInfoRef,
+        class: &ClassInfoRef,
         rva: u32,
     ) -> Option<MethodInfoRef> {
         let text_section = image
@@ -129,7 +129,7 @@ impl PEParser {
     fn read_method_body(
         &mut self,
         image: &Image,
-        class: ClassInfoRef,
+        class: &ClassInfoRef,
         rva: u32,
         start: u64,
     ) -> Option<MethodInfoRef> {
@@ -147,7 +147,7 @@ impl PEParser {
             (
                 *impl_flags,
                 *flags,
-                image.get_string(*name).clone(),
+                image.get_string(*name).to_string(),
                 SignatureParser::new(sig)
                     .parse_method_def_sig(image)
                     .unwrap(),
@@ -170,7 +170,7 @@ impl PEParser {
                     body,
                     locals_ty: vec![],
                     ty,
-                    class,
+                    class: class.clone(),
                 }))))
             }
             MethodHeaderType::FatFormat {
@@ -212,7 +212,7 @@ impl PEParser {
                     body,
                     locals_ty,
                     ty,
-                    class,
+                    class: class.clone(),
                 }))))
             }
         }

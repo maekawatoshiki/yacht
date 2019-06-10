@@ -6,6 +6,7 @@ use crate::{
     metadata::{assembly::*, class::*, image::*, metadata::*, method::*, signature::*, token::*},
     util::{name_path::*, resolver::*},
 };
+use id_arena;
 use llvm;
 use llvm::{core::*, prelude::*};
 use rustc_hash::FxHashMap;
@@ -13,6 +14,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::CString;
 use std::ptr;
+
+type TypeId = id_arena::Id<Type>;
 
 thread_local! {
     pub static STRING_METHOD_TABLE_PTR: RefCell<Option<MethodTablePtrTy>> = {
@@ -46,9 +49,9 @@ pub enum BasicBlockInfo {
     Unpositioned(LLVMBasicBlockRef),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TypedValue {
-    pub ty: Type,
+    pub ty: id_arena::Id<Type>,
     pub val: LLVMValueRef,
 }
 
@@ -80,6 +83,9 @@ pub struct SharedEnvironment {
 
     /// LLVM Pass Manager
     pub pass_mgr: LLVMPassManagerRef,
+
+    /// Id arena for ``Type``
+    pub ty_arena: id_arena::Arena<Type>,
 }
 
 #[derive(Clone)]
@@ -401,7 +407,7 @@ impl<'a> JITCompiler<'a> {
             .image
             .method_cache
             .iter()
-            .map(|(_, minforef)| minforef.borrow().as_mdef().clone())
+            .map(|(_, minforef)| minforef.borrow().clone().into_mdef())
             .collect::<Vec<MethodDefInfo>>();
 
         for m in methods {
@@ -433,7 +439,7 @@ impl<'a> JITCompiler<'a> {
                 JITCompiler::new_without_mscorlib_init(&mut *asm, &mut self.shared_env);
             compiler.define_all_class();
             compiler.define_all_method();
-            asm_envs.push(compiler.asm_env.clone());
+            asm_envs.push(compiler.asm_env);
         }
 
         for (asm_env, (_name, asmref)) in asm_envs.into_iter().zip(asms.iter()) {
@@ -450,12 +456,12 @@ impl<'a> JITCompiler<'a> {
         }
     }
 
-    unsafe fn get_local_ty(&mut self, id: usize) -> &Type {
-        &self.env.locals.get(&id).unwrap().ty
+    unsafe fn get_local_ty(&mut self, id: usize) -> TypeId {
+        self.env.locals.get(&id).unwrap().ty
     }
 
-    unsafe fn get_argument_ty(&mut self, id: usize) -> &Type {
-        &self.env.arguments.get(&id).unwrap().ty
+    unsafe fn get_argument_ty(&mut self, id: usize) -> TypeId {
+        self.env.arguments.get(&id).unwrap().ty
     }
 
     unsafe fn get_local(&mut self, id: usize, ty: Option<&Type>) -> LLVMValueRef {
@@ -476,10 +482,9 @@ impl<'a> JITCompiler<'a> {
         }
 
         let var = LLVMBuildAlloca(builder, ty.unwrap().to_llvmty(self), cstr0!());
+        let ty_id = self.shared_env.type_id(ty.unwrap());
 
-        self.env
-            .locals
-            .insert(id, TypedValue::new(ty.unwrap().clone(), var));
+        self.env.locals.insert(id, TypedValue::new(ty_id, var));
 
         var
     }
@@ -502,10 +507,9 @@ impl<'a> JITCompiler<'a> {
         }
 
         let var = LLVMBuildAlloca(builder, ty.unwrap().to_llvmty(self), cstr0!());
+        let ty_id = self.shared_env.type_id(ty.unwrap());
 
-        self.env
-            .arguments
-            .insert(id, TypedValue::new(ty.unwrap().clone(), var));
+        self.env.arguments.insert(id, TypedValue::new(ty_id, var));
 
         var
     }
@@ -596,7 +600,7 @@ impl<'a> JITCompiler<'a> {
             for TypedValue { val, ty } in &phi_stacks[0].stack {
                 let phi = LLVMBuildPhi(self.shared_env.builder, LLVMTypeOf(*val), cstr0!());
                 LLVMAddIncoming(phi, vec![*val].as_mut_ptr(), vec![src_bb].as_mut_ptr(), 1);
-                stack.push(TypedValue::new(ty.clone(), phi));
+                stack.push(TypedValue::new(*ty, phi));
             }
 
             for phi_stack in &phi_stacks[1..] {
@@ -620,7 +624,7 @@ impl<'a> JITCompiler<'a> {
         macro_rules! binop { ($iop:ident, $fop:ident) => {{
             let val2 = stack.pop().unwrap();
             let val1 = stack.pop().unwrap();
-            stack.push(match val1.ty.base {
+            stack.push(match self.shared_env.ty_arena[val1.ty].base {
                 ElementType::Char | ElementType::I4 | ElementType::U4 => TypedValue::new(val1.ty,
                                                   concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val1.val, val2.val, cstr0!())),
                 ElementType::R8 => TypedValue::new(val1.ty,
@@ -631,7 +635,7 @@ impl<'a> JITCompiler<'a> {
         #[rustfmt::skip]
         macro_rules! unaryop { ($iop:ident, $fop:ident) => {{
             let val = stack.pop().unwrap();
-            stack.push(match val.ty.base {
+            stack.push(match self.shared_env.ty_arena[val.ty].base {
                 ElementType::Char | ElementType::I4 | ElementType::U4 => TypedValue::new(val.ty,
                                                   concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val.val, cstr0!())),
                 ElementType::R8 => TypedValue::new(val.ty,
@@ -642,19 +646,19 @@ impl<'a> JITCompiler<'a> {
         #[rustfmt::skip]
         macro_rules! push_i4 { ($n:expr) => {
              stack.push(TypedValue::new(
-                Type::i4_ty(), self.llvm_int32($n as u64),
+                self.shared_env.type_id(&Type::i4_ty()), self.llvm_int32($n as u64),
             ))
         }}
         #[rustfmt::skip]
         macro_rules! push_r8 { ($n:expr) => {
              stack.push(TypedValue::new(
-                Type::r8_ty(), self.llvm_real($n),
+                self.shared_env.type_id(&Type::r8_ty()), self.llvm_real($n),
             ))
         }}
         #[rustfmt::skip]
         macro_rules! ldloc { ($n:expr) => {
             stack.push(TypedValue::new(
-                self.get_local_ty($n).clone(),
+                self.get_local_ty($n),
                 LLVMBuildLoad(self.shared_env.builder, self.get_local($n, None), cstr0!()),
             ))
         }}
@@ -668,7 +672,7 @@ impl<'a> JITCompiler<'a> {
         #[rustfmt::skip]
         macro_rules! ldarg { ($n:expr) => {
             stack.push(TypedValue::new(
-                self.get_argument_ty($n).clone(),
+                self.get_argument_ty($n),
                 LLVMBuildLoad(self.shared_env.builder, self.get_argument($n, None), cstr0!()),
             ))
         }}
@@ -735,7 +739,7 @@ impl<'a> JITCompiler<'a> {
                     stack.pop();
                 }
                 Instruction::Dup => {
-                    stack.push(stack.last().unwrap().clone());
+                    stack.push(*stack.last().unwrap());
                 }
                 Instruction::Call(token) => self.gen_instr_call(&mut stack, *token),
                 Instruction::CallVirt(token) => self.gen_instr_callvirt(&mut stack, *token),
@@ -790,7 +794,7 @@ impl<'a> JITCompiler<'a> {
                 | Instruction::Bgt { .. } => {
                     let val2 = stack.pop().unwrap();
                     let val1 = stack.pop().unwrap();
-                    let cond_val = match val1.ty.base {
+                    let cond_val = match self.shared_env.ty_arena[val1.ty].base {
                         ElementType::Char | ElementType::I4 | ElementType::U4 => LLVMBuildICmp(
                             self.shared_env.builder,
                             match instr {
@@ -857,7 +861,10 @@ impl<'a> JITCompiler<'a> {
                         ),
                         LLVMInt32TypeInContext(self.shared_env.context),
                     );
-                    stack.push(TypedValue::new(Type::i4_ty(), cond_val));
+                    stack.push(TypedValue::new(
+                        self.shared_env.type_id(&Type::i4_ty()),
+                        cond_val,
+                    ));
                 }
             }
         }
@@ -888,7 +895,10 @@ impl<'a> JITCompiler<'a> {
             vec![self.llvm_int32(0), self.llvm_int32(1)],
             self.llvm_ptr(Box::into_raw(Box::new(s)) as *mut u8),
         );
-        stack.push(TypedValue::new(Type::string_ty(), new_string));
+        stack.push(TypedValue::new(
+            self.shared_env.type_id(&Type::string_ty()),
+            new_string,
+        ));
     }
 
     unsafe fn gen_instr_call(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
@@ -950,37 +960,37 @@ impl<'a> JITCompiler<'a> {
             let args = get_arg_vals_from_stack(stack, msig.params.len(), msig.has_this());
             let ret = compiler.call_function(func, args);
             if !msig.ret.is_void() {
-                stack.push(TypedValue::new(msig.ret.clone(), ret));
+                stack.push(TypedValue::new(compiler.shared_env.type_id(&msig.ret), ret));
             }
         };
 
-        unsafe fn callvirt(
-            compiler: &mut JITCompiler,
-            stack: &mut Vec<TypedValue>,
-            method_name: &String,
-            class: &ClassInfoRef,
-            method_sig: &MethodSignature,
-            method_ty: LLVMTypeRef,
-        ) {
-            let args = get_arg_vals_from_stack(stack, method_sig.params.len(), true);
-            let obj = args[0];
+        macro_rules! callvirt {
+            ($compiler:expr, $stack:expr, $method_name:expr,
+             $class:expr, $method_sig:expr, $method_ty:expr) => {{
+                let args = get_arg_vals_from_stack($stack, $method_sig.params.len(), true);
+                let obj = args[0];
 
-            let method_table =
-                compiler.load_element(obj, vec![compiler.llvm_int32(0), compiler.llvm_int32(0)]);
-            let idx = class
-                .borrow()
-                .method_table
-                .iter()
-                .position(|m| m.borrow().get_name() == method_name)
-                .unwrap() as u64;
-            let raw_vmethod = compiler.load_element(method_table, vec![compiler.llvm_int32(idx)]);
-            let vmethod = compiler.typecast(raw_vmethod, method_ty);
+                let method_table = $compiler
+                    .load_element(obj, vec![$compiler.llvm_int32(0), $compiler.llvm_int32(0)]);
+                let idx = $class
+                    .borrow()
+                    .method_table
+                    .iter()
+                    .position(|m| m.borrow().get_name() == $method_name)
+                    .unwrap() as u64;
+                let raw_vmethod =
+                    $compiler.load_element(method_table, vec![$compiler.llvm_int32(idx)]);
+                let vmethod = $compiler.typecast(raw_vmethod, $method_ty);
 
-            let ret = compiler.call_function(vmethod, args);
-            if !method_sig.ret.is_void() {
-                stack.push(TypedValue::new(method_sig.ret.clone(), ret));
-            }
-        };
+                let ret = $compiler.call_function(vmethod, args);
+                if !$method_sig.ret.is_void() {
+                    $stack.push(TypedValue::new(
+                        $compiler.shared_env.type_id(&$method_sig.ret),
+                        ret,
+                    ));
+                }
+            }};
+        }
 
         match self.assembly.image.metadata.get_table_entry(token).unwrap() {
             Table::MemberRef(mrt) => {
@@ -994,7 +1004,7 @@ impl<'a> JITCompiler<'a> {
                 match class {
                     Table::TypeRef(trt) => {
                         let type_path = self.assembly.image.get_path_from_type_ref_table(trt);
-                        let name = self.assembly.image.get_string(mrt.name).clone();
+                        let name = self.assembly.image.get_string(mrt.name);
                         let ty = self
                             .assembly
                             .image
@@ -1006,13 +1016,13 @@ impl<'a> JITCompiler<'a> {
                         {
                             let method_sig = ty.as_fnptr().unwrap();
                             if is_virtual {
-                                callvirt(
+                                callvirt!(
                                     self,
                                     stack,
-                                    &name,
-                                    &self.assembly.image.get_class(class_token).unwrap().clone(),
+                                    name,
+                                    &self.assembly.image.get_class(class_token).unwrap(),
                                     method_sig,
-                                    LLVMTypeOf(f.llvm_function),
+                                    LLVMTypeOf(f.llvm_function)
                                 );
                             } else {
                                 call(self, stack, f.llvm_function, method_sig);
@@ -1028,13 +1038,13 @@ impl<'a> JITCompiler<'a> {
                 let method = method_ref.borrow();
                 let method_sig = method.as_mdef().ty.as_fnptr().unwrap();
                 if is_virtual {
-                    callvirt(
+                    callvirt!(
                         self,
                         stack,
                         method.get_name(),
                         method.get_class(),
                         method_sig,
-                        LLVMTypeOf(func),
+                        LLVMTypeOf(func)
                     );
                 } else {
                     call(self, stack, func, method_sig);
@@ -1050,7 +1060,10 @@ impl<'a> JITCompiler<'a> {
         match self.assembly.image.metadata.get_table_entry(token).unwrap() {
             Table::Field(f) => {
                 let name = self.assembly.image.get_string(f.name);
-                let class = &obj.ty.as_class().unwrap().borrow();
+                let class = &self.shared_env.ty_arena[obj.ty]
+                    .as_class()
+                    .unwrap()
+                    .borrow();
                 let idx =
                     class.fields.iter().position(|f| &f.name == name).unwrap() + /*method_table=*/1;
                 self.store2element(
@@ -1068,13 +1081,17 @@ impl<'a> JITCompiler<'a> {
         match self.assembly.image.metadata.get_table_entry(token).unwrap() {
             Table::Field(f) => {
                 let name = self.assembly.image.get_string(f.name);
-                let class = &obj.ty.as_class().unwrap().borrow();
-                let (idx, ty) = class
+                let fields = self.shared_env.ty_arena[obj.ty]
+                    .as_class()
+                    .unwrap()
+                    .borrow()
                     .fields
+                    .clone();
+                let (idx, ty) = fields
                     .iter()
                     .enumerate()
                     .find(|(_, f)| &f.name == name)
-                    .map(|(i, f)| (i, f.ty.clone()))
+                    .map(|(i, f)| (i, self.shared_env.type_id(&f.ty)))
                     .unwrap();
                 stack.push(TypedValue::new(
                     ty,
@@ -1113,7 +1130,13 @@ impl<'a> JITCompiler<'a> {
             val: array,
         } = stack.pop().unwrap();
         TypedValue::new(
-            arr_ty.as_szarray().unwrap().elem_ty.clone(),
+            self.shared_env.type_id(
+                &self.shared_env.ty_arena[arr_ty]
+                    .as_szarray()
+                    .unwrap()
+                    .elem_ty
+                    .clone(),
+            ),
             self.load_element(
                 array,
                 vec![LLVMBuildAdd(
@@ -1160,13 +1183,16 @@ impl<'a> JITCompiler<'a> {
             LLVMPointerType(LLVMInt32TypeInContext(self.shared_env.context), 0),
         );
         let index = self.load_element(array, vec![self.llvm_int32(0)]);
-        stack.push(TypedValue::new(Type::i4_ty(), index));
+        stack.push(TypedValue::new(
+            self.shared_env.type_id(&Type::i4_ty()),
+            index,
+        ));
     }
 
     unsafe fn gen_instr_conv_i4(&mut self, stack: &mut Vec<TypedValue>) {
         let value = stack.pop().unwrap().val;
         stack.push(TypedValue::new(
-            Type::i4_ty(),
+            self.shared_env.type_id(&Type::i4_ty()),
             self.typecast(value, LLVMInt32TypeInContext(self.shared_env.context)),
         ))
     }
@@ -1174,7 +1200,7 @@ impl<'a> JITCompiler<'a> {
     unsafe fn gen_instr_conv_r8(&mut self, stack: &mut Vec<TypedValue>) {
         let value = stack.pop().unwrap().val;
         stack.push(TypedValue::new(
-            Type::r8_ty(),
+            self.shared_env.type_id(&Type::r8_ty()),
             self.typecast(value, LLVMDoubleTypeInContext(self.shared_env.context)),
         ))
     }
@@ -1182,7 +1208,7 @@ impl<'a> JITCompiler<'a> {
     unsafe fn gen_instr_conv_r_un(&mut self, stack: &mut Vec<TypedValue>) {
         let value = stack.pop().unwrap().val;
         stack.push(TypedValue::new(
-            Type::r8_ty(),
+            self.shared_env.type_id(&Type::r8_ty()),
             LLVMBuildUIToFP(
                 self.shared_env.builder,
                 value,
@@ -1212,7 +1238,10 @@ impl<'a> JITCompiler<'a> {
                     method_table,
                 );
                 self.store2element(new_obj, vec![self.llvm_int32(0), self.llvm_int32(1)], val);
-                stack.push(TypedValue::new(Type::object_ty(), new_obj));
+                stack.push(TypedValue::new(
+                    self.shared_env.type_id(&Type::object_ty()),
+                    new_obj,
+                ));
             }
             e => unimplemented!("newarr: unimplemented: {:?}", e),
         }
@@ -1248,7 +1277,7 @@ impl<'a> JITCompiler<'a> {
                 ),
                 llvm_szarr_ty,
             );
-            TypedValue::new(szarr_ty, new_arr)
+            TypedValue::new(compiler.shared_env.type_id(&szarr_ty), new_arr)
         }
 
         unsafe fn newarr_typedef<'a>(
@@ -1274,7 +1303,7 @@ impl<'a> JITCompiler<'a> {
                 ),
                 llvm_szarr_ty,
             );
-            TypedValue::new(szarr_ty, new_arr)
+            TypedValue::new(compiler.shared_env.type_id(&szarr_ty), new_arr)
         }
 
         let len = stack.pop().unwrap().val;
@@ -1329,7 +1358,10 @@ impl<'a> JITCompiler<'a> {
                     method_table,
                 );
 
-                stack.push(TypedValue::new(Type::class_ty(class.clone()), new_obj))
+                stack.push(TypedValue::new(
+                    self.shared_env.type_id(&Type::class_ty(class.clone())),
+                    new_obj,
+                ))
             } // TODO
             Table::MethodDef(mdt) => {
                 let method_ref = self.assembly.image.get_method_by_rva(mdt.rva).unwrap();
@@ -1357,7 +1389,8 @@ impl<'a> JITCompiler<'a> {
                 );
 
                 stack.push(TypedValue::new(
-                    Type::class_ty(method.class.clone()),
+                    self.shared_env
+                        .type_id(&Type::class_ty(method.class.clone())),
                     new_obj,
                 ))
             }
@@ -1676,8 +1709,19 @@ impl SharedEnvironment {
                 methods: BuiltinFunctions::new(context, module),
                 class_types: ClassTypesNameResolver::new(context),
                 method_table_map: FxHashMap::default(),
+                ty_arena: id_arena::Arena::new(),
             }
         }
+    }
+
+    pub fn type_id(&mut self, ty: &Type) -> id_arena::Id<Type> {
+        for (id, t) in &self.ty_arena {
+            if t == ty {
+                return id;
+            }
+        }
+
+        self.ty_arena.alloc(ty.clone())
     }
 }
 
@@ -1691,7 +1735,7 @@ impl AssemblyUniqueEnvironment {
 }
 
 impl TypedValue {
-    pub fn new(ty: Type, val: LLVMValueRef) -> Self {
+    pub fn new(ty: id_arena::Id<Type>, val: LLVMValueRef) -> Self {
         Self { ty, val }
     }
 }
