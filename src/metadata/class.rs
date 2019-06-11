@@ -84,6 +84,18 @@ impl ClassInfo {
             method_table: vec![],
         }))
     }
+
+    pub fn get_method_index(&self, name: &str) -> Option<usize> {
+        self.method_table
+            .iter()
+            .position(|m| m.borrow().get_name() == name)
+    }
+
+    pub fn get_field_index(&self, name: &str) -> Option<usize> {
+        self.fields
+            .iter()
+            .position(|f| f.name == name)
+    }
 }
 
 impl ResolutionScope {

@@ -177,7 +177,7 @@ impl Image {
                 })
                 .collect();
 
-            let pe_parser_ref = self.pe_parser.as_ref().unwrap().clone();
+            let pe_parser_ref = self.pe_parser.as_ref().unwrap();
             let mut pe_parser = pe_parser_ref.borrow_mut();
 
             // Set class methods
