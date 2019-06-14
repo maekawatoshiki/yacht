@@ -53,42 +53,25 @@ public class GameOfLife {
   }
 
   static void FillWithGlider(bool[] grid, int grid_width) {
-    grid[25 + grid_width * 1] = true;
-    grid[23 + grid_width * 2] = true;
-    grid[25 + grid_width * 2] = true;
-    grid[13 + grid_width * 3] = true;
-    grid[14 + grid_width * 3] = true;
-    grid[21 + grid_width * 3] = true;
-    grid[22 + grid_width * 3] = true;
-    grid[35 + grid_width * 3] = true;
-    grid[36 + grid_width * 3] = true;
-    grid[12 + grid_width * 4] = true;
-    grid[16 + grid_width * 4] = true;
-    grid[21 + grid_width * 4] = true;
-    grid[22 + grid_width * 4] = true;
-    grid[35 + grid_width * 4] = true;
-    grid[36 + grid_width * 4] = true;
-    grid[1 + grid_width * 5] = true;
-    grid[2 + grid_width * 5] = true;
-    grid[11 + grid_width * 5] = true;
-    grid[17 + grid_width * 5] = true;
-    grid[21 + grid_width * 5] = true;
-    grid[22 + grid_width * 5] = true;
-    grid[1 + grid_width * 6] = true;
-    grid[2 + grid_width * 6] = true;
-    grid[11 + grid_width * 6] = true;
-    grid[15 + grid_width * 6] = true;
-    grid[17 + grid_width * 6] = true;
-    grid[18 + grid_width * 6] = true;
-    grid[23 + grid_width * 6] = true;
-    grid[25 + grid_width * 6] = true;
-    grid[11 + grid_width * 7] = true;
-    grid[17 + grid_width * 7] = true;
-    grid[25 + grid_width * 7] = true;
-    grid[12 + grid_width * 8] = true;
-    grid[16 + grid_width * 8] = true;
-    grid[13 + grid_width * 9] = true;
-    grid[14 + grid_width * 9] = true;
+    int x = 0, y = 1;
+    string s = 
+   $@"---------------------------------------------
+      --------------------X------------------------
+      --------------------X-X----------------------
+      ---------------------X-X-------X-------------
+      --------XX-----------X--X------XX------------
+      --------XX-----------X-X--XX----XX-----------
+      --------------------X-X---XX----XXX-------XX-
+      --------------------X-----XX----XX--------XX-
+      -------------------------------XX------------
+      -------------------------------X-------------
+      ---------------------------------------------";
+    for (var i = 0; i < s.Length; i++) {
+      var c = s[i];
+      if (c == '\n') { y++; x = 0; continue; }
+      if (c == 'X')  grid[x + grid_width * y] = true;
+      x++;
+    }
   }
 
   public static void Main() {
@@ -98,7 +81,7 @@ public class GameOfLife {
     
     FillWithGlider(grid, grid_width);
  
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 10000; i++) {
       DrawGrid(grid, grid_width, grid_height);
       UpdateGrid(grid, copy_grid, grid_width, grid_height);
     }
