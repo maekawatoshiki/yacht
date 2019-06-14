@@ -11,6 +11,7 @@ use std::{
     io::{BufReader, Read, Seek, SeekFrom},
     iter,
     path::PathBuf,
+    str::from_utf8,
 };
 
 #[derive(Debug)]
@@ -706,27 +707,7 @@ impl PEParser {
                     dprintln!("#~ stream: {:?}", stream);
                     metadata_stream = Some(stream);
                 }
-                "#Strings" => {
-                    dprint!("#Strings stream:");
-                    let mut strings_ = FxHashMap::default();
-                    let mut bytes = vec![];
-                    let mut bgn = 0;
-                    for i in 0..stream_headers[i].size {
-                        let c = self.read_u8()?;
-                        if c == 0 {
-                            strings_
-                                .insert(bgn, ::std::str::from_utf8(&bytes).unwrap().to_string());
-                            bytes.clear();
-                            bgn = i + 1;
-                            dprint!(" ");
-                        } else {
-                            dprint!("{}", c as char);
-                            bytes.push(c);
-                        }
-                    }
-                    dprintln!("");
-                    strings = Some(strings_);
-                }
+                "#Strings" => strings = self.read_metadata_streams_strings(&stream_headers[i]),
                 "#US" => {
                     let mut user_strings_ = FxHashMap::default();
                     let mut bytes = vec![];
@@ -813,6 +794,31 @@ impl PEParser {
             blob: blob.unwrap(),
             guid: guid.unwrap(),
         })
+    }
+
+    // self.read_metadata_streams_strings();
+    fn read_metadata_streams_strings(
+        &mut self,
+        sh: &StreamHeader,
+    ) -> Option<FxHashMap<u32, String>> {
+        let mut strings = FxHashMap::default();
+        let mut bytes = vec![];
+        let mut bgn = 0;
+
+        for i in 0..sh.size {
+            let c = self.read_u8()?;
+            if c == 0 {
+                strings.insert(bgn, from_utf8(&bytes).unwrap().to_string());
+                bytes.clear();
+                bgn = i + 1;
+            } else {
+                bytes.push(c);
+            }
+        }
+
+        dprintln!("#Strings stream: {:?}", strings);
+
+        Some(strings)
     }
 
     fn read_struct<T>(&mut self) -> Option<T> {
