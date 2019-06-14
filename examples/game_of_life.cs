@@ -81,7 +81,7 @@ public class GameOfLife {
     
     FillWithGlider(grid, grid_width);
  
-    for (int i = 0; i < 10000; i++) {
+    for (int i = 0; i < 100; i++) {
       DrawGrid(grid, grid_width, grid_height);
       UpdateGrid(grid, copy_grid, grid_width, grid_height);
     }

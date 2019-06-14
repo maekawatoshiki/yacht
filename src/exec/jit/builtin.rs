@@ -356,7 +356,7 @@ pub fn string_to_string(string: *mut u8) -> *mut u8 {
     string
 }
 
-// TODO: Currently use boehm-gc. Replace with better way in the future.
+// TODO: Currently using boehm-gc. Replace with better way in the future.
 #[link(name = "gc")]
 extern "C" {
     fn GC_malloc(len: u32) -> *mut u8;

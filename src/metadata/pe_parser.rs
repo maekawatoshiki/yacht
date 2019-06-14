@@ -702,87 +702,11 @@ impl PEParser {
                 ))
                 .ok()?;
             match stream_headers[i].name.as_str() {
-                "#~" => {
-                    let stream = self.read_metadata_stream()?;
-                    dprintln!("#~ stream: {:?}", stream);
-                    metadata_stream = Some(stream);
-                }
+                "#~" => metadata_stream = self.read_metadata_streams_metadata_stream(),
                 "#Strings" => strings = self.read_metadata_streams_strings(&stream_headers[i]),
-                "#US" => {
-                    let mut user_strings_ = FxHashMap::default();
-                    let mut bytes = vec![];
-                    let mut count = 0;
-
-                    while count < stream_headers[i].size {
-                        let bgn = count;
-                        let (len, read_bytes) = self.read_blob_length()?;
-                        count += read_bytes;
-
-                        /* read 2 bytes each so divide len by 2 */
-                        for _ in 0..len / 2 {
-                            bytes.push(self.read_u16()?);
-                        }
-
-                        if len % 2 == 1 {
-                            // Consume additional one byte
-                            self.read_u8()?; // TODO
-                        }
-
-                        user_strings_.insert(bgn as u32, bytes.clone());
-                        bytes.clear();
-                        count += len as u32;
-                    }
-
-                    when_debug!(for (i, us) in &user_strings_ {
-                        dprintln!("#US({:02X}): '{}'", i, String::from_utf16(&us).ok()?)
-                    });
-
-                    user_strings = Some(user_strings_);
-                }
-                "#Blob" => {
-                    let mut blob_ = FxHashMap::default();
-                    let mut bytes = vec![];
-                    let mut count = 0;
-
-                    while count < stream_headers[i].size {
-                        let bgn = count;
-                        let (len, read_bytes) = self.read_blob_length()?;
-                        count += read_bytes;
-
-                        for _ in 0..len {
-                            bytes.push(self.read_u8()?);
-                        }
-
-                        blob_.insert(bgn as u32, bytes.clone());
-                        bytes.clear();
-                        count += len as u32;
-                    }
-
-                    dprintln!("#Blob stream: {:?}", blob_);
-                    blob = Some(blob_);
-                }
-                "#GUID" => {
-                    let data1 = self.read_u32()?;
-                    let data2 = self.read_u16()?;
-                    let data3 = self.read_u16()?;
-                    let mut data4 = [0u8; 8];
-                    self.read_bytes(&mut data4)?;
-                    guid = Some(format!(
-                        "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-                        data1,
-                        data2,
-                        data3,
-                        data4[0],
-                        data4[1],
-                        data4[2],
-                        data4[3],
-                        data4[4],
-                        data4[5],
-                        data4[6],
-                        data4[7],
-                    ));
-                    dprintln!("#GUID stream: {}", guid.as_ref().unwrap());
-                }
+                "#US" => user_strings = self.read_metadata_streams_user_strings(&stream_headers[i]),
+                "#Blob" => blob = self.read_metadata_streams_blob(&stream_headers[i]),
+                "#GUID" => guid = self.read_metadata_streams_guid(),
                 _ => unreachable!(),
             }
         }
@@ -796,7 +720,12 @@ impl PEParser {
         })
     }
 
-    // self.read_metadata_streams_strings();
+    fn read_metadata_streams_metadata_stream(&mut self) -> Option<MetaDataStream> {
+        let stream = self.read_metadata_stream()?;
+        dprintln!("#~ stream: {:?}", stream);
+        Some(stream)
+    }
+
     fn read_metadata_streams_strings(
         &mut self,
         sh: &StreamHeader,
@@ -816,9 +745,99 @@ impl PEParser {
             }
         }
 
-        dprintln!("#Strings stream: {:?}", strings);
+        when_debug!(for (i, s) in &strings {
+            dprintln!("#Strings({:02X}): '{}'", i, s)
+        });
 
         Some(strings)
+    }
+
+    fn read_metadata_streams_user_strings(
+        &mut self,
+        sh: &StreamHeader,
+    ) -> Option<FxHashMap<u32, Vec<u16>>> {
+        let mut user_strings = FxHashMap::default();
+        let mut bytes = vec![];
+        let mut count = 0;
+
+        while count < sh.size {
+            let bgn = count;
+            let (len, read_bytes) = self.read_blob_length()?;
+            count += read_bytes;
+
+            /* read 2 bytes each so divide len by 2 */
+            for _ in 0..len / 2 {
+                bytes.push(self.read_u16()?);
+            }
+
+            if len % 2 == 1 {
+                // Consume additional one byte
+                self.read_u8()?; // TODO
+            }
+
+            user_strings.insert(bgn as u32, bytes.clone());
+            bytes.clear();
+            count += len as u32;
+        }
+
+        when_debug!(for (i, us) in &user_strings {
+            dprintln!("#US({:02X}): '{}'", i, String::from_utf16(&us).ok()?)
+        });
+
+        Some(user_strings)
+    }
+
+    fn read_metadata_streams_blob(&mut self, sh: &StreamHeader) -> Option<FxHashMap<u32, Vec<u8>>> {
+        let mut blob = FxHashMap::default();
+        let mut bytes = vec![];
+        let mut count = 0;
+
+        while count < sh.size {
+            let bgn = count;
+            let (len, read_bytes) = self.read_blob_length()?;
+            count += read_bytes;
+
+            for _ in 0..len {
+                bytes.push(self.read_u8()?);
+            }
+
+            blob.insert(bgn as u32, bytes.clone());
+            bytes.clear();
+            count += len as u32;
+        }
+
+        when_debug!(for (i, b) in &blob {
+            dprintln!("#Blob({:02X}): {:?}", i, b)
+        });
+
+        Some(blob)
+    }
+
+    fn read_metadata_streams_guid(&mut self) -> Option<String> {
+        let data1 = self.read_u32()?;
+        let data2 = self.read_u16()?;
+        let data3 = self.read_u16()?;
+        let mut data4 = [0u8; 8];
+        self.read_bytes(&mut data4)?;
+
+        let guid = format!(
+            "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+            data1,
+            data2,
+            data3,
+            data4[0],
+            data4[1],
+            data4[2],
+            data4[3],
+            data4[4],
+            data4[5],
+            data4[6],
+            data4[7],
+        );
+
+        dprintln!("#GUID: {}", guid);
+
+        Some(guid)
     }
 
     fn read_struct<T>(&mut self) -> Option<T> {
