@@ -712,11 +712,11 @@ impl PEParser {
         }
 
         Some(MetaDataStreams {
-            metadata_stream: metadata_stream.unwrap(),
-            strings: strings.unwrap(),
-            user_strings: user_strings.unwrap(),
-            blob: blob.unwrap(),
-            guid: guid.unwrap(),
+            metadata_stream: metadata_stream?,
+            strings: strings?,
+            user_strings: user_strings?,
+            blob: blob?,
+            guid: guid?,
         })
     }
 
