@@ -625,8 +625,9 @@ impl<'a> JITCompiler<'a> {
             let val2 = stack.pop().unwrap();
             let val1 = stack.pop().unwrap();
             stack.push(match self.shared_env.ty_arena[val1.ty].base {
-                ElementType::Char | ElementType::I4 | ElementType::U4 => TypedValue::new(val1.ty,
-                                                  concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val1.val, val2.val, cstr0!())),
+                ElementType::Char | ElementType::I4 | ElementType::U4 | ElementType::I8 => TypedValue::new(val1.ty,
+                                                  concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val1.val, 
+                                                            self.typecast(val2.val, LLVMTypeOf(val1.val)), cstr0!())),
                 ElementType::R8 => TypedValue::new(val1.ty,
                                                   concat_idents!(LLVMBuild, $fop)(self.shared_env.builder, val1.val, val2.val, cstr0!())),
                 _ => unimplemented!()
@@ -683,6 +684,14 @@ impl<'a> JITCompiler<'a> {
                 self.typecast(stack.pop().unwrap().val,
                     LLVMGetElementType(LLVMTypeOf(val))), val);
         }}; }
+        #[rustfmt::skip]
+        macro_rules! conv { ($ty:expr) => {{
+            let val = stack.pop().unwrap().val;
+            stack.push(TypedValue::new(
+                self.shared_env.type_id(&$ty),
+                self.typecast(val, LLVMInt32TypeInContext(self.shared_env.context)),
+            ))
+        }}; }
 
         let code = &block.code;
 
@@ -732,8 +741,9 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Ldarg_3 => ldarg!(3),
                 Instruction::Ldarg_S(n) => ldarg!(*n as usize),
                 Instruction::Ldlen => self.gen_instr_ldlen(&mut stack),
-                Instruction::Conv_I4 => self.gen_instr_conv_i4(&mut stack),
-                Instruction::Conv_R8 => self.gen_instr_conv_r8(&mut stack),
+                Instruction::Conv_I4 => conv!(Type::i4_ty()),
+                Instruction::Conv_I8 => conv!(Type::i8_ty()),
+                Instruction::Conv_R8 => conv!(Type::r8_ty()),
                 Instruction::Conv_R_un => self.gen_instr_conv_r_un(&mut stack),
                 Instruction::Pop => {
                     stack.pop();
@@ -751,6 +761,7 @@ impl<'a> JITCompiler<'a> {
                 Instruction::Mul => binop!(Mul, FMul),
                 Instruction::Div => binop!(SDiv, FDiv),
                 Instruction::Rem => binop!(SRem, FRem),
+                Instruction::Rem_un => binop!(URem, FRem),
                 Instruction::Xor => binop!(Xor, Xor),
                 Instruction::Shl => binop!(Shl, Shl),
                 Instruction::Shr => binop!(AShr, AShr),
@@ -795,23 +806,29 @@ impl<'a> JITCompiler<'a> {
                     let val2 = stack.pop().unwrap();
                     let val1 = stack.pop().unwrap();
                     let cond_val = match self.shared_env.ty_arena[val1.ty].base {
-                        ElementType::Char | ElementType::I4 | ElementType::U4 => LLVMBuildICmp(
-                            self.shared_env.builder,
-                            match instr {
-                                Instruction::Bge { .. } => llvm::LLVMIntPredicate::LLVMIntSGE,
-                                Instruction::Bge_un { .. } => llvm::LLVMIntPredicate::LLVMIntUGE,
-                                Instruction::Blt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
-                                Instruction::Ble { .. } => llvm::LLVMIntPredicate::LLVMIntSLE,
-                                Instruction::Ble_un { .. } => llvm::LLVMIntPredicate::LLVMIntULE,
-                                Instruction::Bgt { .. } => llvm::LLVMIntPredicate::LLVMIntSGT,
-                                Instruction::Beq { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
-                                Instruction::Bne_un { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
-                                _ => unreachable!(),
-                            },
-                            val1.val,
-                            val2.val,
-                            cstr0!(),
-                        ),
+                        ElementType::Char | ElementType::I4 | ElementType::U4 | ElementType::I8 => {
+                            LLVMBuildICmp(
+                                self.shared_env.builder,
+                                match instr {
+                                    Instruction::Bge { .. } => llvm::LLVMIntPredicate::LLVMIntSGE,
+                                    Instruction::Bge_un { .. } => {
+                                        llvm::LLVMIntPredicate::LLVMIntUGE
+                                    }
+                                    Instruction::Blt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
+                                    Instruction::Ble { .. } => llvm::LLVMIntPredicate::LLVMIntSLE,
+                                    Instruction::Ble_un { .. } => {
+                                        llvm::LLVMIntPredicate::LLVMIntULE
+                                    }
+                                    Instruction::Bgt { .. } => llvm::LLVMIntPredicate::LLVMIntSGT,
+                                    Instruction::Beq { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
+                                    Instruction::Bne_un { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
+                                    _ => unreachable!(),
+                                },
+                                val1.val,
+                                self.typecast(val2.val, LLVMTypeOf(val1.val)),
+                                cstr0!(),
+                            )
+                        }
                         ElementType::R8 => LLVMBuildFCmp(
                             self.shared_env.builder,
                             match instr {
@@ -1185,22 +1202,6 @@ impl<'a> JITCompiler<'a> {
             self.shared_env.type_id(&Type::i4_ty()),
             index,
         ));
-    }
-
-    unsafe fn gen_instr_conv_i4(&mut self, stack: &mut Vec<TypedValue>) {
-        let value = stack.pop().unwrap().val;
-        stack.push(TypedValue::new(
-            self.shared_env.type_id(&Type::i4_ty()),
-            self.typecast(value, LLVMInt32TypeInContext(self.shared_env.context)),
-        ))
-    }
-
-    unsafe fn gen_instr_conv_r8(&mut self, stack: &mut Vec<TypedValue>) {
-        let value = stack.pop().unwrap().val;
-        stack.push(TypedValue::new(
-            self.shared_env.type_id(&Type::r8_ty()),
-            self.typecast(value, LLVMDoubleTypeInContext(self.shared_env.context)),
-        ))
     }
 
     unsafe fn gen_instr_conv_r_un(&mut self, stack: &mut Vec<TypedValue>) {
@@ -1632,6 +1633,7 @@ impl CastIntoLLVMType for Type {
             ElementType::Char => LLVMInt32TypeInContext(ctx),
             ElementType::I4 => LLVMInt32TypeInContext(ctx),
             ElementType::U4 => LLVMInt32TypeInContext(ctx),
+            ElementType::I8 => LLVMInt64TypeInContext(ctx),
             ElementType::R8 => LLVMDoubleTypeInContext(ctx),
             ElementType::String => compiler
                 .shared_env

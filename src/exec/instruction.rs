@@ -45,6 +45,7 @@ pub enum Instruction {
     Starg_S(u8),
     Ldlen,
     Conv_I4,
+    Conv_I8,
     Conv_R8,
     Conv_R_un,
     Dup,
@@ -68,6 +69,7 @@ pub enum Instruction {
     Mul,
     Div,
     Rem,
+    Rem_un,
     Xor,
     Shl,
     Shr,
@@ -127,6 +129,7 @@ pub mod il_instr {
     pub const STARG_S    : u8 = 0x10;
     pub const LDLEN      : u8 = 0x8e;
     pub const CONV_I4    : u8 = 0x69;
+    pub const CONV_I8    : u8 = 0x6a;
     pub const CONV_R8    : u8 = 0x6c;
     pub const CONV_R_UN  : u8 = 0x76;
     pub const DUP        : u8 = 0x25;
@@ -150,6 +153,7 @@ pub mod il_instr {
     pub const MUL        : u8 = 0x5a;
     pub const DIV        : u8 = 0x5b;
     pub const REM        : u8 = 0x5d;
+    pub const REM_UN     : u8 = 0x5e;
     pub const XOR        : u8 = 0x61;
     pub const SHL        : u8 = 0x62;
     pub const SHR        : u8 = 0x63;
@@ -178,10 +182,10 @@ pub mod il_instr {
             LDELEM_I4 | LDELEM_I1 | LDELEM_U1 | LDELEM_REF |
             STLOC_0 | STLOC_1 | STLOC_2 | STLOC_3 |
             STELEM_I4 | STELEM_I1 | STELEM_REF |
-            ADD | SUB | MUL | DIV | REM | XOR 
+            ADD | SUB | MUL | DIV | REM | REM_UN | XOR 
             | SHL | SHR | SHR_UN | NEG | 
             RET | POP | DUP |
-            CONV_I4 | CONV_R8 | CONV_R_UN |
+            CONV_I4 | CONV_I8 | CONV_R8 | CONV_R_UN |
             LDLEN => 1,
             LDLOC_S |
             STLOC_S |
