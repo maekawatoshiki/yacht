@@ -8,11 +8,11 @@ RUN set -x && \
   apt-get install software-properties-common -y;
 
 RUN set -x && \
-  apt-add-repository -y "deb http://apt.llvm.org/stretch/ llvm-toolchain-stretch-7 main" && \
-  wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|apt-key add - && \
+  # apt-add-repository -y "deb http://apt.llvm.org/stretch/ llvm-toolchain-stretch-7 main" && \
+  # wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|apt-key add - && \
   apt-get update && \
-  apt-get install -y llvm-7
-#ln -s /usr/bin/llvm-config-7 /usr/bin/llvm-config;
+  apt-get install -y llvm-6.0 && \
+  ln -s /usr/bin/llvm-config-6.0 /usr/bin/llvm-config;
 
 RUN set -x && \
   apt-get install -y cmake g++ pkg-config jq && \
