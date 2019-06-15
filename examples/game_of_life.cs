@@ -4,13 +4,14 @@ using System;
 
 public class GameOfLife {
   static void DrawGrid(bool[] grid, int grid_width, int grid_height) {
-    Console.WriteLine("\x1b\x5b\x31\x3b\x31\x48\x1b\x5b\x32\x4a-----");
+    string s = "";
     for (int y = 1; y < grid_height; y++) {
       for (int x = 1; x < grid_width; x++) {
-        Console.Write(grid[x + grid_width * y] ? "#" : " ");
+        s += grid[x + grid_width * y] ? "#" : " ";
       }
-      Console.WriteLine("");
+      s += "\n";
     }
+    Console.WriteLine(s);
   }
   
   static void UpdateGrid(bool[] grid, bool[] copy_grid, int grid_width, int grid_height) {

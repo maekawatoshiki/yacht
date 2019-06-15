@@ -957,7 +957,7 @@ impl<'a> JITCompiler<'a> {
             func: LLVMValueRef,
             msig: &MethodSignature,
         ) {
-            let args = get_arg_vals_from_stack(stack, msig.params.len(), msig.has_this());
+            let (_, args) = get_arg_vals_from_stack(stack, msig.params.len(), msig.has_this());
             let ret = compiler.call_function(func, args);
             if !msig.ret.is_void() {
                 stack.push(TypedValue::new(compiler.shared_env.type_id(&msig.ret), ret));
@@ -971,8 +971,11 @@ impl<'a> JITCompiler<'a> {
             method_sig: &MethodSignature,
             method_ty: LLVMTypeRef,
         ) {
-            let args = get_arg_vals_from_stack(stack, method_sig.params.len(), true);
-            let obj = args[0];
+            let (obj_ty_id, args) = get_arg_vals_from_stack(stack, method_sig.params.len(), true);
+            let obj_llvm_ty = compiler.shared_env.ty_arena[obj_ty_id.unwrap()]
+                .clone()
+                .to_llvmty(compiler);
+            let obj = compiler.typecast(args[0], obj_llvm_ty);
 
             let method_table =
                 compiler.load_element(obj, vec![compiler.llvm_int32(0), compiler.llvm_int32(0)]);
@@ -1340,7 +1343,7 @@ impl<'a> JITCompiler<'a> {
                     self.call_memory_alloc(self.get_size_of_llvm_class_type(llvm_class_ty)),
                     llvm_class_ty,
                 );
-                let mut args = get_arg_vals_from_stack(stack, method_sig.params.len(), false);
+                let (_, mut args) = get_arg_vals_from_stack(stack, method_sig.params.len(), false);
                 args.insert(0, new_obj);
 
                 self.call_function(func, args);
@@ -1368,7 +1371,7 @@ impl<'a> JITCompiler<'a> {
                     self.call_memory_alloc(self.get_size_of_llvm_class_type(llvm_class_ty)),
                     llvm_class_ty,
                 );
-                let mut args = get_arg_vals_from_stack(stack, method_sig.params.len(), false);
+                let (_, mut args) = get_arg_vals_from_stack(stack, method_sig.params.len(), false);
                 args.insert(0, new_obj);
 
                 let func = self.get_function_by_rva(mdt.rva);
@@ -1642,7 +1645,11 @@ impl CastIntoLLVMType for Type {
                 let class = &class.borrow();
                 compiler.get_llvm_class_type(class)
             }
-            ElementType::Object => LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
+            ElementType::Object => compiler
+                .shared_env
+                .class_types
+                .get(TypePath(vec!["mscorlib", "System", "Object"]))
+                .unwrap(),
             ElementType::FnPtr(_) => unimplemented!(),
         }
     }
@@ -1842,11 +1849,18 @@ fn get_arg_vals_from_stack(
     stack: &mut Vec<TypedValue>,
     params_len: usize,
     has_this: bool,
-) -> Vec<LLVMValueRef> {
-    stack
-        .drain(stack.len() - params_len - if has_this { 1 } else { 0 }..)
+) -> (Option<TypeId>, Vec<LLVMValueRef>) {
+    let mut args: Vec<LLVMValueRef> = stack
+        .drain((stack.len() - params_len)..)
         .map(|tv| tv.val)
-        .collect()
+        .collect();
+    if has_this {
+        let this = stack.pop().unwrap();
+        args.insert(0, this.val);
+        (Some(this.ty), args)
+    } else {
+        (None, args)
+    }
 }
 
 unsafe fn llvm_const_int32(ctx: LLVMContextRef, n: u64) -> LLVMValueRef {

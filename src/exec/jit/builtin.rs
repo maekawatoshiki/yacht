@@ -1,5 +1,3 @@
-// TODO: GC support for String(Vec<u16>)
-
 use crate::{
     exec::jit::jit::*,
     metadata::signature::*,
@@ -232,6 +230,14 @@ unsafe fn new_system_string(s: String) -> *mut u64 {
     system_string
 }
 
+unsafe fn new_system_string_from_utf16(s: Vec<u16>) -> *mut u64 {
+    let system_string = memory_alloc(16) as *mut u64;
+    *(system_string.offset(0) as *mut MethodTablePtrTy) =
+        STRING_METHOD_TABLE_PTR.with(|smp| smp.borrow().unwrap());
+    *(system_string.offset(1) as *mut *mut Vec<u16>) = new_utf16_string_from_vec_u16(s);
+    system_string
+}
+
 unsafe fn get_virtual_to_string_method(obj: *mut u64) -> fn(*mut u64) -> *mut u64 {
     let method_table = *obj.offset(0) as *mut u64;
     mem::transmute::<u64, fn(*mut u64) -> *mut u64>(*method_table.offset(0))
@@ -245,10 +251,11 @@ unsafe fn convert_object_to_string(obj: *mut u64) -> String {
 
 #[no_mangle]
 unsafe fn concat_str_str(s1: *mut u64, s2: *mut u64) -> *mut u64 {
-    let mut s1 = String::from_utf16_lossy(&*retrieve_utf16_string_from_system_string(s1));
-    let s2 = String::from_utf16_lossy(&*retrieve_utf16_string_from_system_string(s2));
-    s1.push_str(s2.as_str());
-    new_system_string(s1)
+    let mut s1 = (&*retrieve_utf16_string_from_system_string(s1)).clone();
+    let s2 = &*retrieve_utf16_string_from_system_string(s2);
+    s1.extend(s2);
+    // s1.push_str(s2.as_str());
+    new_system_string_from_utf16(s1)
 }
 
 #[no_mangle]
@@ -283,12 +290,12 @@ unsafe fn concat_obj_obj_obj(obj1: *mut u64, obj2: *mut u64, obj3: *mut u64) -> 
 }
 
 #[no_mangle]
-pub unsafe fn write_line_string_obj(system_string: *mut u64, class_int32: *mut u64) {
+pub unsafe fn write_line_string_obj(system_string: *mut u64, system_int32: *mut u64) {
     let string =
         String::from_utf16_lossy({ &*retrieve_utf16_string_from_system_string(system_string) });
-    let to_string = get_virtual_to_string_method(class_int32);
+    let to_string = get_virtual_to_string_method(system_int32);
     let string2 = String::from_utf16_lossy(&*retrieve_utf16_string_from_system_string(to_string(
-        class_int32,
+        system_int32,
     )));
     for (i, s) in string.split("{0}").enumerate() {
         if i > 0 {
@@ -340,13 +347,13 @@ pub fn get_chars_i4(system_string: *mut u64, i: i32) -> i32 {
 
 #[no_mangle]
 pub unsafe fn object_to_string(_obj: *mut u8) -> *mut u64 {
-    new_system_string("X".to_string())
+    new_system_string("[unimplemented]".to_string())
 }
 
 #[no_mangle]
-pub fn int_to_string(class_int32: *mut u64) -> *mut u64 {
+pub fn int_to_string(system_int32: *mut u64) -> *mut u64 {
     unsafe {
-        let value = *class_int32.offset(1) as i32;
+        let value = *system_int32.offset(1) as i32;
         new_system_string(format!("{}", value))
     }
 }
