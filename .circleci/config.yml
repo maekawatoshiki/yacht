@@ -25,7 +25,7 @@ jobs:
             mv /tmp/docker/* /usr/bin
 
       - run: |
-          docker build -t yacht -f Dockerfile_cov .
+          docker build -t yacht -f Dockerfile_kcov .
           docker run --security-opt seccomp=unconfined yacht bash run_kcov.sh $CODECOV_TOKEN
 
       # - run:
