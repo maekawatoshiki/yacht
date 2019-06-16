@@ -626,7 +626,7 @@ impl<'a> JITCompiler<'a> {
             let val1 = stack.pop().unwrap();
             stack.push(match self.shared_env.ty_arena[val1.ty].base {
                 ElementType::Char | ElementType::I4 | ElementType::U4 | ElementType::I8 => TypedValue::new(val1.ty,
-                                                  concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val1.val, 
+                                                  concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val1.val,
                                                             self.typecast(val2.val, LLVMTypeOf(val1.val)), cstr0!())),
                 ElementType::R8 => TypedValue::new(val1.ty,
                                                   concat_idents!(LLVMBuild, $fop)(self.shared_env.builder, val1.val, val2.val, cstr0!())),
@@ -1026,27 +1026,25 @@ impl<'a> JITCompiler<'a> {
                             .assembly
                             .image
                             .get_method_ref_type_from_signature(mrt.signature);
-                        if let Some(f) = self
+                        let f = match self
                             .shared_env
                             .methods
                             .get_method(type_path.with_method_name(&name), &ty)
                         {
-                            let method_sig = ty.as_fnptr().unwrap();
-                            if is_virtual {
-                                let midx =
-                                    (self.assembly.image.get_class(class_token).unwrap().borrow())
-                                        .get_method_index(name)
-                                        .unwrap();
-                                callvirt(
-                                    self,
-                                    stack,
-                                    midx,
-                                    method_sig,
-                                    LLVMTypeOf(f.llvm_function),
-                                );
-                            } else {
-                                call(self, stack, f.llvm_function, method_sig);
-                            }
+                            Some(f) => f,
+                            None => return,
+                        };
+                        let method_sig = ty.as_fnptr().unwrap();
+                        if is_virtual {
+                            let llvm_f_ty = LLVMTypeOf(f.llvm_function);
+                            let midx =
+                                (self.assembly.image.get_class(class_token).unwrap().borrow())
+                                    .get_method_index(name)
+                                    .unwrap();
+                            callvirt(self, stack, midx, method_sig, llvm_f_ty);
+                        } else {
+                            let llvm_f = f.llvm_function;
+                            call(self, stack, llvm_f, method_sig);
                         }
                     }
                     _ => unimplemented!(),
@@ -1740,7 +1738,9 @@ impl SharedEnvironment {
             }
         }
 
-        self.ty_arena.alloc(ty.clone())
+        let ty_cloned = ty.clone();
+
+        self.ty_arena.alloc(ty_cloned)
     }
 }
 
@@ -1875,6 +1875,5 @@ unsafe fn llvm_const_real(ctx: LLVMContextRef, f: f64) -> LLVMValueRef {
 
 unsafe fn llvm_const_ptr(ctx: LLVMContextRef, p: *mut u8) -> LLVMValueRef {
     let ptr_as_int = LLVMConstInt(LLVMInt64TypeInContext(ctx), p as u64, 0);
-    let const_ptr = LLVMConstIntToPtr(ptr_as_int, LLVMPointerType(LLVMInt8TypeInContext(ctx), 0));
-    const_ptr
+    LLVMConstIntToPtr(ptr_as_int, LLVMPointerType(LLVMInt8TypeInContext(ctx), 0))
 }

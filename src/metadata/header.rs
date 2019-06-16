@@ -242,20 +242,20 @@ mod sub_system {
 #[allow(dead_code)]
 mod section_characteristics {
     /// Section contains code.
-    pub const IMAGE_SCN_CNT_CODE: u32 = 0x00000020;
+    pub const IMAGE_SCN_CNT_CODE: u32 = 0x0000_0020;
 
     /// Section contains initialized data.
-    pub const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x00000040;
+    pub const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x0000_0040;
 
     /// Section contains uninitialized data.
-    pub const IMAGE_SCN_CNT_UNINITIALIZED_DATA: u32 = 0x00000080;
+    pub const IMAGE_SCN_CNT_UNINITIALIZED_DATA: u32 = 0x0000_0080;
 
     /// Section can be executed as code.
-    pub const IMAGE_SCN_MEM_EXECUTE: u32 = 0x20000000;
+    pub const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
 
     /// Section can be read.
-    pub const IMAGE_SCN_MEM_READ: u32 = 0x40000000;
+    pub const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
 
     /// Section can be written to.
-    pub const IMAGE_SCN_MEM_WRITE: u32 = 0x80000000;
+    pub const IMAGE_SCN_MEM_WRITE: u32 = 0x8000_0000;
 }

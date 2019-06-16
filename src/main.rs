@@ -18,7 +18,7 @@ fn main() {
         .about("An ECMA-335 implementation written in Rust")
         .arg(Arg::with_name("file").help("Input file name").index(1))
         .setting(AppSettings::ArgRequiredElseHelp);
-    let app_matches = app.clone().get_matches();
+    let app_matches = app.get_matches();
 
     let filename = match app_matches.value_of("file") {
         Some(filename) => PathBuf::from(filename),

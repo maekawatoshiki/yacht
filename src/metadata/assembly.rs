@@ -27,7 +27,7 @@ impl Assembly {
             asm.image.setup_all_class();
         }
 
-        for (_, asm) in &loaded {
+        for asm in loaded.values() {
             let mut ok = asm.borrow_mut();
             ok.image.setup_all_typeref();
             ok.image.setup_all_class();

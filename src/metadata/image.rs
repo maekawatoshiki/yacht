@@ -344,7 +344,7 @@ impl Image {
 
     pub fn find_class<'a, P: Into<TypePath<'a>>>(&self, path_: P) -> Option<ClassInfoRef> {
         let path = path_.into();
-        for (_, info) in &self.class_cache {
+        for info in self.class_cache.values() {
             if (&*info.borrow()).into(): TypePath == path {
                 return Some(info.clone());
             }

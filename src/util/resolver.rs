@@ -101,7 +101,7 @@ impl<T: Debug + Clone> TreeMap<T> {
         let mut values = vec![];
         match self {
             TreeMap::Map(map) => {
-                for (_, elem) in map {
+                for elem in map.values() {
                     values.append(&mut elem.collect_values())
                 }
             }

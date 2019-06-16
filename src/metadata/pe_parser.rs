@@ -541,7 +541,7 @@ impl PEParser {
 
     fn read_metadata_header(&mut self) -> Option<MetaDataHeader> {
         let signature = self.read_u32()?;
-        try_eq!(signature == 0x424A5342);
+        try_eq!(signature == 0x424A_5342);
 
         let _major_version = self.read_u16()?;
         let _minor_version = self.read_u16()?;
@@ -678,7 +678,7 @@ impl PEParser {
             let z = self.read_u8()? as u32;
             Some((((first & 0b0011_1111) << 24) + (x << 16) + (y << 8) + z, 4))
         } else {
-            return None;
+            None
         }
     }
 

@@ -92,9 +92,7 @@ impl ClassInfo {
     }
 
     pub fn get_field_index(&self, name: &str) -> Option<usize> {
-        self.fields
-            .iter()
-            .position(|f| f.name == name)
+        self.fields.iter().position(|f| f.name == name)
     }
 }
 
