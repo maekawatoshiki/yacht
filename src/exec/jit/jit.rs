@@ -632,25 +632,24 @@ impl<'a> JITCompiler<'a> {
         macro_rules! binop { ($iop:ident, $fop:ident) => {{
             let val2 = stack.pop().unwrap();
             let val1 = stack.pop().unwrap();
-            stack.push(match self.shared_env.ty_arena[val1.ty].base {
-                ElementType::Char | ElementType::I4 | ElementType::U4 | ElementType::I8 => TypedValue::new(val1.ty,
-                                                  concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val1.val,
-                                                            self.typecast(val2.val, LLVMTypeOf(val1.val)), cstr0!())),
-                ElementType::R8 => TypedValue::new(val1.ty,
-                                                  concat_idents!(LLVMBuild, $fop)(self.shared_env.builder, val1.val, val2.val, cstr0!())),
-                _ => unimplemented!()
-            })
+            let ty = &self.shared_env.ty_arena[val1.ty];
+            stack.push(if ty.is_int() {
+                TypedValue::new(val1.ty, concat_idents!(LLVMBuild, $iop)(self.shared_env.builder,
+                                val1.val, self.typecast(val2.val, LLVMTypeOf(val1.val)), cstr0!()))
+            } else if ty.is_float() {
+                TypedValue::new(val1.ty, concat_idents!(LLVMBuild, $fop)(self.shared_env.builder,
+                                val1.val, val2.val, cstr0!()))
+            } else { unimplemented!("{:?}", ty) })
         }}}
         #[rustfmt::skip]
         macro_rules! unaryop { ($iop:ident, $fop:ident) => {{
             let val = stack.pop().unwrap();
-            stack.push(match self.shared_env.ty_arena[val.ty].base {
-                ElementType::Char | ElementType::I4 | ElementType::U4 => TypedValue::new(val.ty,
-                                                  concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val.val, cstr0!())),
-                ElementType::R8 => TypedValue::new(val.ty,
-                                                  concat_idents!(LLVMBuild, $fop)(self.shared_env.builder, val.val, cstr0!())),
-                _ => unimplemented!()
-            })
+            let ty = &self.shared_env.ty_arena[val.ty];
+            stack.push(if ty.is_int() {
+                TypedValue::new(val.ty, concat_idents!(LLVMBuild, $iop)(self.shared_env.builder, val.val, cstr0!()))
+            } else if ty.is_float() {
+                TypedValue::new(val.ty, concat_idents!(LLVMBuild, $fop)(self.shared_env.builder, val.val, cstr0!()))
+            } else { unimplemented!("{:?}", ty) });
         }}}
         #[rustfmt::skip]
         macro_rules! push_i4 { ($n:expr) => {

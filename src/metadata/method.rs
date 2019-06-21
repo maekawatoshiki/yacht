@@ -91,11 +91,23 @@ impl MethodInfo {
             MethodInfo::MRef(ref m) => &m.class,
         }
     }
+
+    pub fn is_static(&self) -> bool {
+        match self {
+            MethodInfo::MDef(ref m) => m.is_static(),
+            // MemberRef has no info to determine whether it is static or not
+            MethodInfo::MRef(_) => false,
+        }
+    }
 }
 
 impl MethodDefInfo {
     pub fn is_virtual(&self) -> bool {
         self.flags & method_attributes_flags::VIRTUAL > 0
+    }
+
+    pub fn is_static(&self) -> bool {
+        self.flags & method_attributes_flags::STATIC > 0
     }
 
     pub fn is_new_slot(&self) -> bool {
@@ -110,6 +122,7 @@ impl MethodDefInfo {
 #[rustfmt::skip]
 pub mod method_attributes_flags {
     // TODO: Implement all the flags
+    pub const STATIC  : u16 = 0x0010;
     pub const VIRTUAL : u16 = 0x0040;
     pub const NEW_SLOT: u16 = 0x0100;
 }

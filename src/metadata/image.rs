@@ -264,6 +264,11 @@ impl Image {
 
         for minforef in &class.methods {
             let minfo = minforef.borrow();
+
+            if minfo.is_static() {
+                continue;
+            }
+
             if let Some(m) = method_table
                 .iter_mut()
                 .find(|m| m.borrow().get_name() == minfo.get_name())
