@@ -21,6 +21,7 @@ pub enum ElementType {
     FnPtr(Box<MethodSignature>),
     Ptr(Box<Type>),
     Object,
+    ValueType(ClassInfoRef),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,10 +141,29 @@ impl Type {
             0x1d => Some(Type::new(ElementType::SzArray(Box::new(SzArrayInfo {
                 elem_ty: Type::into_type(image, sig)?,
             })))),
+            0x11 => Type::valuetype_into_type(image, sig),
             // TODO
             e => unimplemented!("{:?}", e),
             // _ => None,
         }
+    }
+
+    fn class_into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
+        let token = decompress_uint(sig).unwrap();
+        let class_ref = image
+            .class_cache
+            .get(&decode_typedef_or_ref_token(token).into())
+            .unwrap();
+        Some(Type::new(ElementType::Class(class_ref.clone())))
+    }
+
+    fn valuetype_into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
+        let token = decompress_uint(sig).unwrap();
+        let class_ref = image
+            .class_cache
+            .get(&decode_typedef_or_ref_token(token).into())
+            .unwrap();
+        Some(Type::new(ElementType::ValueType(class_ref.clone())))
     }
 
     pub fn as_fnptr(&self) -> Option<&MethodSignature> {
@@ -180,13 +200,20 @@ impl Type {
         self.base == ElementType::Void
     }
 
-    fn class_into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
-        let token = decompress_uint(sig).unwrap();
-        let class_ref = image
-            .class_cache
-            .get(&decode_typedef_or_ref_token(token).into())
-            .unwrap();
-        Some(Type::new(ElementType::Class(class_ref.clone())))
+    pub fn is_int(&self) -> bool {
+        match self.base {
+            // Is Bool int?
+            ElementType::Char | ElementType::I4 | ElementType::I8 | ElementType::U4 => true,
+            ElementType::ValueType(ref c) if c.borrow().is_enum() => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_float(&self) -> bool {
+        match self.base {
+            ElementType::R8 => true,
+            _ => false,
+        }
     }
 }
 
@@ -271,6 +298,7 @@ impl fmt::Debug for ElementType {
                 ElementType::FnPtr(f) => format!("FnPtr({:?})", f),
                 ElementType::Ptr(e) => format!("Ptr({:?})", e),
                 ElementType::Object => format!("Object"),
+                ElementType::ValueType(c) => format!("ValueType({})", c.borrow().name),
             }
         )
     }

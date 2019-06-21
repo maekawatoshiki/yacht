@@ -43,6 +43,8 @@ public class Vec {
   public static Vec operator %(Vec a, Vec b) { return new Vec(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x); }
 }
 
+public enum Refl { DIFF, SPEC, REFR };
+
 public class Ray { 
   public Sphere s;
   public double t;
@@ -58,8 +60,8 @@ public class Ray {
 public class Sphere {
   public double rad;       // radius
   public Vec p, e, c;      // position, emission, color
-  public int refl;      // reflection type (DIFFuse, SPECular, REFRactive)
-  public Sphere(double rad_, Vec p_, Vec e_, Vec c_, int refl_) {
+  public Refl refl;      // reflection type (DIFFuse, SPECular, REFRactive)
+  public Sphere(double rad_, Vec p_, Vec e_, Vec c_, Refl refl_) {
     rad = rad_; p = p_; e = e_; c = c_; refl = refl_;
   }
   public double intersect(Ray r) { // returns distance, 0 if nohit
@@ -82,13 +84,13 @@ internal static class Program {
       return obj.e; // *** Added to prevent stack overflow
     }
     if (++depth > 5) if (random.NextDouble() < p) f = f * (1 / p); else return obj.e; //R.R.
-    if (obj.refl == 0) {         // Ideal DIFFUSE reflection
+    if (obj.refl == Refl.DIFF) {         // Ideal DIFFUSE reflection
       double r1 = 2 * Math.PI * random.NextDouble(), r2 = random.NextDouble(), r2s = Math.Sqrt(r2);
       Vec w = nl, u = ((Math.Abs(w.x) > .1 ? new Vec(0, 1, 0) : new Vec(1, 0, 0)) % w).norm(), v = w % u;
       Vec d = (u * Math.Cos(r1) * r2s + v * Math.Sin(r1) * r2s + w * Math.Sqrt(1 - r2)).norm();
       return obj.e + f.mult(radiance(spheres, new Ray(x, d), depth, random));
     }
-    else if (obj.refl == 1) // Ideal SPECULAR reflection
+    else if (obj.refl == Refl.SPEC) // Ideal SPECULAR reflection
       return obj.e + f.mult(radiance(spheres, new Ray(x, r.d - n * 2 * n.dot(r.d)), depth, random));
     Ray reflRay = new Ray(x, r.d - n * 2 * n.dot(r.d));// Ideal dielectric REFRACTION
     bool into = n.dot(nl) > 0;                   // Ray from outside going in?
@@ -111,15 +113,15 @@ internal static class Program {
     var random = new Random(12345);
     
     Sphere[] spheres = new Sphere[] {
-      new Sphere(1e5, new Vec( 1e5+1,40.8,81.6), new Vec(0,0,0),new Vec(.75,.75,.25),0), //Left
-      new Sphere(1e5, new Vec(-1e5+99,40.8,81.6),new Vec(0,0,0),new Vec(.25,.25,.75),0), //Rght
-      new Sphere(1e5, new Vec(50,40.8, 1e5),     new Vec(0,0,0),new Vec(.75,.75,.75),0), //Back
-      new Sphere(1e5, new Vec(50,40.8,-1e5+170), new Vec(0,0,0),new Vec(.75,.75,.75),1), //Frnt
-      new Sphere(1e5, new Vec(50, 1e5, 81.6),    new Vec(0,0,0),new Vec(.75,.75,.75),0), //Botm
-      new Sphere(1e5, new Vec(50,-1e5+81.6,81.6),new Vec(0,0,0),new Vec(.75,.75,.75),0), //Top
-      new Sphere(16.5,new Vec(27,16.5,47),       new Vec(0,0,0),new Vec(1,1,1)*.999, 1), //Mirr
-      new Sphere(16.5,new Vec(73,16.5,78),       new Vec(0,0,0),new Vec(1,1,1)*.999, 2), //Glas
-      new Sphere(600, new Vec(50,681.6-.27,81.6),new Vec(12,12,12),  new Vec(0,0,0), 0), //Lite
+      new Sphere(1e5, new Vec( 1e5+1,40.8,81.6), new Vec(0,0,0),new Vec(.75,.75,.25),Refl.DIFF), //Left
+      new Sphere(1e5, new Vec(-1e5+99,40.8,81.6),new Vec(0,0,0),new Vec(.25,.25,.75),Refl.DIFF), //Rght
+      new Sphere(1e5, new Vec(50,40.8, 1e5),     new Vec(0,0,0),new Vec(.75,.75,.75),Refl.DIFF), //Back
+      new Sphere(1e5, new Vec(50,40.8,-1e5+170), new Vec(0,0,0),new Vec(.75,.75,.75),Refl.SPEC), //Frnt
+      new Sphere(1e5, new Vec(50, 1e5, 81.6),    new Vec(0,0,0),new Vec(.75,.75,.75),Refl.DIFF), //Botm
+      new Sphere(1e5, new Vec(50,-1e5+81.6,81.6),new Vec(0,0,0),new Vec(.75,.75,.75),Refl.DIFF), //Top
+      new Sphere(16.5,new Vec(27,16.5,47),       new Vec(0,0,0),new Vec(1,1,1)*.999, Refl.SPEC), //Mirr
+      new Sphere(16.5,new Vec(73,16.5,78),       new Vec(0,0,0),new Vec(1,1,1)*.999, Refl.REFR), //Glas
+      new Sphere(600, new Vec(50,681.6-.27,81.6),new Vec(12,12,12),  new Vec(0,0,0), Refl.DIFF), //Lite
     };
 
     // wada (http://www.kevinbeason.com/smallpt/extraScenes.txt)

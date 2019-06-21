@@ -652,6 +652,7 @@ impl PEParser {
                     TableKind::AssemblyRef => {
                         Table::AssemblyRef(self.read_struct::<AssemblyRefTable>()?)
                     }
+                    TableKind::Constant => Table::Constant(self.read_struct::<ConstantTable>()?),
                     TableKind::Param => Table::Param(self.read_struct::<ParamTable>()?),
                     TableKind::StandAloneSig => {
                         Table::StandAloneSig(self.read_struct::<StandAlongSigTable>()?)

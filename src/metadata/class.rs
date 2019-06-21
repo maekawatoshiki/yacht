@@ -94,6 +94,20 @@ impl ClassInfo {
     pub fn get_field_index(&self, name: &str) -> Option<usize> {
         self.fields.iter().position(|f| f.name == name)
     }
+
+    pub fn is_enum(&self) -> bool {
+        match self.parent {
+            Some(ref parent) => {
+                let parent = parent.borrow();
+                (match parent.resolution_scope {
+                    ResolutionScope::AssemblyRef { ref name } if name == "mscorlib" => true,
+                    _ => false,
+                }) && parent.namespace == "System"
+                    && parent.name == "Enum"
+            }
+            None => false,
+        }
+    }
 }
 
 impl ClassField {
@@ -128,8 +142,8 @@ impl fmt::Debug for ClassInfo {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "ClassInfo {{ name: {}, namespace: {}, fields: {:?}, methods: [omitted], parent: {:?}, vtable: [omitted] }}",
-            self.name, self.namespace, self.fields, self.parent
+            "ClassInfo {{ resolution_scope: {:?}, name: {}, namespace: {}, fields: {:?}, methods: [omitted], parent: {:?}, vtable: [omitted] }}",
+            self.resolution_scope, self.name, self.namespace, self.fields, self.parent
         )
     }
 }

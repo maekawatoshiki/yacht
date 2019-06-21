@@ -816,31 +816,27 @@ impl<'a> JITCompiler<'a> {
                 | Instruction::Bgt { .. } => {
                     let val2 = stack.pop().unwrap();
                     let val1 = stack.pop().unwrap();
-                    let cond_val = match self.shared_env.ty_arena[val1.ty].base {
-                        ElementType::Char | ElementType::I4 | ElementType::U4 | ElementType::I8 => {
-                            LLVMBuildICmp(
-                                self.shared_env.builder,
-                                match instr {
-                                    Instruction::Bge { .. } => llvm::LLVMIntPredicate::LLVMIntSGE,
-                                    Instruction::Bge_un { .. } => {
-                                        llvm::LLVMIntPredicate::LLVMIntUGE
-                                    }
-                                    Instruction::Blt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
-                                    Instruction::Ble { .. } => llvm::LLVMIntPredicate::LLVMIntSLE,
-                                    Instruction::Ble_un { .. } => {
-                                        llvm::LLVMIntPredicate::LLVMIntULE
-                                    }
-                                    Instruction::Bgt { .. } => llvm::LLVMIntPredicate::LLVMIntSGT,
-                                    Instruction::Beq { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
-                                    Instruction::Bne_un { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
-                                    _ => unreachable!(),
-                                },
-                                val1.val,
-                                self.typecast(val2.val, LLVMTypeOf(val1.val)),
-                                cstr0!(),
-                            )
-                        }
-                        ElementType::R8 => LLVMBuildFCmp(
+                    let ty = &self.shared_env.ty_arena[val1.ty];
+                    let cond_val = if ty.is_int() {
+                        LLVMBuildICmp(
+                            self.shared_env.builder,
+                            match instr {
+                                Instruction::Bge { .. } => llvm::LLVMIntPredicate::LLVMIntSGE,
+                                Instruction::Bge_un { .. } => llvm::LLVMIntPredicate::LLVMIntUGE,
+                                Instruction::Blt { .. } => llvm::LLVMIntPredicate::LLVMIntSLT,
+                                Instruction::Ble { .. } => llvm::LLVMIntPredicate::LLVMIntSLE,
+                                Instruction::Ble_un { .. } => llvm::LLVMIntPredicate::LLVMIntULE,
+                                Instruction::Bgt { .. } => llvm::LLVMIntPredicate::LLVMIntSGT,
+                                Instruction::Beq { .. } => llvm::LLVMIntPredicate::LLVMIntEQ,
+                                Instruction::Bne_un { .. } => llvm::LLVMIntPredicate::LLVMIntNE,
+                                _ => unreachable!(),
+                            },
+                            val1.val,
+                            self.typecast(val2.val, LLVMTypeOf(val1.val)),
+                            cstr0!(),
+                        )
+                    } else if ty.is_float() {
+                        LLVMBuildFCmp(
                             self.shared_env.builder,
                             match instr {
                                 Instruction::Bge { .. } => llvm::LLVMRealPredicate::LLVMRealOGE,
@@ -856,8 +852,9 @@ impl<'a> JITCompiler<'a> {
                             val1.val,
                             val2.val,
                             cstr0!(),
-                        ),
-                        _ => unreachable!(),
+                        )
+                    } else {
+                        unimplemented!("{:?}", ty)
                     };
                     let destinations = block.kind.get_conditional_jump_destinations();
                     let bb_then = self.get_basic_block(destinations[0]).retrieve();
@@ -1659,6 +1656,14 @@ impl CastIntoLLVMType for Type {
                 .class_types
                 .get(TypePath(vec!["mscorlib", "System", "Object"]))
                 .unwrap(),
+            ElementType::ValueType(ref class) => {
+                let class = &class.borrow();
+                if class.is_enum() {
+                    LLVMInt32TypeInContext(ctx)
+                } else {
+                    unimplemented!()
+                }
+            }
             ElementType::Ptr(ref elem) => LLVMPointerType(elem.to_llvmty(compiler), 0),
             ElementType::FnPtr(_) => unimplemented!(),
         }

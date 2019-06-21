@@ -198,7 +198,9 @@ impl Image {
                     Table::TypeDef(_) => {
                         class.borrow_mut().parent = Some(self.get_class(token).unwrap().clone());
                     }
-                    Table::TypeRef(_) => {} // TODO
+                    Table::TypeRef(_) => {
+                        class.borrow_mut().parent = Some(self.get_class(token).unwrap().clone());
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -386,11 +388,15 @@ thread_local! {
         let class_system_obj_ref = class!(Object, None);
         let class_system_int32_ref = class!(Int32, Some(class_system_obj_ref.clone()));
         let class_system_string_ref = class!(String, Some(class_system_obj_ref.clone()));
+        let class_system_valuetype_ref = class!(ValueType, Some(class_system_obj_ref.clone()));
+        let class_system_enum_ref = class!(Enum, Some(class_system_valuetype_ref.clone()));
 
         {
             let mut class_system_obj = class_system_obj_ref.borrow_mut();
             let mut class_system_int32 = class_system_int32_ref.borrow_mut();
             let mut class_system_string = class_system_string_ref.borrow_mut();
+            let mut class_system_valuetype = class_system_valuetype_ref.borrow_mut();
+            let mut class_system_enum = class_system_enum_ref.borrow_mut();
 
             class_system_obj.methods =
                 vec![method!([0x20], str, [], "ToString", class_system_obj_ref)];
@@ -401,10 +407,16 @@ thread_local! {
                 method!([0x20], char, [i4], "get_Chars", class_system_string_ref),
                 method!([0x20], i4, [], "get_Length", class_system_string_ref),
             ];
+            class_system_valuetype.methods =
+                vec![method!([0x20], str, [], "ToString", class_system_valuetype_ref)];
+            class_system_enum.methods =
+                vec![method!([0x20], str, [], "ToString", class_system_enum_ref)];
 
             class_system_obj.method_table = class_system_obj.methods.clone();
             class_system_int32.method_table = class_system_int32.methods.clone();
             class_system_string.method_table = class_system_string.methods.clone();
+            class_system_valuetype.method_table = class_system_valuetype.methods.clone();
+            class_system_enum.method_table = class_system_enum.methods.clone();
 
             // class_system_obj.fields = vec![];
             class_system_int32.fields = vec![ClassField::new_ty(Type::i4_ty())];
@@ -424,6 +436,14 @@ thread_local! {
         resolver.add(
             TypePath(vec!["mscorlib", "System", "String"]),
             class_system_string_ref,
+        );
+        resolver.add(
+            TypePath(vec!["mscorlib", "System", "ValueType"]),
+            class_system_valuetype_ref,
+        );
+        resolver.add(
+            TypePath(vec!["mscorlib", "System", "Enum"]),
+            class_system_enum_ref,
         );
 
         Rc::new(resolver)

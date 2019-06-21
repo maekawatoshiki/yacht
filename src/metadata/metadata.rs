@@ -117,7 +117,7 @@ pub enum Table {
     // AssemblyRefOS,
     // AssemblyRefProcessor,
     // ClassLayout,
-    // Constant,
+    Constant(ConstantTable),
     CustomAttribute(CustomAttributeTable),
     // DeclSecurity,
     // EventMap,
@@ -178,6 +178,15 @@ pub struct AssemblyRefTable {
     pub name: u16,
     pub culture: u16,
     pub hash_value: u16,
+}
+
+/// II.22.9 Constant
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(C, packed)]
+pub struct ConstantTable {
+    pub type_: u16,
+    pub parent: u16,
+    pub value: u16,
 }
 
 /// II.22.10 CustomAttribute
