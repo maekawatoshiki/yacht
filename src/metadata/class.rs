@@ -96,6 +96,19 @@ impl ClassInfo {
     }
 }
 
+impl ClassField {
+    pub fn new(name: String, ty: Type) -> Self {
+        ClassField { name, ty }
+    }
+
+    pub fn new_ty(ty: Type) -> Self {
+        ClassField {
+            name: "".to_string(),
+            ty,
+        }
+    }
+}
+
 impl ResolutionScope {
     pub fn asm_ref(name: &str) -> Self {
         ResolutionScope::AssemblyRef {

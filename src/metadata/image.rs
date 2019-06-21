@@ -405,6 +405,10 @@ thread_local! {
             class_system_obj.method_table = class_system_obj.methods.clone();
             class_system_int32.method_table = class_system_int32.methods.clone();
             class_system_string.method_table = class_system_string.methods.clone();
+
+            // class_system_obj.fields = vec![];
+            class_system_int32.fields = vec![ClassField::new_ty(Type::i4_ty())];
+            class_system_string.fields = vec![ClassField::new_ty(Type::ptr_ty(Type::char_ty()))];
         }
 
         let mut resolver = NameResolver::new();
@@ -433,9 +437,16 @@ pub fn mscorlib_system_string() -> ClassInfoRef {
         .clone()
 }
 
+pub fn mscorlib_system_int32() -> ClassInfoRef {
+    get_mscorlib()
+        .get(TypePath(vec!["mscorlib", "System", "Int32"]))
+        .unwrap()
+        .clone()
+}
+
 pub fn mscorlib_system_object() -> ClassInfoRef {
     get_mscorlib()
-        .get(TypePath(vec!["mscorlib", "System", "String"]))
+        .get(TypePath(vec!["mscorlib", "System", "Object"]))
         .unwrap()
         .clone()
 }

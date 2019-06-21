@@ -19,6 +19,7 @@ pub enum ElementType {
     Class(ClassInfoRef),
     SzArray(Box<SzArrayInfo>),
     FnPtr(Box<MethodSignature>),
+    Ptr(Box<Type>),
     Object,
 }
 
@@ -118,6 +119,10 @@ impl Type {
 
     pub fn object_ty() -> Self {
         Self::new(ElementType::Object)
+    }
+
+    pub fn ptr_ty(elem: Type) -> Self {
+        Self::new(ElementType::Ptr(Box::new(elem)))
     }
 
     pub fn into_type<'a>(image: &Image, sig: &mut Iter<'a, u8>) -> Option<Self> {
@@ -264,6 +269,7 @@ impl fmt::Debug for ElementType {
                 ElementType::String => "String".to_string(),
                 ElementType::SzArray(s) => format!("SzArray({:?})", s),
                 ElementType::FnPtr(f) => format!("FnPtr({:?})", f),
+                ElementType::Ptr(e) => format!("Ptr({:?})", e),
                 ElementType::Object => format!("Object"),
             }
         )

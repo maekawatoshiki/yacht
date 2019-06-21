@@ -133,7 +133,7 @@ impl<'a> JITCompiler<'a> {
             phi_stack: FxHashMap::default(),
         };
 
-        self_.setup_system_string();
+        self_.setup_mscorlib_system();
 
         self_
     }
@@ -375,6 +375,21 @@ impl<'a> JITCompiler<'a> {
         self.phi_stack.clear();
     }
 
+    unsafe fn setup_mscorlib_system(&mut self) {
+        for class_ref in &[
+            mscorlib_system_object(),
+            mscorlib_system_int32(),
+            mscorlib_system_string(),
+        ] {
+            let class = class_ref.borrow();
+            self.get_llvm_class_type(&class);
+            let (method_table_ptr, _) = self.ensure_all_class_methods_compiled(&class);
+            if class.name == "String" {
+                STRING_METHOD_TABLE_PTR.with(|smp| *smp.borrow_mut() = Some(method_table_ptr));
+            }
+        }
+    }
+
     pub unsafe fn define_all_class(&mut self) {
         let classes = self
             .assembly
@@ -512,13 +527,6 @@ impl<'a> JITCompiler<'a> {
         self.env.arguments.insert(id, TypedValue::new(ty_id, var));
 
         var
-    }
-
-    unsafe fn setup_system_string(&mut self) {
-        let class_system_string_ref = mscorlib_system_string();
-        let class_system_string = class_system_string_ref.borrow();
-        let (method_table_ptr, _) = self.ensure_all_class_methods_compiled(&class_system_string);
-        STRING_METHOD_TABLE_PTR.with(|smp| *smp.borrow_mut() = Some(method_table_ptr));
     }
 
     // Returns destination
@@ -689,7 +697,10 @@ impl<'a> JITCompiler<'a> {
             let val = stack.pop().unwrap().val;
             stack.push(TypedValue::new(
                 self.shared_env.type_id(&$ty),
-                self.typecast(val, LLVMInt32TypeInContext(self.shared_env.context)),
+                {
+                    let llvm_ty = $ty.to_llvmty(self);
+                    self.typecast(val, llvm_ty)
+                }
             ))
         }}; }
 
@@ -1218,12 +1229,10 @@ impl<'a> JITCompiler<'a> {
     unsafe fn gen_instr_box(&mut self, stack: &mut Vec<TypedValue>, token: Token) {
         let val = stack.pop().unwrap().val;
         match self.assembly.image.metadata.get_table_entry(token).unwrap() {
-            Table::TypeRef(trt) => {
-                // TODO: Refactor
-                let path = self.assembly.image.get_path_from_type_ref_table(&trt);
+            Table::TypeRef(_) => {
                 let class_ref = self.assembly.image.get_class(token).unwrap().clone();
                 let class = class_ref.borrow();
-                let llvm_class = self.shared_env.class_types.get(path).unwrap();
+                let llvm_class = self.get_llvm_class_type(&class);
                 let new_obj = self.typecast(
                     self.call_memory_alloc(self.get_size_of_llvm_class_type(llvm_class)),
                     llvm_class,
@@ -1650,6 +1659,7 @@ impl CastIntoLLVMType for Type {
                 .class_types
                 .get(TypePath(vec!["mscorlib", "System", "Object"]))
                 .unwrap(),
+            ElementType::Ptr(ref elem) => LLVMPointerType(elem.to_llvmty(compiler), 0),
             ElementType::FnPtr(_) => unimplemented!(),
         }
     }
@@ -1709,7 +1719,7 @@ impl SharedEnvironment {
                 builder,
                 pass_mgr,
                 methods: BuiltinFunctions::new(context, module),
-                class_types: ClassTypesNameResolver::new(context),
+                class_types: ClassTypesNameResolver::new(),
                 method_table_map: FxHashMap::default(),
                 ty_arena: id_arena::Arena::new(),
             }
@@ -1760,71 +1770,9 @@ impl TypedValue {
 }
 
 impl ClassTypesNameResolver {
-    pub unsafe fn new(ctx: LLVMContextRef) -> Self {
-        // TODO: Refactor
-
-        let system_object =
-            LLVMStructCreateNamed(ctx, CString::new("System::Object").unwrap().as_ptr());
-        let mut fields_ty = vec![LLVMPointerType(
-            LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
-            0,
-        )];
-        LLVMStructSetBody(
-            system_object,
-            fields_ty.as_mut_ptr(),
-            fields_ty.len() as u32,
-            0,
-        );
-
-        let system_int32 =
-            LLVMStructCreateNamed(ctx, CString::new("System::Int32").unwrap().as_ptr());
-        let mut fields_ty = vec![
-            LLVMPointerType(LLVMPointerType(LLVMInt8TypeInContext(ctx), 0), 0),
-            LLVMInt32TypeInContext(ctx),
-        ];
-        LLVMStructSetBody(
-            system_int32,
-            fields_ty.as_mut_ptr(),
-            fields_ty.len() as u32,
-            0,
-        );
-
-        let system_string =
-            LLVMStructCreateNamed(ctx, CString::new("System::String").unwrap().as_ptr());
-        let mut fields_ty = vec![
-            LLVMPointerType(LLVMPointerType(LLVMInt8TypeInContext(ctx), 0), 0),
-            LLVMPointerType(LLVMInt8TypeInContext(ctx), 0),
-        ];
-        LLVMStructSetBody(
-            system_string,
-            fields_ty.as_mut_ptr(),
-            fields_ty.len() as u32,
-            0,
-        );
-
+    pub unsafe fn new() -> Self {
         Self {
-            base: {
-                let mut resolver = NameResolver::new();
-                resolver.add(
-                    TypePath(vec!["mscorlib", "System", "Object"]),
-                    (LLVMPointerType(system_object, 0), alloc_raw_method_table(1)),
-                );
-                resolver.add(
-                    TypePath(vec!["mscorlib", "System", "Int32"]),
-                    (LLVMPointerType(system_int32, 0), alloc_raw_method_table(1)),
-                );
-                resolver.add(
-                    TypePath(vec!["mscorlib", "System", "String"]),
-                    (
-                        LLVMPointerType(system_string, 0),
-                        alloc_raw_method_table(
-                            // TODO: 3 means ToString, get_Chars, get_Length
-                            3,
-                        ),
-                    ),
-                );
-                resolver
-            },
+            base: NameResolver::new(),
         }
     }
 
