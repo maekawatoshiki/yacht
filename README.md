@@ -34,6 +34,8 @@ rustup override set nightly
 ```sh
 # e.g. Ubuntu or Debian
 apt-get install llvm-6.0 libgc-dev
+ln -sf /usr/bin/llvm-config-6.0 /usr/bin/llvm-config
+apt-get install zlib1g-dev
 ```
 
 4. Test 
